@@ -1,85 +1,55 @@
-# VEUX Non-GKI Universal Kernel
+# VEUX ReSukiSU + SUSFS Kernel Builds
 
-Multi-base Non-GKI kernel project for Xiaomi/POCO `veux` (SM6375) with ReSukiSU, SUSFS and AnyKernel3.
+Custom Linux 5.4 kernel builds for **Xiaomi / POCO `veux` (SM6375)** with **ReSukiSU**, **SUSFS** and **AnyKernel3** packaging.
 
-## Ziel
+## Available builds
 
-Dieses Repository entwickelt **keinen einzelnen Kernel, der beliebig auf jede 5.4.x-Basis geflasht werden soll**.
+| Kernel | ReSukiSU | UAPI | SUSFS | Validation |
+|---|---|---:|---:|---|
+| **5.4.274** | 35154 / `6ec8d9a8` | 4 | 2.3.0 | **DEVICE PASS** |
+| **5.4.292** | 35154 / `6ec8d9a8` | 4 | 2.3.0 | **STATIC BOOT PASS** |
+| **5.4.300** | 35141 / `7741f878` | 4 | 2.3.0 | **STATIC BOOT PASS** |
+| **5.4.302** | 35141 / `7741f878` | 4 | 2.3.0 | **STATIC BOOT PASS** |
 
-„Universal“ bedeutet hier:
+## Validation status
 
-- gemeinsame, wiederverwendbare 5.4-Kompatibilitätslogik,
-- getrennte und echte Kernel-Lineages für relevante 5.4.x-Stände,
-- ein gemeinsamer VEUX-spezifischer Integrationslayer,
-- ReSukiSU + SUSFS als kontrolliert integrierte Funktionsschicht,
-- reproduzierbare Builds und nachvollziehbare Audit-Ergebnisse,
-- klare Trennung zwischen statischer Prüfung und echtem Gerätetest.
+### 5.4.274
+The P14 build has been tested on real VEUX hardware and passed:
+- Build
+- Packaging
+- Flash
+- Device boot
+- ReSukiSU Built-in
+- Root
+- SUSFS runtime
+- Session-keyring runtime
 
-## Zielgerät
+### 5.4.292 / 5.4.300 / 5.4.302
+These builds passed build/package/static boot-path validation.
 
-- Gerät: Xiaomi/POCO `veux`
-- SoC: Qualcomm SM6375
-- Kernel-Familie: Linux 5.4 Non-GKI
-- Primäre Vendor-Basis: Android-13-kompatible VEUX/SM6375-Kernelquellen
-- Packaging: AnyKernel3
+**Real-device validation is still pending.**
 
-## Geplante Kernel-Lineages
+A static boot-path pass is not the same as a real device boot pass.
 
-| Kernel | Rolle | Status |
-|---|---|---|
-| 5.4.259 | ältere relevante VEUX-Basis | PORT_REQUIRED |
-| 5.4.268 | verbreitete Vendor-/Custom-ROM-Basis | PORT_REQUIRED |
-| 5.4.274 | Referenz / P13 | DEVICE PASS |
-| 5.4.290 | neuere VEUX-Basis | PORT_REQUIRED |
-| 5.4.292 | erste neue Multibase-Ziellinie | PORT_REQUIRED |
-| 5.4.300 | offizielle Linux-stable Portlinie | STATIC BOOT PATH PASS |
-| 5.4.302 | offizielle Linux-stable Portlinie | STATIC BOOT PATH PASS |
-| 5.4.275 | Sonderfall: Quellbasis aktuell unvollständig | DEFERRED |
+## Installation
 
-5.4.191 ist bewusst nicht Bestandteil der aktuellen Zielmatrix.
+1. Make sure the device is **VEUX**.
+2. Keep a known-good boot image or recovery method available.
+3. Download the matching AnyKernel3 ZIP from the GitHub Release.
+4. Verify its SHA-256 checksum against `SHA256SUMS.txt`.
+5. Flash the ZIP using a compatible recovery or AnyKernel3-compatible installer.
+6. Reboot and verify kernel, ReSukiSU and SUSFS status.
 
-## Architektur
+## Important
 
-Das Projekt folgt vier Ebenen:
+- **VEUX only**
+- Kernel version alone is not a compatibility guarantee.
+- 5.4.292 / 5.4.300 / 5.4.302 should be treated as test builds until real-device validation is completed.
 
-1. **Common 5.4 Layer** – wiederverwendbare ReSukiSU/SUSFS-Integrationslogik.
-2. **Lineage Layer** – nur die Abweichungen der jeweiligen Kernelversion bzw. Quellbasis.
-3. **VEUX Layer** – gerätespezifische SM6375/VEUX-Anpassungen und Defconfig-Verträge.
-4. **Validation & Packaging Layer** – reproduzierbare Prüfung, AnyKernel3 und Boot-Pfad-Audits.
+## Checksums
 
-Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+See [`SHA256SUMS.txt`](SHA256SUMS.txt).
 
-## Verifizierungsprinzip
+## Disclaimer
 
-Ein erfolgreicher Compile-, Package- oder statischer Boot-Test ist **kein DEVICE PASS**.
-
-Statusbegriffe werden strikt getrennt:
-
-- `STATIC PASS`
-- `PACKAGE PASS`
-- `STATIC BOOT PATH PASS`
-- `DEVICE PASS`
-
-Nur ein realer, bestätigter Gerätetest darf als `DEVICE PASS` bezeichnet werden.
-
-Weitere Regeln: [`docs/VALIDATION_RULES.md`](docs/VALIDATION_RULES.md)
-
-## Aktueller Referenzstand
-
-Die stabile Geräte-Referenz ist P13 auf Linux `5.4.274` mit ReSukiSU, SUSFS 2.3 und AnyKernel3.
-
-P13 bleibt als Referenz unverändert und wird nicht durch spätere Portversuche überschrieben.
-
-## Wichtige Projektregel
-
-Versionsnummern werden nicht gefälscht oder per Localversion-Trick als andere Kernelbasis ausgegeben. Jede Lineage muss tatsächlich aus der jeweiligen Quellbasis hervorgehen.
-
-## Noch keine CI-Workflows
-
-Dieses Bootstrap enthält bewusst **keine GitHub-Actions-YAML**.
-
-Automatisierung wird erst ergänzt, wenn der zugrunde liegende Inhalt und die Build-/Portlogik zuvor reproduzierbar verifiziert wurden.
-
-## Referenzideen
-
-Die Architektur orientiert sich unter anderem an dem sinnvollen Muster „gemeinsame Non-GKI-/SUSFS-Logik + gerätespezifische Fixes“, wie es in Community-Buildsystemen verwendet wird. Fremde Patches werden jedoch nicht blind übernommen, sondern semantisch gegen die jeweilige VEUX-Quellbasis geprüft.
+Flashing a custom kernel modifies the device boot environment. Keep a working recovery/rollback method available before installing.
