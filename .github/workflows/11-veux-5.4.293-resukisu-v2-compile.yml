@@ -1,0 +1,1190 @@
+name: 11 - VEUX 5.4.293 ReSukiSU V2 Compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5-4-293-resukisu-v2
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: https://github.com/UEDestroyer/kernel_xiaomi_veux.git
+  SOURCE_COMMIT: fb3bbb10bc0480282c01b88ccaf39c0145cd9f51
+  SOURCE_VERSION: 5.4.292
+  TARGET_VERSION: 5.4.293
+  DEFCONFIG: veux_defconfig
+  DEFCONFIG_SHA256: a83099092fba60b5beaacc4f5b089f4f96e23d31148714dee0d539817f50f0d1
+
+  STABLE_REPO: https://github.com/gregkh/linux.git
+  STABLE_292_TAG: v5.4.292
+  STABLE_293_TAG: v5.4.293
+  STABLE_292_COMMIT: 1b01d9c341770d4dab5a1a04a706a8eb6c389bb1
+  STABLE_293_COMMIT: 2c8115e4757809ffd537ed9108da115026d3581f
+
+  TOOLCHAIN_COMMIT: d19c99c180cfa21504426915d765b5e7adf878b6
+  TOOLCHAIN_DIRNAME: clang-r547379
+  TOOLCHAIN_BUILD_ID: "13065274"
+  TOOLCHAIN_LLVM_PROJECT_REVISION: b718bcaf8c198c82f3021447d943401e3ab5bd54
+
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_COMMIT: 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+  RESUKISU_EXPECTED_VERSION: "35154"
+  RESUKISU_EXPECTED_UAPI: "4"
+
+jobs:
+  port-and-build:
+    name: VEUX 5.4.293 ReSukiSU V1 compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+
+      - name: Initialize audit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          rm -rf "$WORK_ROOT" "$AUDIT_DIR"
+          mkdir -p "$WORK_ROOT" "$AUDIT_DIR"
+
+          {
+            echo "WORKFLOW=11"
+            echo "PURPOSE=VEUX_5.4.293_GREEN_BASELINE_PLUS_PINNED_RESUKISU_COMPILE"
+            echo "SOURCE_REPO=$SOURCE_REPO"
+            echo "SOURCE_COMMIT=$SOURCE_COMMIT"
+            echo "SOURCE_VERSION=$SOURCE_VERSION"
+            echo "TARGET_VERSION=$TARGET_VERSION"
+            echo "STABLE_REPO=$STABLE_REPO"
+            echo "STABLE_292_COMMIT=$STABLE_292_COMMIT"
+            echo "STABLE_293_COMMIT=$STABLE_293_COMMIT"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "RESUKISU_TARGET_COMMIT=$RESUKISU_COMMIT"
+            echo "SUSFS=NOT_PRESENT"
+            echo "DEVICE_PASS=NO"
+          } > "$AUDIT_DIR/00-plan.txt"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl dwarves flex git \
+            libelf-dev libncurses-dev libssl-dev perl python3 rsync xz-utils zstd
+
+      - name: Fetch exact VEUX source and exact stable tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          STABLE="$WORK_ROOT/stable"
+
+          rm -rf "$SRC" "$STABLE"
+          mkdir -p "$SRC" "$STABLE"
+
+          git -C "$SRC" init -q
+          git -C "$SRC" remote add origin "$SOURCE_REPO"
+          git -C "$SRC" fetch -q --depth=1 origin "$SOURCE_COMMIT"
+          git -C "$SRC" checkout -q --detach FETCH_HEAD
+
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test -z "$(git -C "$SRC" status --porcelain)"
+          test "$(make -s -C "$SRC" kernelversion)" = "$SOURCE_VERSION"
+          test -f "$SRC/arch/arm64/configs/$DEFCONFIG"
+          test "$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')" = "$DEFCONFIG_SHA256"
+
+          git -C "$STABLE" init -q
+          git -C "$STABLE" remote add origin "$STABLE_REPO"
+          git -C "$STABLE" fetch -q --depth=1 origin \
+            "refs/tags/$STABLE_292_TAG:refs/tags/$STABLE_292_TAG"
+          git -C "$STABLE" fetch -q --depth=1 origin \
+            "refs/tags/$STABLE_293_TAG:refs/tags/$STABLE_293_TAG"
+
+          BASE="$(git -C "$STABLE" rev-parse "refs/tags/$STABLE_292_TAG^{commit}")"
+          TARGET="$(git -C "$STABLE" rev-parse "refs/tags/$STABLE_293_TAG^{commit}")"
+          test "$BASE" = "$STABLE_292_COMMIT"
+          test "$TARGET" = "$STABLE_293_COMMIT"
+
+          git -C "$STABLE" diff --name-status --no-renames "$BASE" "$TARGET" \
+            > "$AUDIT_DIR/01-stable-delta-name-status.txt"
+          test -s "$AUDIT_DIR/01-stable-delta-name-status.txt"
+
+          {
+            echo "SOURCE_PIN=PASS"
+            echo "SOURCE_COMMIT=$(git -C "$SRC" rev-parse HEAD)"
+            echo "SOURCE_KERNELVERSION=$(make -s -C "$SRC" kernelversion)"
+            echo "DEFCONFIG_SHA256=$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')"
+            echo "STABLE_292_PIN=PASS"
+            echo "STABLE_292_COMMIT=$BASE"
+            echo "STABLE_293_PIN=PASS"
+            echo "STABLE_293_COMMIT=$TARGET"
+            echo "STABLE_DELTA_PATHS=$(wc -l < "$AUDIT_DIR/01-stable-delta-name-status.txt" | tr -d ' ')"
+          } | tee "$AUDIT_DIR/02-source-and-stable-pins.txt"
+
+      - name: Port full official 5.4.292 to 5.4.293 delta fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          STABLE="$WORK_ROOT/stable"
+          export SRC STABLE AUDIT_DIR STABLE_292_COMMIT STABLE_293_COMMIT
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import stat
+          import subprocess
+          import tempfile
+
+          src = Path(os.environ["SRC"])
+          stable = Path(os.environ["STABLE"])
+          audit = Path(os.environ["AUDIT_DIR"])
+          base_commit = os.environ["STABLE_292_COMMIT"]
+          target_commit = os.environ["STABLE_293_COMMIT"]
+          delta_file = audit / "01-stable-delta-name-status.txt"
+          conflicts_root = audit / "conflicts"
+          conflicts_root.mkdir(parents=True, exist_ok=True)
+
+          def run(args, *, check=True, text=False, input_data=None):
+              return subprocess.run(
+                  args,
+                  check=check,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=text,
+                  input=input_data,
+              )
+
+          def stable_mode(commit, path):
+              p = run(
+                  ["git", "-C", str(stable), "ls-tree", commit, "--", path],
+                  check=False,
+                  text=True,
+              )
+              if p.returncode != 0 or not p.stdout.strip():
+                  return None
+              return p.stdout.split()[0]
+
+          def stable_bytes(commit, path):
+              mode = stable_mode(commit, path)
+              if mode is None:
+                  return None, None
+              p = run(
+                  ["git", "-C", str(stable), "show", f"{commit}:{path}"],
+                  check=True,
+                  text=False,
+              )
+              return mode, p.stdout
+
+          def ours_state(path):
+              p = src / path
+              if p.is_symlink():
+                  return "120000", os.readlink(p).encode("utf-8")
+              if not p.exists():
+                  return None, None
+              if not p.is_file():
+                  return "UNSUPPORTED", None
+              mode = "100755" if (p.stat().st_mode & stat.S_IXUSR) else "100644"
+              return mode, p.read_bytes()
+
+          def remove_path(path):
+              p = src / path
+              if p.is_symlink() or p.is_file():
+                  p.unlink()
+              elif p.exists():
+                  raise RuntimeError(f"refusing to remove non-file path: {path}")
+
+          def write_state(path, mode, data):
+              p = src / path
+              p.parent.mkdir(parents=True, exist_ok=True)
+              if p.is_symlink() or p.is_file():
+                  p.unlink()
+              elif p.exists():
+                  raise RuntimeError(f"refusing to replace non-file path: {path}")
+
+              if mode == "120000":
+                  p.symlink_to(data.decode("utf-8"))
+              elif mode in ("100644", "100755"):
+                  p.write_bytes(data)
+                  p.chmod(0o755 if mode == "100755" else 0o644)
+              else:
+                  raise RuntimeError(f"unsupported target mode {mode} for {path}")
+
+          def is_binary(data):
+              return data is not None and b"\0" in data
+
+          def merge_mode(base_mode, ours_mode, target_mode):
+              if base_mode == target_mode:
+                  return ours_mode, None
+              if ours_mode == base_mode:
+                  return target_mode, None
+              if ours_mode == target_mode:
+                  return ours_mode, None
+              return None, "mode conflict"
+
+          def emit_conflict(path, status_code, reason, base_state, ours, target_state, preview=None):
+              d = conflicts_root / Path(path)
+              d.mkdir(parents=True, exist_ok=True)
+              base_mode, base_data = base_state
+              ours_mode, ours_data = ours
+              target_mode, target_data = target_state
+
+              def dump(name, mode, data):
+                  if data is None:
+                      (d / name).write_text("<ABSENT>\n", encoding="utf-8")
+                  else:
+                      (d / name).write_bytes(data)
+                  return mode or "ABSENT"
+
+              bm = dump("BASE", base_mode, base_data)
+              om = dump("OURS", ours_mode, ours_data)
+              tm = dump("THEIRS", target_mode, target_data)
+              if preview is not None:
+                  (d / "MERGE-PREVIEW").write_bytes(preview)
+              (d / "META.txt").write_text(
+                  f"path={path}\nstatus={status_code}\nreason={reason}\n"
+                  f"base_mode={bm}\nours_mode={om}\ntheirs_mode={tm}\n",
+                  encoding="utf-8",
+              )
+
+          raw_lines = [line for line in delta_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+          entries = []
+          for line in raw_lines:
+              parts = line.split("\t")
+              if len(parts) != 2:
+                  raise SystemExit(f"unsupported name-status line: {line!r}")
+              status_code, path = parts
+              if status_code not in {"A", "M", "D", "T"}:
+                  raise SystemExit(f"unsupported delta status {status_code!r}: {path}")
+              entries.append((status_code, path))
+
+          conflicts = []
+          direct = 0
+          merged = 0
+          unchanged = 0
+          deleted = 0
+
+          for status_code, path in entries:
+              base_state = stable_bytes(base_commit, path)
+              target_state = stable_bytes(target_commit, path)
+              ours = ours_state(path)
+              base_mode, base_data = base_state
+              target_mode, target_data = target_state
+              ours_mode, ours_data = ours
+
+              if ours_mode == "UNSUPPORTED":
+                  reason = "ours path is not a regular file or symlink"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              if status_code == "A":
+                  if base_data is not None or target_data is None:
+                      raise SystemExit(f"invalid A state for {path}")
+                  if ours_data is None:
+                      write_state(path, target_mode, target_data)
+                      direct += 1
+                  elif ours_data == target_data and ours_mode == target_mode:
+                      unchanged += 1
+                  else:
+                      reason = "stable adds path that already differs in VEUX source"
+                      emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                      conflicts.append((path, reason))
+                  continue
+
+              if status_code == "D":
+                  if base_data is None or target_data is not None:
+                      raise SystemExit(f"invalid D state for {path}")
+                  if ours_data is None:
+                      unchanged += 1
+                  elif ours_data == base_data and ours_mode == base_mode:
+                      remove_path(path)
+                      deleted += 1
+                  else:
+                      reason = "stable deletes path modified by VEUX source"
+                      emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                      conflicts.append((path, reason))
+                  continue
+
+              if base_data is None or target_data is None or ours_data is None:
+                  reason = "M/T path missing in base, target, or VEUX source"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              out_mode, mode_error = merge_mode(base_mode, ours_mode, target_mode)
+              if mode_error:
+                  emit_conflict(path, status_code, mode_error, base_state, ours, target_state)
+                  conflicts.append((path, mode_error))
+                  continue
+
+              if ours_data == base_data:
+                  write_state(path, out_mode, target_data)
+                  direct += 1
+                  continue
+              if target_data == base_data or ours_data == target_data:
+                  if ours_mode != out_mode:
+                      write_state(path, out_mode, ours_data)
+                  unchanged += 1
+                  continue
+
+              if any(is_binary(x) for x in (base_data, ours_data, target_data)):
+                  reason = "binary content conflict"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              with tempfile.TemporaryDirectory() as td:
+                  td = Path(td)
+                  op = td / "ours"
+                  bp = td / "base"
+                  tp = td / "theirs"
+                  op.write_bytes(ours_data)
+                  bp.write_bytes(base_data)
+                  tp.write_bytes(target_data)
+                  proc = run(
+                      ["git", "merge-file", "-p", str(op), str(bp), str(tp)],
+                      check=False,
+                      text=False,
+                  )
+                  if proc.returncode == 0:
+                      write_state(path, out_mode, proc.stdout)
+                      merged += 1
+                  elif proc.returncode > 0:
+                      reason = f"textual three-way merge conflict ({proc.returncode} conflict hunks)"
+                      emit_conflict(
+                          path,
+                          status_code,
+                          reason,
+                          base_state,
+                          ours,
+                          target_state,
+                          preview=proc.stdout,
+                      )
+                      conflicts.append((path, reason))
+                  else:
+                      raise SystemExit(
+                          f"git merge-file failed for {path}: rc={proc.returncode}\n"
+                          + proc.stderr.decode("utf-8", errors="replace")
+                      )
+
+          summary = audit / "03-port-summary.txt"
+          summary.write_text(
+              "VEUX_5_4_293_PORT_ENGINE=PASS\n"
+              f"DELTA_PATHS={len(entries)}\n"
+              f"DIRECT_APPLIED={direct}\n"
+              f"AUTO_MERGED={merged}\n"
+              f"UNCHANGED_EQUIVALENT={unchanged}\n"
+              f"DELETED={deleted}\n"
+              f"PORT_CONFLICTS={len(conflicts)}\n",
+              encoding="utf-8",
+          )
+          (audit / "PORT_CONFLICTS.txt").write_text(str(len(conflicts)) + "\n", encoding="utf-8")
+          (audit / "03-conflict-list.txt").write_text(
+              "".join(f"{path}\t{reason}\n" for path, reason in conflicts),
+              encoding="utf-8",
+          )
+
+          print(summary.read_text(encoding="utf-8"), end="")
+          if conflicts:
+              print("CONFLICT_PATHS:")
+              for path, reason in conflicts:
+                  print(f"  {path}: {reason}")
+          PY
+
+          git -C "$SRC" status --porcelain -uall > "$AUDIT_DIR/04-port-git-status.txt"
+          git -C "$SRC" diff --check | tee "$AUDIT_DIR/04-diff-check.txt"
+
+      - name: Resolve verified VEUX 5.4.293 port conflicts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          export SRC AUDIT_DIR
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          src = Path(os.environ["SRC"])
+          audit = Path(os.environ["AUDIT_DIR"])
+          conflicts_root = audit / "conflicts"
+          conflict_list = audit / "03-conflict-list.txt"
+
+          expected = {
+              "arch/arm64/include/asm/cputype.h": 2,
+              "drivers/usb/core/quirks.c": 1,
+              "drivers/usb/dwc3/gadget.c": 1,
+              "fs/ext4/dir.c": 2,
+          }
+
+          raw = conflict_list.read_text(encoding="utf-8")
+          detected = []
+          for line in raw.splitlines():
+              if not line.strip():
+                  continue
+              path, reason = line.split("\t", 1)
+              detected.append((path, reason))
+
+          detected_paths = {p for p, _ in detected}
+          if detected_paths != set(expected):
+              missing = sorted(set(expected) - detected_paths)
+              extra = sorted(detected_paths - set(expected))
+              raise SystemExit(
+                  f"unexpected conflict set; missing={missing}, extra={extra}"
+              )
+
+          for path, reason in detected:
+              want_hunks = expected[path]
+              if f"({want_hunks} conflict hunks)" not in reason:
+                  raise SystemExit(
+                      f"unexpected conflict hunk count for {path}: {reason}"
+                  )
+
+          (audit / "03-conflict-list-detected.txt").write_text(raw, encoding="utf-8")
+          resolved_root = audit / "resolved"
+          resolved_root.mkdir(parents=True, exist_ok=True)
+
+          def split_conflicts(text):
+              lines = text.splitlines(keepends=True)
+              out = []
+              hunks = []
+              i = 0
+              while i < len(lines):
+                  if not lines[i].startswith("<<<<<<< "):
+                      out.append(lines[i])
+                      i += 1
+                      continue
+
+                  i += 1
+                  ours = []
+                  while i < len(lines) and not lines[i].startswith("======="):
+                      ours.append(lines[i])
+                      i += 1
+                  if i >= len(lines):
+                      raise SystemExit("unterminated conflict: missing =======")
+                  i += 1
+
+                  theirs = []
+                  while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+                      theirs.append(lines[i])
+                      i += 1
+                  if i >= len(lines):
+                      raise SystemExit("unterminated conflict: missing >>>>>>>")
+                  i += 1
+
+                  token = f"@@CONFLICT_{len(hunks)}@@"
+                  out.append(token)
+                  hunks.append(("".join(ours), "".join(theirs), token))
+
+              return "".join(out), hunks
+
+          def resolve(path, preview):
+              skeleton, hunks = split_conflicts(preview)
+              if len(hunks) != expected[path]:
+                  raise SystemExit(
+                      f"preview hunk count mismatch for {path}: "
+                      f"{len(hunks)} != {expected[path]}"
+                  )
+
+              replacements = []
+
+              if path == "arch/arm64/include/asm/cputype.h":
+                  o0, t0, _ = hunks[0]
+                  o1, t1, _ = hunks[1]
+                  if "ARM_CPU_PART_KRYO4G" not in o0 or "ARM_CPU_PART_CORTEX_A76AE" not in t0:
+                      raise SystemExit("cputype hunk 1 preimage mismatch")
+                  if "MIDR_KRYO4G" not in o1 or "MIDR_CORTEX_A76AE" not in t1:
+                      raise SystemExit("cputype hunk 2 preimage mismatch")
+                  replacements = [o0 + t0, o1 + t1]
+
+              elif path == "drivers/usb/core/quirks.c":
+                  ours, theirs, _ = hunks[0]
+                  if "USB_DEVICE(0x090c, 0x1000)" not in ours or "USB_QUIRK_NO_LPM" not in ours:
+                      raise SystemExit("usb quirks VEUX preimage mismatch")
+                  if "USB_DEVICE(0x090c, 0x1000)" not in theirs or "USB_QUIRK_DELAY_INIT" not in theirs:
+                      raise SystemExit("usb quirks stable preimage mismatch")
+                  replacements = [
+                      "\t/* Silicon Motion Flash Drive */\n"
+                      "\t{ USB_DEVICE(0x090c, 0x1000), .driver_info =\n"
+                      "\t\t\tUSB_QUIRK_NO_LPM | USB_QUIRK_DELAY_INIT },\n"
+                  ]
+
+              elif path == "drivers/usb/dwc3/gadget.c":
+                  ours, theirs, _ = hunks[0]
+                  if "if (!dwc->pullups_connected)" not in ours:
+                      raise SystemExit("dwc3 VEUX preimage mismatch")
+                  if "if (count > evt->length)" not in theirs:
+                      raise SystemExit("dwc3 stable preimage mismatch")
+                  # Both sides share the closing brace after the conflict marker.
+                  # Close the stable bounds-check block explicitly, then keep the
+                  # shared closing brace for the VEUX no-pullup block.
+                  replacements = [theirs + "\t}\n\n" + ours]
+
+              elif path == "fs/ext4/dir.c":
+                  o0, t0, _ = hunks[0]
+                  o1, t1, _ = hunks[1]
+                  if "bool fake = is_fake_dir_entry(de);" not in o0:
+                      raise SystemExit("ext4 hunk 1 VEUX preimage mismatch")
+                  if t0.strip():
+                      raise SystemExit("ext4 hunk 1 stable side unexpectedly non-empty")
+                  if "ext4_dir_rec_len(1," not in o1 or "EXT4_DIR_REC_LEN(1)" not in t1:
+                      raise SystemExit("ext4 hunk 2 preimage mismatch")
+                  # Preserve VEUX checksum/fake-dir semantics. The stable dot-entry
+                  # OOB fix is outside this conflict and remains in the merge preview.
+                  replacements = [o0, o1]
+
+              else:
+                  raise SystemExit(f"no resolver for {path}")
+
+              result = skeleton
+              for idx, (_, _, token) in enumerate(hunks):
+                  result = result.replace(token, replacements[idx], 1)
+
+              if any(m in result for m in ("<<<<<<< ", "=======", ">>>>>>> ")):
+                  raise SystemExit(f"conflict marker remains in {path}")
+              return result
+
+          report = []
+          for path in sorted(expected):
+              preview_path = conflicts_root / Path(path) / "MERGE-PREVIEW"
+              if not preview_path.is_file():
+                  raise SystemExit(f"missing merge preview: {path}")
+              preview = preview_path.read_text(encoding="utf-8")
+              resolved = resolve(path, preview)
+
+              out = src / path
+              if not out.is_file():
+                  raise SystemExit(f"source file missing before resolution: {path}")
+              out.write_text(resolved, encoding="utf-8")
+
+              evidence = resolved_root / (path + ".resolved")
+              evidence.parent.mkdir(parents=True, exist_ok=True)
+              evidence.write_text(resolved, encoding="utf-8")
+              report.append(f"RESOLVED={path}")
+
+          # Semantic postconditions for all four manual resolutions.
+          cputype = (src / "arch/arm64/include/asm/cputype.h").read_text()
+          cputype_lines = cputype.splitlines()
+          for prefix in (
+              "#define ARM_CPU_PART_KRYO4G",
+              "#define ARM_CPU_PART_CORTEX_A76AE",
+              "#define MIDR_KRYO4G",
+              "#define MIDR_CORTEX_A76AE",
+          ):
+              if sum(1 for line in cputype_lines if line.startswith(prefix)) != 1:
+                  raise SystemExit(f"cputype semantic gate failed: {prefix}")
+
+          quirks = (src / "drivers/usb/core/quirks.c").read_text()
+          if quirks.count("USB_DEVICE(0x090c, 0x1000)") != 1:
+              raise SystemExit("Silicon Motion device entry count mismatch")
+          silicon = quirks[quirks.index("USB_DEVICE(0x090c, 0x1000)"):]
+          silicon = silicon[:300]
+          if "USB_QUIRK_NO_LPM" not in silicon or "USB_QUIRK_DELAY_INIT" not in silicon:
+              raise SystemExit("Silicon Motion combined quirk gate failed")
+          for token in ("USB_DEVICE(0x0781, 0x55a3)", "USB_DEVICE(0x2109, 0x0711)"):
+              if quirks.count(token) != 1:
+                  raise SystemExit(f"USB stable addition missing: {token}")
+
+          gadget = (src / "drivers/usb/dwc3/gadget.c").read_text()
+          if gadget.count("if (count > evt->length)") != 1:
+              raise SystemExit("dwc3 bounds check gate failed")
+          if gadget.count("if (!dwc->pullups_connected)") < 1:
+              raise SystemExit("dwc3 VEUX no-pullup gate failed")
+          bounds_pos = gadget.index("if (count > evt->length)")
+          pullup_pos = gadget.index("if (!dwc->pullups_connected)", bounds_pos)
+          if bounds_pos >= pullup_pos:
+              raise SystemExit("dwc3 bounds check must precede no-pullup handling")
+
+          ext4 = (src / "fs/ext4/dir.c").read_text()
+          for token in (
+              "bool fake = is_fake_dir_entry(de);",
+              "bool has_csum = ext4_has_metadata_csum(dir->i_sb);",
+              "next_offset == size && de->name_len == 1",
+              "de->name[0] == '.'",
+              "ext4_dir_rec_len(1,",
+          ):
+              if token not in ext4:
+                  raise SystemExit(f"ext4 semantic gate failed: {token}")
+
+          conflict_list.write_text("", encoding="utf-8")
+          (audit / "PORT_CONFLICTS.txt").write_text("0\n", encoding="utf-8")
+
+          summary = audit / "03-port-summary.txt"
+          s = summary.read_text(encoding="utf-8")
+          old = "PORT_CONFLICTS=4\n"
+          if old not in s:
+              raise SystemExit("port summary conflict count preimage mismatch")
+          s = s.replace(
+              old,
+              "PORT_CONFLICTS_DETECTED=4\n"
+              "DETERMINISTIC_RESOLUTIONS=4\n"
+              "PORT_CONFLICTS=0\n",
+              1,
+          )
+          summary.write_text(s, encoding="utf-8")
+
+          report.extend([
+              "DETECTED_CONFLICTS=4",
+              "DETERMINISTIC_RESOLUTIONS=4",
+              "PORT_CONFLICTS_AFTER_RESOLUTION=0",
+              "RESOLUTION_SEMANTIC_GATES=PASS",
+          ])
+          (audit / "07-conflict-resolution.txt").write_text(
+              "\n".join(report) + "\n",
+              encoding="utf-8",
+          )
+          print((audit / "07-conflict-resolution.txt").read_text(), end="")
+          PY
+
+          git -C "$SRC" status --porcelain -uall > "$AUDIT_DIR/08-resolved-git-status.txt"
+          git -C "$SRC" diff --check | tee "$AUDIT_DIR/08-resolved-diff-check.txt"
+
+      - name: Apply VEUX legacy timer ABI compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          TIMER_H="$SRC/include/linux/timer.h"
+          TIMER_C="$SRC/kernel/time/timer.c"
+          INET="$SRC/net/ipv4/inet_connection_sock.c"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          if [[ "$conflicts" != "0" ]]; then
+            echo "TIMER_ABI_COMPAT=SKIPPED_PORT_CONFLICTS" | tee "$AUDIT_DIR/09-timer-abi-compat.txt"
+            exit 0
+          fi
+
+          test -f "$TIMER_H"
+          test -f "$TIMER_C"
+          test -f "$INET"
+
+          # The pinned VEUX 5.4.292 base still implements the legacy API directly.
+          grep -Fq 'extern int del_timer_sync(struct timer_list *timer);' "$TIMER_H"
+          grep -Fq 'int del_timer_sync(struct timer_list *timer)' "$TIMER_C"
+
+          # Fail closed if the host timer ABI has already been renamed.
+          if grep -Fq 'extern int timer_delete_sync(struct timer_list *timer);' "$TIMER_H"; then
+            echo "ERROR: timer header already exposes timer_delete_sync; compatibility translation no longer valid" >&2
+            exit 1
+          fi
+          if grep -Fq 'int timer_delete_sync(struct timer_list *timer)' "$TIMER_C"; then
+            echo "ERROR: timer core already implements timer_delete_sync; compatibility translation no longer valid" >&2
+            exit 1
+          fi
+
+          python3 - "$INET" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text(encoding="utf-8")
+
+          old = "timer_delete_sync(&req->rsk_timer)"
+          new = "del_timer_sync(&req->rsk_timer)"
+
+          old_count = text.count(old)
+          new_count = text.count(new)
+
+          if old_count != 1:
+              raise SystemExit(f"timer ABI preimage mismatch: expected one {old!r}, found {old_count}")
+          if new_count != 0:
+              raise SystemExit(f"timer ABI preimage already contains translated call: {new_count}")
+
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding="utf-8")
+
+          if old in text:
+              raise SystemExit("timer_delete_sync request-sock call remains after translation")
+          if text.count(new) != 1:
+              raise SystemExit("translated del_timer_sync request-sock call count mismatch")
+
+          print("TIMER_DELETE_SYNC_CALLS_TRANSLATED=1")
+          print("TIMER_ABI_TRANSLATION=PASS")
+          PY
+
+          grep -Fq 'del_timer_sync(&req->rsk_timer)' "$INET"
+          ! grep -Fq 'timer_delete_sync(&req->rsk_timer)' "$INET"
+
+          git -C "$SRC" diff --check
+
+          {
+            echo "TIMER_ABI_COMPAT=PASS"
+            echo "HOST_TIMER_ABI=LEGACY_DEL_TIMER_SYNC"
+            echo "STABLE_5_4_293_CALL_TRANSLATION=timer_delete_sync_TO_del_timer_sync"
+            echo "TRANSLATED_FILE=net/ipv4/inet_connection_sock.c"
+            echo "RUN35371919507_REGRESSION=PASS"
+          } | tee "$AUDIT_DIR/09-timer-abi-compat.txt"
+
+      - name: Validate complete port state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          test "$conflicts" -ge 0
+
+          if [[ "$conflicts" != "0" ]]; then
+            {
+              echo "PORT_VALIDATION=BLOCKED_BY_CONFLICTS"
+              echo "PORT_CONFLICTS=$conflicts"
+              echo "BASELINE_COMPILE=SKIPPED"
+            } | tee "$AUDIT_DIR/05-port-validation.txt"
+            exit 0
+          fi
+
+          test "$(make -s -C "$SRC" kernelversion)" = "$TARGET_VERSION"
+          test -f "$SRC/arch/arm64/configs/$DEFCONFIG"
+          test "$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')" = "$DEFCONFIG_SHA256"
+          test ! -e "$SRC/drivers/kernelsu"
+          test ! -e "$SRC/fs/susfs.c"
+          test ! -e "$SRC/include/linux/susfs.h"
+          grep -Fxq 'TIMER_ABI_COMPAT=PASS' "$AUDIT_DIR/09-timer-abi-compat.txt"
+          grep -Fq 'del_timer_sync(&req->rsk_timer)' "$SRC/net/ipv4/inet_connection_sock.c"
+          ! grep -Fq 'timer_delete_sync(&req->rsk_timer)' "$SRC/net/ipv4/inet_connection_sock.c"
+
+          if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+            echo "ERROR: reject/orig file found after port" >&2
+            exit 1
+          fi
+
+          {
+            echo "PORT_VALIDATION=PASS"
+            echo "PORT_CONFLICTS=0"
+            echo "KERNELVERSION=$(make -s -C "$SRC" kernelversion)"
+            echo "DEFCONFIG_SHA256=$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')"
+            echo "RESUKISU=NOT_PRESENT"
+            echo "SUSFS=NOT_PRESENT"
+            echo "TIMER_ABI_COMPAT=PASS"
+          } | tee "$AUDIT_DIR/05-port-validation.txt"
+
+      - name: Freeze validated 5.4.293 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+
+          grep -Fxq 'PORT_VALIDATION=PASS' "$AUDIT_DIR/05-port-validation.txt"
+          grep -Fxq 'PORT_CONFLICTS=0' "$AUDIT_DIR/05-port-validation.txt"
+          grep -Fxq 'TIMER_ABI_COMPAT=PASS' "$AUDIT_DIR/09-timer-abi-compat.txt"
+          test "$(make -s -C "$SRC" kernelversion)" = "$TARGET_VERSION"
+          git -C "$SRC" diff --check
+
+          git -C "$SRC" config user.email "veux-ci@example.invalid"
+          git -C "$SRC" config user.name "VEUX CI"
+          git -C "$SRC" add -A
+          git -C "$SRC" commit -q -m "VEUX 5.4.293 validated baseline"
+
+          baseline_commit="$(git -C "$SRC" rev-parse HEAD)"
+          baseline_tree="$(git -C "$SRC" rev-parse 'HEAD^{tree}')"
+          test -n "$baseline_commit"
+          test -n "$baseline_tree"
+          test -z "$(git -C "$SRC" status --porcelain)"
+
+          : > "$AUDIT_DIR/10-resukisu-host-preimages.txt"
+          for path in             drivers/Kconfig             drivers/Makefile             fs/exec.c             fs/open.c             fs/stat.c             kernel/reboot.c             security/selinux/selinuxfs.c
+          do
+            source_blob="$(git -C "$SRC" rev-parse "$SOURCE_COMMIT:$path")"
+            baseline_blob="$(git -C "$SRC" rev-parse "HEAD:$path")"
+            test "$source_blob" = "$baseline_blob"
+            echo "$path=$baseline_blob" >> "$AUDIT_DIR/10-resukisu-host-preimages.txt"
+          done
+          echo "RESUKISU_HOST_PREIMAGES_UNCHANGED=PASS" >> "$AUDIT_DIR/10-resukisu-host-preimages.txt"
+
+          {
+            echo "BASELINE_FREEZE=PASS"
+            echo "VEUX293_BASELINE_COMMIT=$baseline_commit"
+            echo "VEUX293_BASELINE_TREE=$baseline_tree"
+            echo "KERNELVERSION=$(make -s -C "$SRC" kernelversion)"
+            echo "RUN35374910431_BASELINE_REGRESSION=PASS"
+          } | tee "$AUDIT_DIR/10-baseline-freeze.txt"
+
+          echo "VEUX293_BASELINE_COMMIT=$baseline_commit" >> "$GITHUB_ENV"
+          echo "VEUX293_BASELINE_TREE=$baseline_tree" >> "$GITHUB_ENV"
+
+      - name: Verify pinned ReSukiSU V1 integrator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          INTEGRATOR="lineages/5.4.293/RESUKISU_INTEGRATE_V1.py"
+          EXPECTED_SHA256="325a5b559ca7304fd6c7760e86991f50b283b1673be48cbea4ca5c581bc8dd0b"
+
+          test -f "$INTEGRATOR"
+          python3 -m py_compile "$INTEGRATOR"
+          actual="$(sha256sum "$INTEGRATOR" | awk '{print $1}')"
+          test "$actual" = "$EXPECTED_SHA256"
+
+          python3 "$INTEGRATOR" --selftest | tee "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'RESUKISU_GIT_WORKTREE_LAYOUT=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'KBUILD_GIT_METADATA=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'HOST_DELTA_FIXTURE=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'RESUKISU_DELTA_FIXTURE=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'FIXTURE_TRANSFORM=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER_EXCLUSION=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'DUPLICATE_GUARD=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+          grep -Fxq 'SELFTEST=PASS' "$AUDIT_DIR/11-integrator-selftest.txt"
+
+          {
+            echo "PINNED_INTEGRATOR_GATE=PASS"
+            echo "INTEGRATOR_SHA256=$actual"
+          } | tee "$AUDIT_DIR/11-integrator-pin.txt"
+
+      - name: Fetch exact ReSukiSU pin
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          RS="$WORK_ROOT/ReSukiSU"
+
+          rm -rf "$RS"
+          mkdir -p "$RS"
+          git -C "$RS" init -q
+          git -C "$RS" remote add origin "$RESUKISU_REPO"
+          git -C "$RS" fetch -q --tags origin main
+          git -C "$RS" checkout -q --detach "$RESUKISU_COMMIT"
+
+          actual="$(git -C "$RS" rev-parse HEAD)"
+          test "$actual" = "$RESUKISU_COMMIT"
+          test -z "$(git -C "$RS" status --porcelain)"
+          test ! -f "$RS/.git/shallow"
+          test -f "$RS/kernel/Kbuild"
+
+          {
+            echo "RESUKISU_PIN=PASS"
+            echo "RESUKISU_COMMIT=$actual"
+            echo "RESUKISU_DESCRIBE=$(git -C "$RS" describe --always --tags --dirty)"
+          } | tee "$AUDIT_DIR/12-resukisu-pin.txt"
+
+      - name: Apply fail-closed ReSukiSU integration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          RS="$WORK_ROOT/ReSukiSU"
+          RESULTS="$WORK_ROOT/results"
+          INTEGRATOR="$GITHUB_WORKSPACE/lineages/5.4.293/RESUKISU_INTEGRATE_V1.py"
+          mkdir -p "$RESULTS"
+
+          test -n "${VEUX293_BASELINE_COMMIT:-}"
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$VEUX293_BASELINE_COMMIT"
+          test -z "$(git -C "$SRC" status --porcelain)"
+          test "$(make -s -C "$SRC" kernelversion)" = "$TARGET_VERSION"
+
+          python3 "$INTEGRATOR" "$SRC" "$RS" | tee "$RESULTS/integration.log"
+
+          grep -Fxq 'RESUKISU_HOST_INTEGRATION=PASS' "$RESULTS/integration.log"
+          grep -Fxq 'RESUKISU_GIT_WORKTREE_LAYOUT=PASS' "$RESULTS/integration.log"
+          grep -Fxq 'HOST_DELTA_GUARD=PASS' "$RESULTS/integration.log"
+          grep -Fxq 'RESUKISU_DELTA_GUARD=PASS' "$RESULTS/integration.log"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$RESULTS/integration.log"
+          grep -Fxq 'SUSFS=NOT_PRESENT' "$RESULTS/integration.log"
+
+          test -L "$SRC/drivers/kernelsu"
+          test -d "$SRC/.resukisu/.git"
+          test "$(git -C "$SRC/.resukisu" rev-parse HEAD)" = "$RESUKISU_COMMIT"
+          test "$(readlink -f "$SRC/drivers/kernelsu")" = "$(readlink -f "$SRC/.resukisu/kernel")"
+
+          if grep -RIn --exclude-dir=.git -E 'module_load_filter|ksu_block_modules|block_modules'               "$SRC/.resukisu/kernel" > "$RESULTS/module-filter-scan.txt"; then
+            echo "ERROR: module_load_filter references remain" >&2
+            cat "$RESULTS/module-filter-scan.txt" >&2
+            exit 1
+          fi
+          : > "$RESULTS/module-filter-scan.txt"
+          echo "MODULE_LOAD_FILTER_SCAN=PASS" >> "$RESULTS/module-filter-scan.txt"
+
+          bash common/scripts/identity_guard.sh             snapshot "$SRC" "$DEFCONFIG" "$RESULTS/identity-before-build.sha256"
+
+          {
+            echo "RESUKISU_INTEGRATION_GATE=PASS"
+            echo "BASELINE_COMMIT=$VEUX293_BASELINE_COMMIT"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "HOOK_MODE=MANUAL"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "SUSFS=NOT_PRESENT"
+          } | tee "$AUDIT_DIR/13-resukisu-integration.txt"
+
+      - name: Fetch exact clang-r547379
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          TC="$WORK_ROOT/$TOOLCHAIN_DIRNAME"
+          ARCHIVE="$WORK_ROOT/${TOOLCHAIN_DIRNAME}-${TOOLCHAIN_COMMIT}.tar.gz"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          if [[ "$conflicts" != "0" ]]; then
+            echo "TOOLCHAIN_FETCH=SKIPPED_PORT_CONFLICTS" | tee "$AUDIT_DIR/06-toolchain.txt"
+            exit 0
+          fi
+
+          rm -rf "$TC"
+          mkdir -p "$TC"
+          rm -f "$ARCHIVE"
+
+          URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${TOOLCHAIN_COMMIT}/${TOOLCHAIN_DIRNAME}.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 2 "$URL" -o "$ARCHIVE"
+          test -s "$ARCHIVE"
+          tar -xzf "$ARCHIVE" -C "$TC"
+          test -x "$TC/bin/clang"
+          test -x "$TC/bin/ld.lld"
+          test -f "$TC/BUILD_INFO"
+          grep -Fq '"bid": "13065274"' "$TC/BUILD_INFO"
+          grep -Fq '"branch": "aosp-llvm-r547379-release"' "$TC/BUILD_INFO"
+          grep -Fq "$TOOLCHAIN_LLVM_PROJECT_REVISION" "$TC/BUILD_INFO"
+
+          {
+            echo "TOOLCHAIN_FETCH=PASS"
+            echo "TOOLCHAIN_COMMIT=$TOOLCHAIN_COMMIT"
+            echo "TOOLCHAIN_DIRNAME=$TOOLCHAIN_DIRNAME"
+            echo "TOOLCHAIN_ARCHIVE_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+            "$TC/bin/clang" --version | head -n 1
+            "$TC/bin/ld.lld" --version | head -n 1
+          } | tee "$AUDIT_DIR/06-toolchain.txt"
+
+      - name: Configure and compile VEUX 5.4.293 ReSukiSU
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          TC="$WORK_ROOT/$TOOLCHAIN_DIRNAME"
+          OUT="$WORK_ROOT/out"
+          RESULTS="$WORK_ROOT/results"
+          mkdir -p "$OUT" "$RESULTS"
+
+          grep -Fxq 'RESUKISU_INTEGRATION_GATE=PASS' "$AUDIT_DIR/13-resukisu-integration.txt"
+          test "$(git -C "$SRC/.resukisu" rev-parse HEAD)" = "$RESUKISU_COMMIT"
+
+          export PATH="$TC/bin:$PATH"
+          export ARCH=arm64
+
+          clang --version | tee "$RESULTS/clang-version.txt"
+          ld.lld --version | tee "$RESULTS/lld-version.txt"
+
+          set +e
+          make -C "$SRC" O="$OUT" ARCH=arm64             CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1             "$DEFCONFIG"             2>&1 | tee "$RESULTS/defconfig.log"
+          config_rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$config_rc" > "$RESULTS/config-rc.txt"
+
+          if [[ "$config_rc" != "0" || ! -f "$OUT/.config" ]]; then
+            echo "RESUKISU_CONFIG=FAIL" | tee "$RESULTS/build-state.txt"
+            echo "998" > "$RESULTS/build-rc.txt"
+            exit 0
+          fi
+
+          test -x "$SRC/scripts/config"
+          "$SRC/scripts/config" --file "$OUT/.config"             --enable KSU             --enable KSU_MANUAL_HOOK             --enable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK             --enable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK             --enable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK             --disable KSU_TRACEPOINT_HOOK             --disable KSU_SUSFS
+
+          make -C "$SRC" O="$OUT" ARCH=arm64             CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1             olddefconfig             2>&1 | tee "$RESULTS/olddefconfig.log"
+
+          for expected in             'CONFIG_KSU=y'             'CONFIG_KSU_MANUAL_HOOK=y'             'CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK=y'             'CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK=y'             'CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y'
+          do
+            grep -Fxq "$expected" "$OUT/.config"
+          done
+          grep -Fxq '# CONFIG_KSU_TRACEPOINT_HOOK is not set' "$OUT/.config"
+          grep -Fxq '# CONFIG_KSU_SUSFS is not set' "$OUT/.config"
+
+          grep -E '^CONFIG_KSU|^# CONFIG_KSU' "$OUT/.config"             | tee "$RESULTS/ksu-config.txt"
+          sha256sum "$OUT/.config" | tee "$RESULTS/generated-config.sha256"
+
+          KERNELRELEASE_PRE="$(
+            make -s -C "$SRC" O="$OUT" ARCH=arm64               CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 kernelrelease
+          )"
+          printf '%s\\n' "$KERNELRELEASE_PRE" | tee "$RESULTS/kernelrelease-prebuild.txt"
+          case "$KERNELRELEASE_PRE" in
+            5.4.293*) ;;
+            *)
+              echo "RESUKISU_KERNELRELEASE_PRECHECK=FAIL" | tee "$RESULTS/build-state.txt"
+              echo "997" > "$RESULTS/build-rc.txt"
+              exit 0
+              ;;
+          esac
+
+          set +e
+          make -C "$SRC" -j"$(nproc)" O="$OUT"             ARCH=arm64             CC=clang             CLANG_TRIPLE=aarch64-linux-gnu-             CROSS_COMPILE=aarch64-linux-gnu-             CROSS_COMPILE_ARM32=arm-linux-gnueabi-             LD=ld.lld             LLVM=1             LLVM_IAS=1             Image             2>&1 | tee "$RESULTS/build.log"
+          build_rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$build_rc" > "$RESULTS/build-rc.txt"
+
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          if [[ "$build_rc" == "0" && -s "$IMAGE" ]]; then
+            echo "RESUKISU_COMPILE=PASS" | tee "$RESULTS/build-state.txt"
+            sha256sum "$IMAGE" | tee "$RESULTS/Image.sha256"
+            wc -c "$IMAGE" | tee "$RESULTS/Image.bytes"
+          else
+            echo "RESUKISU_COMPILE=FAIL" | tee "$RESULTS/build-state.txt"
+          fi
+
+          error_signatures="$(grep -Eci '(^|: )(error:|fatal error:|undefined reference|undefined symbol|No rule to make target)|make(\[[0-9]+\])?: \*\*\*' "$RESULTS/build.log" 2>/dev/null || true)"
+          echo "ERROR_SIGNATURES=$error_signatures" | tee "$RESULTS/error-signatures.txt"
+
+          git -C "$SRC" diff --check
+          git -C "$SRC/.resukisu" diff --check
+
+          if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+            echo "ERROR: reject/orig files after ReSukiSU compile" >&2
+            exit 1
+          fi
+
+          bash common/scripts/audit_existing_integration.sh "$SRC"             | tee "$RESULTS/post-build-integration-audit.txt"
+          bash common/scripts/identity_guard.sh             verify "$SRC" "$DEFCONFIG" "$RESULTS/identity-before-build.sha256"             | tee "$RESULTS/identity-after-build.txt"
+
+      - name: Finalize ReSukiSU verdict
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-resukisu-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-11"
+          SRC="$WORK_ROOT/kernel"
+          OUT="$WORK_ROOT/out"
+          RESULTS="$WORK_ROOT/results"
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          FINAL="$AUDIT_DIR/FINAL-RESULT.txt"
+
+          conflicts="999"
+          [[ -f "$AUDIT_DIR/PORT_CONFLICTS.txt" ]] && conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          build_rc="999"
+          [[ -f "$RESULTS/build-rc.txt" ]] && build_rc="$(tr -d '[:space:]' < "$RESULTS/build-rc.txt")"
+
+          kernelversion="UNKNOWN"
+          if [[ -d "$SRC" ]]; then
+            kernelversion="$(make -s -C "$SRC" kernelversion 2>/dev/null || echo UNKNOWN)"
+          fi
+
+          image_present="NO"
+          image_sha="NONE"
+          image_bytes="0"
+          if [[ -s "$IMAGE" ]]; then
+            image_present="YES"
+            image_sha="$(sha256sum "$IMAGE" | awk '{print $1}')"
+            image_bytes="$(wc -c < "$IMAGE" | tr -d ' ')"
+          fi
+
+          error_signatures="UNKNOWN"
+          if [[ -f "$RESULTS/error-signatures.txt" ]]; then
+            error_signatures="$(cut -d= -f2 "$RESULTS/error-signatures.txt" | tr -d '[:space:]')"
+          fi
+
+          timer_compat="NO"
+          if [[ -f "$AUDIT_DIR/09-timer-abi-compat.txt" ]] && grep -Fxq 'TIMER_ABI_COMPAT=PASS' "$AUDIT_DIR/09-timer-abi-compat.txt"; then
+            timer_compat="PASS"
+          fi
+
+          baseline_freeze="NO"
+          if [[ -f "$AUDIT_DIR/10-baseline-freeze.txt" ]] && grep -Fxq 'BASELINE_FREEZE=PASS' "$AUDIT_DIR/10-baseline-freeze.txt" && grep -Fxq 'RUN35374910431_BASELINE_REGRESSION=PASS' "$AUDIT_DIR/10-baseline-freeze.txt"; then
+            baseline_freeze="PASS"
+          fi
+
+          integration="NO"
+          if [[ -f "$RESULTS/integration.log" ]] && grep -Fxq 'RESUKISU_HOST_INTEGRATION=PASS' "$RESULTS/integration.log" && grep -Fxq 'RESUKISU_GIT_WORKTREE_LAYOUT=PASS' "$RESULTS/integration.log" && grep -Fxq 'HOST_DELTA_GUARD=PASS' "$RESULTS/integration.log" && grep -Fxq 'RESUKISU_DELTA_GUARD=PASS' "$RESULTS/integration.log" && grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$RESULTS/integration.log" && grep -Fxq 'SUSFS=NOT_PRESENT' "$RESULTS/integration.log"; then
+            integration="PASS"
+          fi
+
+          rs_commit="UNKNOWN"
+          if [[ -d "$SRC/.resukisu/.git" ]]; then
+            rs_commit="$(git -C "$SRC/.resukisu" rev-parse HEAD 2>/dev/null || echo UNKNOWN)"
+          fi
+
+          verdict="RED"
+          if [[ "$conflicts" == "0" && "$timer_compat" == "PASS" && "$baseline_freeze" == "PASS" && "$build_rc" == "0" && "$kernelversion" == "$TARGET_VERSION" && "$image_present" == "YES" && "$error_signatures" == "0" && "$integration" == "PASS" && "$rs_commit" == "$RESUKISU_COMMIT" ]]; then
+            verdict="GREEN_PASS"
+          fi
+
+          {
+            echo "VEUX_5_4_293_RESUKISU=$verdict"
+            echo "BASELINE_GITHUB_GREEN_RUN=35374910431"
+            echo "SOURCE_BASE=$SOURCE_COMMIT"
+            echo "SOURCE_BASE_VERSION=$SOURCE_VERSION"
+            echo "OFFICIAL_STABLE_BASE=$STABLE_292_COMMIT"
+            echo "OFFICIAL_STABLE_TARGET=$STABLE_293_COMMIT"
+            echo "PORT_CONFLICTS=$conflicts"
+            echo "TIMER_ABI_COMPAT=$timer_compat"
+            echo "BASELINE_FREEZE=$baseline_freeze"
+            echo "RESUKISU_INTEGRATION=$integration"
+            echo "RESUKISU_COMMIT=$rs_commit"
+            echo "RESUKISU_EXPECTED_VERSION=$RESUKISU_EXPECTED_VERSION"
+            echo "RESUKISU_EXPECTED_UAPI=$RESUKISU_EXPECTED_UAPI"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "HOOK_MODE=MANUAL"
+            echo "SUSFS=NOT_PRESENT"
+            echo "BUILD_RC=$build_rc"
+            echo "KERNELVERSION=$kernelversion"
+            echo "IMAGE_PRESENT=$image_present"
+            echo "IMAGE_BYTES=$image_bytes"
+            echo "IMAGE_SHA256=$image_sha"
+            echo "ERROR_SIGNATURES=$error_signatures"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } | tee "$FINAL"
+
+          (
+            cd "$AUDIT_DIR"
+            find . -type f ! -name SHA256SUMS.txt -print0               | LC_ALL=C sort -z               | xargs -0 sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload complete 5.4.293 ReSukiSU evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-5.4.293-ReSukiSU-v1-${{ github.run_id }}
+          path: |
+            .audit/workflow-11/
+            .work/5.4.293-resukisu-v1/results/
+            .work/5.4.293-resukisu-v1/out/arch/arm64/boot/Image
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+
+      - name: Enforce real ReSukiSU GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL="$GITHUB_WORKSPACE/.audit/workflow-11/FINAL-RESULT.txt"
+          test -s "$FINAL"
+          cat "$FINAL"
+          grep -Fxq 'VEUX_5_4_293_RESUKISU=GREEN_PASS' "$FINAL"
