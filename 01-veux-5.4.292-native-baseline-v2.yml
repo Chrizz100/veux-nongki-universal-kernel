@@ -1,0 +1,110 @@
+name: 01 - VEUX 5.4.292 Native Baseline V2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5.4.292-native-baseline-v2
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    name: Native 5.4.292 baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            curl \
+            dwarves \
+            flex \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            perl \
+            python3 \
+            rsync \
+            xz-utils \
+            zstd
+
+      - name: Verify baseline script
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCRIPT="lineages/5.4.292/BASELINE_BUILD_V2.sh"
+          EXPECTED_SHA256="98c0d08563a4348eba1bbaebccb72e8978473f74f992f6a35ec03b0c7265d642"
+
+          test -f "$SCRIPT"
+          bash -n "$SCRIPT"
+
+          actual="$(sha256sum "$SCRIPT" | awk '{print $1}')"
+          echo "EXPECTED_SHA256=$EXPECTED_SHA256"
+          echo "ACTUAL_SHA256=$actual"
+          test "$actual" = "$EXPECTED_SHA256"
+
+          echo "BASELINE_SCRIPT_GATE=PASS"
+
+      - name: Run native 5.4.292 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash lineages/5.4.292/BASELINE_BUILD_V2.sh
+
+      - name: Verify baseline result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RESULT=".work/5.4.292-baseline-v2/results/BASELINE_RESULT.txt"
+          IMAGE=".work/5.4.292-baseline-v2/out/arch/arm64/boot/Image"
+
+          test -s "$RESULT"
+          test -s "$IMAGE"
+
+          grep -Fxq 'BASELINE_COMPILE=PASS' "$RESULT"
+          grep -Fxq 'SOURCE_PIN=PASS' "$RESULT"
+          grep -Fxq 'EXISTING_INTEGRATION_AUDIT=PASS' "$RESULT"
+          grep -Fxq 'DEFCONFIG=PASS' "$RESULT"
+          grep -Fxq 'IMAGE_PRESENT=PASS' "$RESULT"
+          grep -Fxq 'KERNELRELEASE_NATIVE_5_4_292=PASS' "$RESULT"
+          grep -Fxq 'IDENTITY_GUARD=PASS' "$RESULT"
+          grep -Fxq 'RESUKISU=NOT_PRESENT' "$RESULT"
+          grep -Fxq 'SUSFS=NOT_PRESENT' "$RESULT"
+          grep -Fxq 'LINEAGE_PATCHES=NONE' "$RESULT"
+          grep -Fxq 'PACKAGE=NOT_CREATED' "$RESULT"
+          grep -Fxq 'STATIC_BOOT_PATH=NOT_RUN' "$RESULT"
+          grep -Fxq 'DEVICE_PASS=NO' "$RESULT"
+
+          echo
+          cat "$RESULT"
+          echo
+          sha256sum "$IMAGE"
+
+      - name: Upload baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-5.4.292-native-baseline-v2-${{ github.run_id }}
+          path: |
+            .work/5.4.292-baseline-v2/results/
+            .work/5.4.292-baseline-v2/out/arch/arm64/boot/Image
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
