@@ -1,0 +1,256 @@
+name: 09 - VEUX 5.4.292 ReSukiSU + SUSFS 2.3.0 V4 Compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5.4.292-resukisu-susfs-v4-compile
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    name: ReSukiSU + SUSFS 2.3.0 V4 compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Initialize diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .audit/workflow-09
+          {
+            echo "WORKFLOW=09"
+            echo "PURPOSE=VEUX_5_4_292_RESUKISU_SUSFS_2_3_0_V4_COMPILE"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } > .audit/workflow-09/runner.txt
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            curl \
+            dwarves \
+            flex \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            perl \
+            python3 \
+            rsync \
+            xz-utils \
+            zstd
+
+      - name: Verify pinned SUSFS V4 integration files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD="lineages/5.4.292/SUSFS_BUILD_V4.sh"
+          INTEGRATOR="lineages/5.4.292/SUSFS_INTEGRATE_V4.py"
+
+          BUILD_SHA256="f1f94701c090be387135dad603b5c93e439d521fbf03df33f6657a1267a5becc"
+          INTEGRATOR_SHA256="82cb2ec0d4c068ffb048aa93bbb8216dd65d441ecdac1cb7c8d823f17474fffa"
+
+          test -f "$BUILD"
+          test -f "$INTEGRATOR"
+
+          bash -n "$BUILD"
+          python3 -m py_compile "$INTEGRATOR"
+
+          actual_build="$(sha256sum "$BUILD" | awk '{print $1}')"
+          actual_integrator="$(sha256sum "$INTEGRATOR" | awk '{print $1}')"
+
+          test "$actual_build" = "$BUILD_SHA256"
+          test "$actual_integrator" = "$INTEGRATOR_SHA256"
+
+          {
+            echo "BUILD_SHA256=$actual_build"
+            echo "INTEGRATOR_SHA256=$actual_integrator"
+            echo "PINNED_FILE_GATE=PASS"
+          } | tee .audit/workflow-09/pinned-files.txt
+
+      - name: Run SUSFS V4 integrator self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 lineages/5.4.292/SUSFS_INTEGRATE_V4.py --selftest \
+            | tee .audit/workflow-09/integrator-selftest.txt
+
+          for gate in \
+            'DONOR_STATFS_SEMANTIC_FIX=PASS' \
+            'UPSTREAM_STATFS_COMPILE_FIX_BACKPORT=PASS' \
+            'UPSTREAM_CLONE_MNT_RACE_FIX_BACKPORT=PASS' \
+            'SUSFS_5_4_CORE_COHERENCE=PASS' \
+            'VEUX_DIVERGENT_PREIMAGE_CONTRACT=PASS' \
+            'HOOK_SURFACE_PREIMAGE_CONTRACT=PASS' \
+            'RESUKISU_IDENTITY_CONTRACT=PASS' \
+            'VEUX_DIVERGENT_OUTER_PORT=PASS' \
+            'RUN35344193301_REGRESSION=PASS' \
+            'RUN35346290137_REGRESSION=PASS' \
+            'RUN35350262681_REGRESSION=PASS' \
+            'EXECVEAT_POST_HOOK_REPAIR=PASS' \
+            'EXECVEAT_POST_HOOK_SUCCESS_PATH=PASS' \
+            'SYS_READ_ABI_REPAIR=PASS' \
+            'REBOOT_SUPERCALL_FLOW_REPAIR=PASS' \
+            'MODULE_LOAD_FILTER_EXCLUSION=PASS' \
+            'DUPLICATE_GUARD=PASS' \
+            'SELFTEST=PASS'
+          do
+            grep -Fxq "$gate" .audit/workflow-09/integrator-selftest.txt || {
+              echo "ERROR: missing integrator selftest gate: $gate" >&2
+              exit 1
+            }
+          done
+
+      - name: Run ReSukiSU + SUSFS V4 compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash lineages/5.4.292/SUSFS_BUILD_V4.sh
+
+      - name: Verify SUSFS V4 compile result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT=".work/5.4.292-susfs-v4"
+          RESULT="$ROOT/results/SUSFS_RESULT.txt"
+          SUMS="$ROOT/results/SHA256SUMS.txt"
+          IMAGE="$ROOT/out/arch/arm64/boot/Image"
+          SUSFS_OBJ="$ROOT/out/fs/susfs.o"
+
+          test -s "$RESULT"
+          test -s "$SUMS"
+          test -s "$IMAGE"
+          test -s "$SUSFS_OBJ"
+
+          for gate in \
+            'SUSFS_COMPILE=PASS' \
+            'RESUKISU_COMPILE=PASS' \
+            'HOST_INTEGRATION=PASS' \
+            'RESUKISU_GIT_WORKTREE_LAYOUT=PASS' \
+            'HOST_DELTA_GUARD=PASS' \
+            'RESUKISU_DELTA_GUARD=PASS' \
+            'RESUKISU_CHECKER_BLOB_CONTRACT=PASS' \
+            'RESUKISU_UAPI_BLOB_CONTRACT=PASS' \
+            'DONOR_STATFS_SEMANTIC_FIX=PASS' \
+            'UPSTREAM_STATFS_COMPILE_FIX_BACKPORT=PASS' \
+            'UPSTREAM_CLONE_MNT_RACE_FIX_BACKPORT=PASS' \
+            'SUSFS_5_4_CORE_COHERENCE=PASS' \
+            'VEUX_DIVERGENT_PREIMAGE_GATE=PASS' \
+            'HOOK_SURFACE_PREIMAGE_GATE=PASS' \
+            'VEUX_DIVERGENT_OUTER_PORT=PASS' \
+            'RESUKISU_STATIC_KEY_ABI=PASS' \
+            'RESUKISU_VERSION=35154' \
+            'RESUKISU_UAPI=4' \
+            'ARM64_THREAD_INFO_CONTRACT=PASS' \
+            'SELINUX_STATIC_EXPORT_CONTRACT=PASS' \
+            'RUN35344193301_REGRESSION=PASS' \
+            'RUN35346290137_REGRESSION=PASS' \
+            'RUN35350262681_REGRESSION=PASS' \
+            'EXECVEAT_POST_HOOK_GATE=PASS' \
+            'EXECVEAT_POST_HOOK_SUCCESS_PATH=PASS' \
+            'SYS_READ_ABI_GATE=PASS' \
+            'REBOOT_SUPERCALL_FLOW_GATE=PASS' \
+            'OPEN_REDIRECT_RETRY_FIX=PASS' \
+            'SUS_MOUNT_CLONE_RACE_FIX=PASS' \
+            'MODULE_LOAD_FILTER=EXCLUDED' \
+            'HOOK_MODE=SUSFS_INLINE' \
+            'SUSFS_VERSION=v2.3.0' \
+            'SUSFS_CODE_BASE=PINNED_5_4_DONOR_PORT' \
+            'SUSFS_UPSTREAM_REFERENCE_COMMIT=04a9d713106191ba98be680bd7ad9547ab1de964' \
+            'ERROR_SIGNATURES=0' \
+            'PACKAGE_PASS=NO' \
+            'STATIC_BOOT_PATH_PASS=NO' \
+            'DEVICE_PASS=NO'
+          do
+            grep -Fxq "$gate" "$RESULT" || {
+              echo "ERROR: missing result gate: $gate" >&2
+              exit 1
+            }
+          done
+
+          grep -Fxq 'SUSFS_OFFICIAL_BRANCH_PIN=PASS' \
+            "$ROOT/results/susfs-official-pin.txt"
+          grep -Fxq 'RESUKISU_CHECKER_BLOB_CONTRACT=PASS' \
+            "$ROOT/results/resukisu-contract-blobs.txt"
+          grep -Fxq 'RESUKISU_UAPI_BLOB_CONTRACT=PASS' \
+            "$ROOT/results/resukisu-contract-blobs.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER_SCAN=PASS' \
+            "$ROOT/results/module-filter-scan.txt"
+          grep -Fxq 'IDENTITY_GUARD=PASS' \
+            "$ROOT/results/identity-after-build.txt"
+
+          (
+            cd "$ROOT/results"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          sha256sum "$IMAGE" | tee .audit/workflow-09/image-sha256.txt
+          sha256sum "$SUSFS_OBJ" | tee .audit/workflow-09/susfs-object-sha256.txt
+          cat "$RESULT" | tee .audit/workflow-09/result.txt
+          echo "WORKFLOW_RESULT_GATE=PASS" | tee -a .audit/workflow-09/runner.txt
+
+      - name: Capture failure context
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .audit/workflow-09
+          ROOT=".work/5.4.292-susfs-v4"
+          {
+            echo "WORKFLOW_RESULT=FAIL"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo
+            echo "=== source pins ==="
+            cat "$ROOT/results/source-pins.txt" 2>/dev/null || true
+            echo
+            echo "=== integrator selftest ==="
+            cat .audit/workflow-09/integrator-selftest.txt 2>/dev/null || true
+            echo
+            echo "=== integration.log tail ==="
+            tail -n 320 "$ROOT/results/integration.log" 2>/dev/null || true
+            echo
+            echo "=== ksu config ==="
+            cat "$ROOT/results/ksu-config.txt" 2>/dev/null || true
+            echo
+            echo "=== build.log tail ==="
+            tail -n 450 "$ROOT/results/build.log" 2>/dev/null || true
+            echo
+            echo "=== result ==="
+            cat "$ROOT/results/SUSFS_RESULT.txt" 2>/dev/null || true
+          } > .audit/workflow-09/failure-context.txt 2>&1
+          echo "FAILURE_CONTEXT_CAPTURE=PASS" >> .audit/workflow-09/runner.txt
+          exit 0
+
+      - name: Upload ReSukiSU + SUSFS V4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-5.4.292-ReSukiSU-SUSFS-V4-${{ github.run_id }}
+          path: |
+            .audit/workflow-09/
+            .work/5.4.292-susfs-v4/results/
+            .work/5.4.292-susfs-v4/out/arch/arm64/boot/Image
+            .work/5.4.292-susfs-v4/out/fs/susfs.o
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
