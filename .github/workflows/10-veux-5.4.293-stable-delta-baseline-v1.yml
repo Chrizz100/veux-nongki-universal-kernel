@@ -1,0 +1,663 @@
+name: 10 - VEUX 5.4.293 Stable Delta Baseline V1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5-4-293-stable-delta-baseline-v1
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: https://github.com/UEDestroyer/kernel_xiaomi_veux.git
+  SOURCE_COMMIT: fb3bbb10bc0480282c01b88ccaf39c0145cd9f51
+  SOURCE_VERSION: 5.4.292
+  TARGET_VERSION: 5.4.293
+  DEFCONFIG: veux_defconfig
+  DEFCONFIG_SHA256: a83099092fba60b5beaacc4f5b089f4f96e23d31148714dee0d539817f50f0d1
+
+  STABLE_REPO: https://github.com/gregkh/linux.git
+  STABLE_292_TAG: v5.4.292
+  STABLE_293_TAG: v5.4.293
+  STABLE_292_COMMIT: 1b01d9c341770d4dab5a1a04a706a8eb6c389bb1
+  STABLE_293_COMMIT: 2c8115e4757809ffd537ed9108da115026d3581f
+
+  TOOLCHAIN_COMMIT: d19c99c180cfa21504426915d765b5e7adf878b6
+  TOOLCHAIN_DIRNAME: clang-r547379
+  TOOLCHAIN_BUILD_ID: "13065274"
+  TOOLCHAIN_LLVM_PROJECT_REVISION: b718bcaf8c198c82f3021447d943401e3ab5bd54
+
+jobs:
+  port-and-build:
+    name: VEUX 5.4.293 stable delta port and baseline compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Initialize audit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          rm -rf "$WORK_ROOT" "$AUDIT_DIR"
+          mkdir -p "$WORK_ROOT" "$AUDIT_DIR"
+
+          {
+            echo "WORKFLOW=10"
+            echo "PURPOSE=VEUX_5.4.292_TO_OFFICIAL_STABLE_5.4.293_PORT_AND_BASELINE_COMPILE"
+            echo "SOURCE_REPO=$SOURCE_REPO"
+            echo "SOURCE_COMMIT=$SOURCE_COMMIT"
+            echo "SOURCE_VERSION=$SOURCE_VERSION"
+            echo "TARGET_VERSION=$TARGET_VERSION"
+            echo "STABLE_REPO=$STABLE_REPO"
+            echo "STABLE_292_COMMIT=$STABLE_292_COMMIT"
+            echo "STABLE_293_COMMIT=$STABLE_293_COMMIT"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } > "$AUDIT_DIR/00-plan.txt"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl dwarves flex git \
+            libelf-dev libncurses-dev libssl-dev perl python3 rsync xz-utils zstd
+
+      - name: Fetch exact VEUX source and exact stable tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          SRC="$WORK_ROOT/kernel"
+          STABLE="$WORK_ROOT/stable"
+
+          rm -rf "$SRC" "$STABLE"
+          mkdir -p "$SRC" "$STABLE"
+
+          git -C "$SRC" init -q
+          git -C "$SRC" remote add origin "$SOURCE_REPO"
+          git -C "$SRC" fetch -q --depth=1 origin "$SOURCE_COMMIT"
+          git -C "$SRC" checkout -q --detach FETCH_HEAD
+
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test -z "$(git -C "$SRC" status --porcelain)"
+          test "$(make -s -C "$SRC" kernelversion)" = "$SOURCE_VERSION"
+          test -f "$SRC/arch/arm64/configs/$DEFCONFIG"
+          test "$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')" = "$DEFCONFIG_SHA256"
+
+          git -C "$STABLE" init -q
+          git -C "$STABLE" remote add origin "$STABLE_REPO"
+          git -C "$STABLE" fetch -q --depth=1 origin \
+            "refs/tags/$STABLE_292_TAG:refs/tags/$STABLE_292_TAG"
+          git -C "$STABLE" fetch -q --depth=1 origin \
+            "refs/tags/$STABLE_293_TAG:refs/tags/$STABLE_293_TAG"
+
+          BASE="$(git -C "$STABLE" rev-parse "refs/tags/$STABLE_292_TAG^{commit}")"
+          TARGET="$(git -C "$STABLE" rev-parse "refs/tags/$STABLE_293_TAG^{commit}")"
+          test "$BASE" = "$STABLE_292_COMMIT"
+          test "$TARGET" = "$STABLE_293_COMMIT"
+
+          git -C "$STABLE" diff --name-status --no-renames "$BASE" "$TARGET" \
+            > "$AUDIT_DIR/01-stable-delta-name-status.txt"
+          test -s "$AUDIT_DIR/01-stable-delta-name-status.txt"
+
+          {
+            echo "SOURCE_PIN=PASS"
+            echo "SOURCE_COMMIT=$(git -C "$SRC" rev-parse HEAD)"
+            echo "SOURCE_KERNELVERSION=$(make -s -C "$SRC" kernelversion)"
+            echo "DEFCONFIG_SHA256=$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')"
+            echo "STABLE_292_PIN=PASS"
+            echo "STABLE_292_COMMIT=$BASE"
+            echo "STABLE_293_PIN=PASS"
+            echo "STABLE_293_COMMIT=$TARGET"
+            echo "STABLE_DELTA_PATHS=$(wc -l < "$AUDIT_DIR/01-stable-delta-name-status.txt" | tr -d ' ')"
+          } | tee "$AUDIT_DIR/02-source-and-stable-pins.txt"
+
+      - name: Port full official 5.4.292 to 5.4.293 delta fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          SRC="$WORK_ROOT/kernel"
+          STABLE="$WORK_ROOT/stable"
+          export SRC STABLE AUDIT_DIR STABLE_292_COMMIT STABLE_293_COMMIT
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import stat
+          import subprocess
+          import tempfile
+
+          src = Path(os.environ["SRC"])
+          stable = Path(os.environ["STABLE"])
+          audit = Path(os.environ["AUDIT_DIR"])
+          base_commit = os.environ["STABLE_292_COMMIT"]
+          target_commit = os.environ["STABLE_293_COMMIT"]
+          delta_file = audit / "01-stable-delta-name-status.txt"
+          conflicts_root = audit / "conflicts"
+          conflicts_root.mkdir(parents=True, exist_ok=True)
+
+          def run(args, *, check=True, text=False, input_data=None):
+              return subprocess.run(
+                  args,
+                  check=check,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=text,
+                  input=input_data,
+              )
+
+          def stable_mode(commit, path):
+              p = run(
+                  ["git", "-C", str(stable), "ls-tree", commit, "--", path],
+                  check=False,
+                  text=True,
+              )
+              if p.returncode != 0 or not p.stdout.strip():
+                  return None
+              return p.stdout.split()[0]
+
+          def stable_bytes(commit, path):
+              mode = stable_mode(commit, path)
+              if mode is None:
+                  return None, None
+              p = run(
+                  ["git", "-C", str(stable), "show", f"{commit}:{path}"],
+                  check=True,
+                  text=False,
+              )
+              return mode, p.stdout
+
+          def ours_state(path):
+              p = src / path
+              if p.is_symlink():
+                  return "120000", os.readlink(p).encode("utf-8")
+              if not p.exists():
+                  return None, None
+              if not p.is_file():
+                  return "UNSUPPORTED", None
+              mode = "100755" if (p.stat().st_mode & stat.S_IXUSR) else "100644"
+              return mode, p.read_bytes()
+
+          def remove_path(path):
+              p = src / path
+              if p.is_symlink() or p.is_file():
+                  p.unlink()
+              elif p.exists():
+                  raise RuntimeError(f"refusing to remove non-file path: {path}")
+
+          def write_state(path, mode, data):
+              p = src / path
+              p.parent.mkdir(parents=True, exist_ok=True)
+              if p.is_symlink() or p.is_file():
+                  p.unlink()
+              elif p.exists():
+                  raise RuntimeError(f"refusing to replace non-file path: {path}")
+
+              if mode == "120000":
+                  p.symlink_to(data.decode("utf-8"))
+              elif mode in ("100644", "100755"):
+                  p.write_bytes(data)
+                  p.chmod(0o755 if mode == "100755" else 0o644)
+              else:
+                  raise RuntimeError(f"unsupported target mode {mode} for {path}")
+
+          def is_binary(data):
+              return data is not None and b"\0" in data
+
+          def merge_mode(base_mode, ours_mode, target_mode):
+              if base_mode == target_mode:
+                  return ours_mode, None
+              if ours_mode == base_mode:
+                  return target_mode, None
+              if ours_mode == target_mode:
+                  return ours_mode, None
+              return None, "mode conflict"
+
+          def emit_conflict(path, status_code, reason, base_state, ours, target_state, preview=None):
+              d = conflicts_root / Path(path)
+              d.mkdir(parents=True, exist_ok=True)
+              base_mode, base_data = base_state
+              ours_mode, ours_data = ours
+              target_mode, target_data = target_state
+
+              def dump(name, mode, data):
+                  if data is None:
+                      (d / name).write_text("<ABSENT>\n", encoding="utf-8")
+                  else:
+                      (d / name).write_bytes(data)
+                  return mode or "ABSENT"
+
+              bm = dump("BASE", base_mode, base_data)
+              om = dump("OURS", ours_mode, ours_data)
+              tm = dump("THEIRS", target_mode, target_data)
+              if preview is not None:
+                  (d / "MERGE-PREVIEW").write_bytes(preview)
+              (d / "META.txt").write_text(
+                  f"path={path}\nstatus={status_code}\nreason={reason}\n"
+                  f"base_mode={bm}\nours_mode={om}\ntheirs_mode={tm}\n",
+                  encoding="utf-8",
+              )
+
+          raw_lines = [line for line in delta_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+          entries = []
+          for line in raw_lines:
+              parts = line.split("\t")
+              if len(parts) != 2:
+                  raise SystemExit(f"unsupported name-status line: {line!r}")
+              status_code, path = parts
+              if status_code not in {"A", "M", "D", "T"}:
+                  raise SystemExit(f"unsupported delta status {status_code!r}: {path}")
+              entries.append((status_code, path))
+
+          conflicts = []
+          direct = 0
+          merged = 0
+          unchanged = 0
+          deleted = 0
+
+          for status_code, path in entries:
+              base_state = stable_bytes(base_commit, path)
+              target_state = stable_bytes(target_commit, path)
+              ours = ours_state(path)
+              base_mode, base_data = base_state
+              target_mode, target_data = target_state
+              ours_mode, ours_data = ours
+
+              if ours_mode == "UNSUPPORTED":
+                  reason = "ours path is not a regular file or symlink"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              if status_code == "A":
+                  if base_data is not None or target_data is None:
+                      raise SystemExit(f"invalid A state for {path}")
+                  if ours_data is None:
+                      write_state(path, target_mode, target_data)
+                      direct += 1
+                  elif ours_data == target_data and ours_mode == target_mode:
+                      unchanged += 1
+                  else:
+                      reason = "stable adds path that already differs in VEUX source"
+                      emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                      conflicts.append((path, reason))
+                  continue
+
+              if status_code == "D":
+                  if base_data is None or target_data is not None:
+                      raise SystemExit(f"invalid D state for {path}")
+                  if ours_data is None:
+                      unchanged += 1
+                  elif ours_data == base_data and ours_mode == base_mode:
+                      remove_path(path)
+                      deleted += 1
+                  else:
+                      reason = "stable deletes path modified by VEUX source"
+                      emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                      conflicts.append((path, reason))
+                  continue
+
+              if base_data is None or target_data is None or ours_data is None:
+                  reason = "M/T path missing in base, target, or VEUX source"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              out_mode, mode_error = merge_mode(base_mode, ours_mode, target_mode)
+              if mode_error:
+                  emit_conflict(path, status_code, mode_error, base_state, ours, target_state)
+                  conflicts.append((path, mode_error))
+                  continue
+
+              if ours_data == base_data:
+                  write_state(path, out_mode, target_data)
+                  direct += 1
+                  continue
+              if target_data == base_data or ours_data == target_data:
+                  if ours_mode != out_mode:
+                      write_state(path, out_mode, ours_data)
+                  unchanged += 1
+                  continue
+
+              if any(is_binary(x) for x in (base_data, ours_data, target_data)):
+                  reason = "binary content conflict"
+                  emit_conflict(path, status_code, reason, base_state, ours, target_state)
+                  conflicts.append((path, reason))
+                  continue
+
+              with tempfile.TemporaryDirectory() as td:
+                  td = Path(td)
+                  op = td / "ours"
+                  bp = td / "base"
+                  tp = td / "theirs"
+                  op.write_bytes(ours_data)
+                  bp.write_bytes(base_data)
+                  tp.write_bytes(target_data)
+                  proc = run(
+                      ["git", "merge-file", "-p", str(op), str(bp), str(tp)],
+                      check=False,
+                      text=False,
+                  )
+                  if proc.returncode == 0:
+                      write_state(path, out_mode, proc.stdout)
+                      merged += 1
+                  elif proc.returncode == 1:
+                      reason = "textual three-way merge conflict"
+                      emit_conflict(
+                          path,
+                          status_code,
+                          reason,
+                          base_state,
+                          ours,
+                          target_state,
+                          preview=proc.stdout,
+                      )
+                      conflicts.append((path, reason))
+                  else:
+                      raise SystemExit(
+                          f"git merge-file failed for {path}: rc={proc.returncode}\n"
+                          + proc.stderr.decode("utf-8", errors="replace")
+                      )
+
+          summary = audit / "03-port-summary.txt"
+          summary.write_text(
+              "VEUX_5_4_293_PORT_ENGINE=PASS\n"
+              f"DELTA_PATHS={len(entries)}\n"
+              f"DIRECT_APPLIED={direct}\n"
+              f"AUTO_MERGED={merged}\n"
+              f"UNCHANGED_EQUIVALENT={unchanged}\n"
+              f"DELETED={deleted}\n"
+              f"PORT_CONFLICTS={len(conflicts)}\n",
+              encoding="utf-8",
+          )
+          (audit / "PORT_CONFLICTS.txt").write_text(str(len(conflicts)) + "\n", encoding="utf-8")
+          (audit / "03-conflict-list.txt").write_text(
+              "".join(f"{path}\t{reason}\n" for path, reason in conflicts),
+              encoding="utf-8",
+          )
+
+          print(summary.read_text(encoding="utf-8"), end="")
+          if conflicts:
+              print("CONFLICT_PATHS:")
+              for path, reason in conflicts:
+                  print(f"  {path}: {reason}")
+          PY
+
+          git -C "$SRC" status --porcelain -uall > "$AUDIT_DIR/04-port-git-status.txt"
+          git -C "$SRC" diff --check | tee "$AUDIT_DIR/04-diff-check.txt"
+
+      - name: Validate complete port state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          SRC="$WORK_ROOT/kernel"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          test "$conflicts" -ge 0
+
+          if [[ "$conflicts" != "0" ]]; then
+            {
+              echo "PORT_VALIDATION=BLOCKED_BY_CONFLICTS"
+              echo "PORT_CONFLICTS=$conflicts"
+              echo "BASELINE_COMPILE=SKIPPED"
+            } | tee "$AUDIT_DIR/05-port-validation.txt"
+            exit 0
+          fi
+
+          test "$(make -s -C "$SRC" kernelversion)" = "$TARGET_VERSION"
+          test -f "$SRC/arch/arm64/configs/$DEFCONFIG"
+          test "$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')" = "$DEFCONFIG_SHA256"
+          test ! -e "$SRC/drivers/kernelsu"
+          test ! -e "$SRC/fs/susfs.c"
+          test ! -e "$SRC/include/linux/susfs.h"
+
+          if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+            echo "ERROR: reject/orig file found after port" >&2
+            exit 1
+          fi
+
+          {
+            echo "PORT_VALIDATION=PASS"
+            echo "PORT_CONFLICTS=0"
+            echo "KERNELVERSION=$(make -s -C "$SRC" kernelversion)"
+            echo "DEFCONFIG_SHA256=$(sha256sum "$SRC/arch/arm64/configs/$DEFCONFIG" | awk '{print $1}')"
+            echo "RESUKISU=NOT_PRESENT"
+            echo "SUSFS=NOT_PRESENT"
+          } | tee "$AUDIT_DIR/05-port-validation.txt"
+
+      - name: Fetch exact clang-r547379
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          TC="$WORK_ROOT/$TOOLCHAIN_DIRNAME"
+          ARCHIVE="$WORK_ROOT/${TOOLCHAIN_DIRNAME}-${TOOLCHAIN_COMMIT}.tar.gz"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          if [[ "$conflicts" != "0" ]]; then
+            echo "TOOLCHAIN_FETCH=SKIPPED_PORT_CONFLICTS" | tee "$AUDIT_DIR/06-toolchain.txt"
+            exit 0
+          fi
+
+          rm -rf "$TC"
+          mkdir -p "$TC"
+          rm -f "$ARCHIVE"
+
+          URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${TOOLCHAIN_COMMIT}/${TOOLCHAIN_DIRNAME}.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 2 "$URL" -o "$ARCHIVE"
+          test -s "$ARCHIVE"
+          tar -xzf "$ARCHIVE" -C "$TC"
+          test -x "$TC/bin/clang"
+          test -x "$TC/bin/ld.lld"
+          test -f "$TC/BUILD_INFO"
+          grep -Fq '"bid": "13065274"' "$TC/BUILD_INFO"
+          grep -Fq '"branch": "aosp-llvm-r547379-release"' "$TC/BUILD_INFO"
+          grep -Fq "$TOOLCHAIN_LLVM_PROJECT_REVISION" "$TC/BUILD_INFO"
+
+          {
+            echo "TOOLCHAIN_FETCH=PASS"
+            echo "TOOLCHAIN_COMMIT=$TOOLCHAIN_COMMIT"
+            echo "TOOLCHAIN_DIRNAME=$TOOLCHAIN_DIRNAME"
+            echo "TOOLCHAIN_ARCHIVE_SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+            "$TC/bin/clang" --version | head -n 1
+            "$TC/bin/ld.lld" --version | head -n 1
+          } | tee "$AUDIT_DIR/06-toolchain.txt"
+
+      - name: Configure and compile VEUX 5.4.293 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          SRC="$WORK_ROOT/kernel"
+          TC="$WORK_ROOT/$TOOLCHAIN_DIRNAME"
+          OUT="$WORK_ROOT/out"
+          RESULTS="$WORK_ROOT/results"
+          mkdir -p "$OUT" "$RESULTS"
+
+          conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          if [[ "$conflicts" != "0" ]]; then
+            echo "BASELINE_COMPILE=SKIPPED_PORT_CONFLICTS" | tee "$RESULTS/build-state.txt"
+            echo "999" > "$RESULTS/build-rc.txt"
+            exit 0
+          fi
+
+          export PATH="$TC/bin:$PATH"
+          export ARCH=arm64
+
+          clang --version | tee "$RESULTS/clang-version.txt"
+          ld.lld --version | tee "$RESULTS/lld-version.txt"
+
+          set +e
+          make -C "$SRC" O="$OUT" ARCH=arm64 \
+            CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            "$DEFCONFIG" \
+            2>&1 | tee "$RESULTS/defconfig.log"
+          config_rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$config_rc" > "$RESULTS/config-rc.txt"
+
+          if [[ "$config_rc" != "0" || ! -f "$OUT/.config" ]]; then
+            echo "BASELINE_CONFIG=FAIL" | tee "$RESULTS/build-state.txt"
+            echo "998" > "$RESULTS/build-rc.txt"
+            exit 0
+          fi
+
+          KERNELRELEASE_PRE="$(
+            make -s -C "$SRC" O="$OUT" ARCH=arm64 \
+              CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 kernelrelease
+          )"
+          printf '%s\n' "$KERNELRELEASE_PRE" | tee "$RESULTS/kernelrelease-prebuild.txt"
+          case "$KERNELRELEASE_PRE" in
+            5.4.293*) ;;
+            *)
+              echo "BASELINE_KERNELRELEASE_PRECHECK=FAIL" | tee "$RESULTS/build-state.txt"
+              echo "997" > "$RESULTS/build-rc.txt"
+              exit 0
+              ;;
+          esac
+
+          set +e
+          make -C "$SRC" -j"$(nproc)" O="$OUT" \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LD=ld.lld \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            Image \
+            2>&1 | tee "$RESULTS/build.log"
+          build_rc="${PIPESTATUS[0]}"
+          set -e
+          echo "$build_rc" > "$RESULTS/build-rc.txt"
+
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          if [[ "$build_rc" == "0" && -s "$IMAGE" ]]; then
+            echo "BASELINE_COMPILE=PASS" | tee "$RESULTS/build-state.txt"
+            sha256sum "$IMAGE" | tee "$RESULTS/Image.sha256"
+            wc -c "$IMAGE" | tee "$RESULTS/Image.bytes"
+          else
+            echo "BASELINE_COMPILE=FAIL" | tee "$RESULTS/build-state.txt"
+          fi
+
+          error_signatures="$(grep -Eci '(^|: )(error:|fatal error:|undefined reference|No rule to make target)|make(\[[0-9]+\])?: \*\*\*' "$RESULTS/build.log" 2>/dev/null || true)"
+          echo "ERROR_SIGNATURES=$error_signatures" | tee "$RESULTS/error-signatures.txt"
+
+      - name: Finalize baseline verdict
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.293-baseline-v1"
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-10"
+          SRC="$WORK_ROOT/kernel"
+          OUT="$WORK_ROOT/out"
+          RESULTS="$WORK_ROOT/results"
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          FINAL="$AUDIT_DIR/FINAL-RESULT.txt"
+
+          conflicts="999"
+          [[ -f "$AUDIT_DIR/PORT_CONFLICTS.txt" ]] && conflicts="$(tr -d '[:space:]' < "$AUDIT_DIR/PORT_CONFLICTS.txt")"
+          build_rc="999"
+          [[ -f "$RESULTS/build-rc.txt" ]] && build_rc="$(tr -d '[:space:]' < "$RESULTS/build-rc.txt")"
+
+          kernelversion="UNKNOWN"
+          if [[ -d "$SRC" ]]; then
+            kernelversion="$(make -s -C "$SRC" kernelversion 2>/dev/null || echo UNKNOWN)"
+          fi
+
+          image_present="NO"
+          image_sha="NONE"
+          image_bytes="0"
+          if [[ -s "$IMAGE" ]]; then
+            image_present="YES"
+            image_sha="$(sha256sum "$IMAGE" | awk '{print $1}')"
+            image_bytes="$(wc -c < "$IMAGE" | tr -d ' ')"
+          fi
+
+          error_signatures="UNKNOWN"
+          if [[ -f "$RESULTS/error-signatures.txt" ]]; then
+            error_signatures="$(cut -d= -f2 "$RESULTS/error-signatures.txt" | tr -d '[:space:]')"
+          fi
+
+          verdict="RED"
+          if [[ "$conflicts" == "0" \
+                && "$build_rc" == "0" \
+                && "$kernelversion" == "$TARGET_VERSION" \
+                && "$image_present" == "YES" \
+                && "$error_signatures" == "0" ]]; then
+            verdict="GREEN_PASS"
+          fi
+
+          {
+            echo "VEUX_5_4_293_BASELINE=$verdict"
+            echo "SOURCE_BASE=$SOURCE_COMMIT"
+            echo "SOURCE_BASE_VERSION=$SOURCE_VERSION"
+            echo "OFFICIAL_STABLE_BASE=$STABLE_292_COMMIT"
+            echo "OFFICIAL_STABLE_TARGET=$STABLE_293_COMMIT"
+            echo "PORT_CONFLICTS=$conflicts"
+            echo "BUILD_RC=$build_rc"
+            echo "KERNELVERSION=$kernelversion"
+            echo "IMAGE_PRESENT=$image_present"
+            echo "IMAGE_BYTES=$image_bytes"
+            echo "IMAGE_SHA256=$image_sha"
+            echo "ERROR_SIGNATURES=$error_signatures"
+            echo "RESUKISU=NOT_PRESENT"
+            echo "SUSFS=NOT_PRESENT"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } | tee "$FINAL"
+
+          (
+            cd "$AUDIT_DIR"
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload complete 5.4.293 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-5.4.293-stable-delta-baseline-v1-${{ github.run_id }}
+          path: |
+            .audit/workflow-10/
+            .work/5.4.293-baseline-v1/results/
+            .work/5.4.293-baseline-v1/out/arch/arm64/boot/Image
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+
+      - name: Enforce real baseline GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL="$GITHUB_WORKSPACE/.audit/workflow-10/FINAL-RESULT.txt"
+          test -s "$FINAL"
+          cat "$FINAL"
+          grep -Fxq 'VEUX_5_4_293_BASELINE=GREEN_PASS' "$FINAL"
