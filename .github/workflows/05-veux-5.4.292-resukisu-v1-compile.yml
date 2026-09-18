@@ -1,0 +1,187 @@
+name: 05 - VEUX 5.4.292 ReSukiSU V1 Compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5.4.292-resukisu-v1-compile
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    name: ReSukiSU V1 compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Initialize diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .audit/workflow-05
+          {
+            echo "WORKFLOW=05"
+            echo "PURPOSE=VEUX_5_4_292_RESUKISU_V1_COMPILE"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "PACKAGE_PASS=NO"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } > .audit/workflow-05/runner.txt
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            curl \
+            dwarves \
+            flex \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            perl \
+            python3 \
+            rsync \
+            xz-utils \
+            zstd
+
+      - name: Verify pinned integration files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD="lineages/5.4.292/RESUKISU_BUILD_V1.sh"
+          INTEGRATOR="lineages/5.4.292/RESUKISU_INTEGRATE_V1.py"
+          AUDIT="lineages/5.4.292/HOST_SURFACE_AUDIT.md"
+
+          BUILD_SHA256="837e9cdd20750f4e378c42ed89781137e2d096b2e6d9884f13983e9c6925811a"
+          INTEGRATOR_SHA256="98c780eb6eddb07b1ff0456f0e79fa47b3c8912d135a21889596038a43d65290"
+          AUDIT_SHA256="64d108b5f8fbd44ebf9d0613bae2bbc430c006f2b4c3cb897ded7af2b67df506"
+
+          test -f "$BUILD"
+          test -f "$INTEGRATOR"
+          test -f "$AUDIT"
+
+          bash -n "$BUILD"
+          python3 -m py_compile "$INTEGRATOR"
+
+          actual_build="$(sha256sum "$BUILD" | awk '{print $1}')"
+          actual_integrator="$(sha256sum "$INTEGRATOR" | awk '{print $1}')"
+          actual_audit="$(sha256sum "$AUDIT" | awk '{print $1}')"
+
+          test "$actual_build" = "$BUILD_SHA256"
+          test "$actual_integrator" = "$INTEGRATOR_SHA256"
+          test "$actual_audit" = "$AUDIT_SHA256"
+
+          {
+            echo "BUILD_SHA256=$actual_build"
+            echo "INTEGRATOR_SHA256=$actual_integrator"
+            echo "AUDIT_SHA256=$actual_audit"
+            echo "PINNED_FILE_GATE=PASS"
+          } | tee .audit/workflow-05/pinned-files.txt
+
+      - name: Run integrator self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 lineages/5.4.292/RESUKISU_INTEGRATE_V1.py --selftest \
+            | tee .audit/workflow-05/integrator-selftest.txt
+          grep -Fxq 'FIXTURE_TRANSFORM=PASS' .audit/workflow-05/integrator-selftest.txt
+          grep -Fxq 'MODULE_LOAD_FILTER_EXCLUSION=PASS' .audit/workflow-05/integrator-selftest.txt
+          grep -Fxq 'DUPLICATE_GUARD=PASS' .audit/workflow-05/integrator-selftest.txt
+          grep -Fxq 'SELFTEST=PASS' .audit/workflow-05/integrator-selftest.txt
+
+      - name: Run ReSukiSU V1 compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash lineages/5.4.292/RESUKISU_BUILD_V1.sh
+
+      - name: Verify compile result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT=".work/5.4.292-resukisu-v1"
+          RESULT="$ROOT/results/RESUKISU_RESULT.txt"
+          SUMS="$ROOT/results/SHA256SUMS.txt"
+          IMAGE="$ROOT/out/arch/arm64/boot/Image"
+
+          test -s "$RESULT"
+          test -s "$SUMS"
+          test -s "$IMAGE"
+
+          grep -Fxq 'RESUKISU_COMPILE=PASS' "$RESULT"
+          grep -Fxq 'HOST_INTEGRATION=PASS' "$RESULT"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$RESULT"
+          grep -Fxq 'HOOK_MODE=MANUAL' "$RESULT"
+          grep -Fxq 'SUSFS=NOT_PRESENT' "$RESULT"
+          grep -Fxq 'PACKAGE_PASS=NO' "$RESULT"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$RESULT"
+          grep -Fxq 'DEVICE_PASS=NO' "$RESULT"
+
+          grep -Fxq 'MODULE_LOAD_FILTER_SCAN=PASS' \
+            "$ROOT/results/module-filter-scan.txt"
+          grep -Fxq 'IDENTITY_GUARD=PASS' \
+            "$ROOT/results/identity-after-build.txt"
+
+          (
+            cd "$ROOT/results"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          sha256sum "$IMAGE" | tee .audit/workflow-05/image-sha256.txt
+          cat "$RESULT" | tee .audit/workflow-05/result.txt
+          echo "WORKFLOW_RESULT_GATE=PASS" | tee -a .audit/workflow-05/runner.txt
+
+      - name: Capture failure context
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .audit/workflow-05
+          {
+            echo "WORKFLOW_RESULT=FAIL"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo
+            echo "=== integration.log tail ==="
+            tail -n 200 .work/5.4.292-resukisu-v1/results/integration.log 2>/dev/null
+            echo
+            echo "=== defconfig.log tail ==="
+            tail -n 120 .work/5.4.292-resukisu-v1/results/defconfig.log 2>/dev/null
+            echo
+            echo "=== olddefconfig.log tail ==="
+            tail -n 120 .work/5.4.292-resukisu-v1/results/olddefconfig.log 2>/dev/null
+            echo
+            echo "=== build.log tail ==="
+            tail -n 300 .work/5.4.292-resukisu-v1/results/build.log 2>/dev/null
+            echo
+            echo "=== result ==="
+            cat .work/5.4.292-resukisu-v1/results/RESUKISU_RESULT.txt 2>/dev/null
+          } > .audit/workflow-05/failure-context.txt 2>&1
+
+      - name: Upload ReSukiSU V1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-5.4.292-ReSukiSU-V1-${{ github.run_id }}
+          path: |
+            .audit/workflow-05/
+            .work/5.4.292-resukisu-v1/results/
+            .work/5.4.292-resukisu-v1/out/arch/arm64/boot/Image
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
