@@ -1,0 +1,493 @@
+name: 14 - VEUX 5.4.292 ReSukiSU 35157 + SUSFS 2.3.0 Update R1 Compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-5-4-292-resukisu-35157-susfs-update-r1
+  cancel-in-progress: false
+
+env:
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_PARENT_COMMIT: 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+  RESUKISU_COMMIT: 3d1185d878a856ea6435799b436b3d3ec510da76
+  RESUKISU_EXPECTED_VERSION: '35157'
+  RESUKISU_EXPECTED_UAPI: '4'
+  RESUKISU_EXPECTED_DELTA_COMMITS: '3'
+  RESUKISU_MANAGER_PARENT_BLOB: b96e219fb0ff155eaefefbd74cd989968d209bab
+  RESUKISU_MANAGER_TARGET_BLOB: 5166d5cf4d82a2e9bf7305fa775791ec4e1957e3
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_EXPECTED_VERSION: v2.3.0
+  V5_BUILD_SHA256: 464930172ed054ec90ec211a9edafece1e512a1f3fbad2cbc5bfa13549114d33
+  V5_INTEGRATOR_SHA256: d78bf535c86797b87de1f342394801fd9aee99cb53486539bb0fb1b58674e297
+  V5_IMAGE_SHA256: 2463ef8dac06b20ce162858cf2dd86fb0ae4464b2ef4ed2730485a37649e4130
+  V5_IMAGE_BYTES: '33925632'
+  V5_WARNING_COUNT: '9'
+
+jobs:
+  compile:
+    name: VEUX 5.4.292 ReSukiSU 35157 + SUSFS 2.3.0 R1 compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Initialize audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.292-update-r1"
+          PREP_DIR="$GITHUB_WORKSPACE/.work/5.4.292-update-r1-prepared"
+          rm -rf "$AUDIT_DIR" "$WORK_ROOT" "$PREP_DIR"
+          mkdir -p "$AUDIT_DIR" "$PREP_DIR"
+          {
+            echo 'WORKFLOW=14-UPDATE-R1'
+            echo 'TARGET_KERNEL=5.4.292'
+            echo "RESUKISU_PARENT_COMMIT=$RESUKISU_PARENT_COMMIT"
+            echo "RESUKISU_TARGET_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_EXPECTED_VERSION=$RESUKISU_EXPECTED_VERSION"
+            echo "RESUKISU_EXPECTED_UAPI=$RESUKISU_EXPECTED_UAPI"
+            echo "SUSFS_TARGET=$SUSFS_EXPECTED_VERSION"
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$AUDIT_DIR/00-plan.txt"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl dwarves flex git \
+            libelf-dev libncurses-dev libssl-dev perl python3 rsync xz-utils zstd
+
+      - name: Verify exact proven 5.4.292 V5 lineage files
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          BUILD='lineages/5.4.292/SUSFS_BUILD_V5.sh'
+          INTEGRATOR='lineages/5.4.292/SUSFS_INTEGRATE_V5.py'
+          test -f "$BUILD"
+          test -f "$INTEGRATOR"
+          bash -n "$BUILD"
+          python3 -m py_compile "$INTEGRATOR"
+          actual_build="$(sha256sum "$BUILD" | awk '{print $1}')"
+          actual_integrator="$(sha256sum "$INTEGRATOR" | awk '{print $1}')"
+          test "$actual_build" = "$V5_BUILD_SHA256"
+          test "$actual_integrator" = "$V5_INTEGRATOR_SHA256"
+          {
+            echo "V5_BUILD_SHA256=$actual_build"
+            echo "V5_INTEGRATOR_SHA256=$actual_integrator"
+            echo 'V5_LINEAGE_PIN=PASS'
+          } | tee "$AUDIT_DIR/01-v5-lineage-pin.txt"
+
+      - name: Verify exact ReSukiSU 35154 to 35157 update delta and RCU fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          RS_AUDIT="$RUNNER_TEMP/resukisu-35157-audit"
+          rm -rf "$RS_AUDIT"
+          mkdir -p "$RS_AUDIT"
+          git -C "$RS_AUDIT" init -q
+          git -C "$RS_AUDIT" remote add origin "$RESUKISU_REPO"
+          git -C "$RS_AUDIT" fetch -q --tags origin "$RESUKISU_COMMIT"
+          git -C "$RS_AUDIT" cat-file -e "$RESUKISU_PARENT_COMMIT^{commit}"
+          git -C "$RS_AUDIT" checkout -q --detach "$RESUKISU_COMMIT"
+          test "$(git -C "$RS_AUDIT" rev-parse HEAD)" = "$RESUKISU_COMMIT"
+          test -z "$(git -C "$RS_AUDIT" status --porcelain)"
+          test ! -f "$RS_AUDIT/.git/shallow"
+          git -C "$RS_AUDIT" merge-base --is-ancestor "$RESUKISU_PARENT_COMMIT" "$RESUKISU_COMMIT"
+          delta_count="$(git -C "$RS_AUDIT" rev-list --count "$RESUKISU_PARENT_COMMIT..$RESUKISU_COMMIT")"
+          test "$delta_count" = "$RESUKISU_EXPECTED_DELTA_COMMITS"
+
+          git -C "$RS_AUDIT" diff --name-only "$RESUKISU_PARENT_COMMIT" "$RESUKISU_COMMIT" -- kernel \
+            | LC_ALL=C sort > "$AUDIT_DIR/02-resukisu-kernel-delta.txt"
+          printf '%s\n' 'kernel/manager/manager.c' > "$AUDIT_DIR/02-resukisu-kernel-delta.expected.txt"
+          diff -u "$AUDIT_DIR/02-resukisu-kernel-delta.expected.txt" "$AUDIT_DIR/02-resukisu-kernel-delta.txt"
+
+          test "$(git -C "$RS_AUDIT" rev-parse "$RESUKISU_PARENT_COMMIT:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_PARENT_BLOB"
+          test "$(git -C "$RS_AUDIT" rev-parse "$RESUKISU_COMMIT:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_TARGET_BLOB"
+
+          git -C "$RS_AUDIT" show "$RESUKISU_PARENT_COMMIT:kernel/manager/manager.c" > "$RUNNER_TEMP/manager-parent.c"
+          git -C "$RS_AUDIT" show "$RESUKISU_COMMIT:kernel/manager/manager.c" > "$RUNNER_TEMP/manager-target.c"
+          python3 - "$RUNNER_TEMP/manager-parent.c" "$RUNNER_TEMP/manager-target.c" <<'PY'
+          from pathlib import Path
+          import sys
+
+          old = Path(sys.argv[1]).read_text(encoding='utf-8')
+          new = Path(sys.argv[2]).read_text(encoding='utf-8')
+
+          old_fn = old[old.index('int ksu_handle_get_managers_cmd'):old.index('int ksu_get_manager_signature_index_by_appid')]
+          new_fn = new[new.index('int ksu_handle_get_managers_cmd'):new.index('int ksu_get_manager_signature_index_by_appid')]
+
+          assert 'copy_to_user' in old_fn
+          assert old_fn.index('rcu_read_lock();') < old_fn.index('copy_to_user') < old_fn.index('rcu_read_unlock();')
+
+          for token in (
+              'struct ksu_manager_entry *entries;',
+              'entries = kcalloc(max_allowed, sizeof(*entries), GFP_KERNEL);',
+              'copy_count = min_t(int, count, max_allowed);',
+              'kfree(entries);',
+          ):
+              assert token in new_fn, token
+
+          lock = new_fn.index('rcu_read_lock();')
+          unlock = new_fn.index('rcu_read_unlock();')
+          copy = new_fn.index('copy_to_user')
+          alloc = new_fn.index('entries = kcalloc')
+          assert alloc < lock < unlock < copy
+          assert new_fn.count('copy_to_user') == 1
+          print('RESUKISU_RCU_FIX_CONTRACT=PASS')
+          PY
+
+          {
+            echo "RESUKISU_DELTA_COMMITS=$delta_count"
+            echo 'RESUKISU_KERNEL_DELTA=kernel/manager/manager.c'
+            echo "RESUKISU_MANAGER_PARENT_BLOB=$RESUKISU_MANAGER_PARENT_BLOB"
+            echo "RESUKISU_MANAGER_TARGET_BLOB=$RESUKISU_MANAGER_TARGET_BLOB"
+            echo 'RESUKISU_RCU_FIX_CONTRACT=PASS'
+          } | tee "$AUDIT_DIR/02-resukisu-update-contract.txt"
+
+      - name: Construct fail-closed 5.4.292 R1 lineage copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          PREP_DIR="$GITHUB_WORKSPACE/.work/5.4.292-update-r1-prepared"
+          SRC_BUILD='lineages/5.4.292/SUSFS_BUILD_V5.sh'
+          SRC_INTEGRATOR='lineages/5.4.292/SUSFS_INTEGRATE_V5.py'
+          DST_BUILD="$PREP_DIR/SUSFS_BUILD_R1.sh"
+          DST_INTEGRATOR="$PREP_DIR/SUSFS_INTEGRATE_R1.py"
+
+          python3 - "$SRC_INTEGRATOR" "$DST_INTEGRATOR" <<'PY'
+          from pathlib import Path
+          import sys
+
+          src, dst = map(Path, sys.argv[1:])
+          text = src.read_text(encoding='utf-8')
+          replacements = [
+              ('RESUKISU_COMMIT = "6ec8d9a8a8be30878c388504cacf8ae7849c757b"',
+               'RESUKISU_COMMIT = "3d1185d878a856ea6435799b436b3d3ec510da76"'),
+              ('EXPECTED_KSU_VERSION = 35154', 'EXPECTED_KSU_VERSION = 35157'),
+              ('if EXPECTED_KSU_VERSION != 35154 or EXPECTED_KSU_UAPI != 4:',
+               'if EXPECTED_KSU_VERSION != 35157 or EXPECTED_KSU_UAPI != 4:'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'integrator transform preimage mismatch: {old!r}: {count}')
+              text = text.replace(old, new, 1)
+          if '35154' in text:
+              raise SystemExit('unexpected residual 35154 in transformed integrator')
+          dst.write_text(text, encoding='utf-8')
+          PY
+
+          python3 -m py_compile "$DST_INTEGRATOR"
+          python3 "$DST_INTEGRATOR" --selftest | tee "$AUDIT_DIR/03-integrator-selftest.txt"
+          for gate in \
+            'DONOR_STATFS_SEMANTIC_FIX=PASS' \
+            'UPSTREAM_STATFS_COMPILE_FIX_BACKPORT=PASS' \
+            'UPSTREAM_CLONE_MNT_RACE_FIX_BACKPORT=PASS' \
+            'SUSFS_5_4_CORE_COHERENCE=PASS' \
+            'VEUX_DIVERGENT_PREIMAGE_CONTRACT=PASS' \
+            'HOOK_SURFACE_PREIMAGE_CONTRACT=PASS' \
+            'RESUKISU_IDENTITY_CONTRACT=PASS' \
+            'VEUX_DIVERGENT_OUTER_PORT=PASS' \
+            'RUN35344193301_REGRESSION=PASS' \
+            'RUN35346290137_REGRESSION=PASS' \
+            'RUN35350262681_REGRESSION=PASS' \
+            'RUN35352162500_REGRESSION=PASS' \
+            'EXECVEAT_POST_HOOK_REPAIR=PASS' \
+            'EXECVEAT_POST_HOOK_SUCCESS_PATH=PASS' \
+            'SYS_READ_ABI_REPAIR=PASS' \
+            'REBOOT_SUPERCALL_FLOW_REPAIR=PASS' \
+            'MODULE_LOAD_FILTER_EXCLUSION=PASS' \
+            'DUPLICATE_GUARD=PASS' \
+            'SELFTEST=PASS'
+          do
+            grep -Fxq "$gate" "$AUDIT_DIR/03-integrator-selftest.txt"
+          done
+
+          integrator_sha="$(sha256sum "$DST_INTEGRATOR" | awk '{print $1}')"
+
+          python3 - "$SRC_BUILD" "$DST_BUILD" "$integrator_sha" <<'PY'
+          from pathlib import Path
+          import sys
+
+          src = Path(sys.argv[1])
+          dst = Path(sys.argv[2])
+          integrator_sha = sys.argv[3]
+          text = src.read_text(encoding='utf-8')
+
+          exact = [
+              ('RESUKISU_COMMIT="6ec8d9a8a8be30878c388504cacf8ae7849c757b"',
+               'RESUKISU_COMMIT="3d1185d878a856ea6435799b436b3d3ec510da76"'),
+              ('INTEGRATOR="$PROJECT_ROOT/lineages/5.4.292/SUSFS_INTEGRATE_V5.py"',
+               'INTEGRATOR="$PROJECT_ROOT/.work/5.4.292-update-r1-prepared/SUSFS_INTEGRATE_R1.py"'),
+              ('INTEGRATOR_EXPECTED_SHA256="d78bf535c86797b87de1f342394801fd9aee99cb53486539bb0fb1b58674e297"',
+               f'INTEGRATOR_EXPECTED_SHA256="{integrator_sha}"'),
+              ('WORK_ROOT="${1:-$PROJECT_ROOT/.work/5.4.292-susfs-v5}"',
+               'WORK_ROOT="${1:-$PROJECT_ROOT/.work/5.4.292-update-r1}"'),
+          ]
+          for old, new in exact:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'build transform preimage mismatch: {old!r}: {count}')
+              text = text.replace(old, new, 1)
+
+          version_count = text.count('35154')
+          if version_count != 3:
+              raise SystemExit(f'expected exactly 3 build-script 35154 literals, found {version_count}')
+          text = text.replace('35154', '35157')
+
+          if '35154' in text or '6ec8d9a8a8be30878c388504cacf8ae7849c757b' in text:
+              raise SystemExit('old ReSukiSU identity remains in transformed build script')
+          dst.write_text(text, encoding='utf-8')
+          PY
+
+          chmod +x "$DST_BUILD"
+          bash -n "$DST_BUILD"
+          build_sha="$(sha256sum "$DST_BUILD" | awk '{print $1}')"
+          {
+            echo "R1_INTEGRATOR_SHA256=$integrator_sha"
+            echo "R1_BUILD_SHA256=$build_sha"
+            echo 'R1_LINEAGE_TRANSFORM=PASS'
+          } | tee "$AUDIT_DIR/03-r1-lineage-transform.txt"
+
+      - name: Compile 5.4.292 with ReSukiSU 35157 and pinned SUSFS 2.3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREP_DIR="$GITHUB_WORKSPACE/.work/5.4.292-update-r1-prepared"
+          WORK_ROOT="$GITHUB_WORKSPACE/.work/5.4.292-update-r1"
+          bash "$PREP_DIR/SUSFS_BUILD_R1.sh" "$WORK_ROOT"
+
+      - name: Verify compile, identity, RCU fix and warning regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          ROOT="$GITHUB_WORKSPACE/.work/5.4.292-update-r1"
+          RESULT="$ROOT/results/SUSFS_RESULT.txt"
+          IMAGE="$ROOT/out/arch/arm64/boot/Image"
+          BUILD_LOG="$ROOT/results/build.log"
+          VENDORED_RS="$ROOT/kernel/.resukisu"
+
+          test -s "$RESULT"
+          test -s "$IMAGE"
+          test -s "$BUILD_LOG"
+          test -d "$VENDORED_RS/.git"
+
+          for gate in \
+            'SUSFS_COMPILE=PASS' \
+            'RESUKISU_COMPILE=PASS' \
+            'HOST_INTEGRATION=PASS' \
+            'RESUKISU_GIT_WORKTREE_LAYOUT=PASS' \
+            'HOST_DELTA_GUARD=PASS' \
+            'RESUKISU_DELTA_GUARD=PASS' \
+            'RESUKISU_CHECKER_BLOB_CONTRACT=PASS' \
+            'RESUKISU_UAPI_BLOB_CONTRACT=PASS' \
+            'DONOR_STATFS_SEMANTIC_FIX=PASS' \
+            'UPSTREAM_STATFS_COMPILE_FIX_BACKPORT=PASS' \
+            'UPSTREAM_CLONE_MNT_RACE_FIX_BACKPORT=PASS' \
+            'SUSFS_5_4_CORE_COHERENCE=PASS' \
+            'VEUX_DIVERGENT_PREIMAGE_GATE=PASS' \
+            'HOOK_SURFACE_PREIMAGE_GATE=PASS' \
+            'VEUX_DIVERGENT_OUTER_PORT=PASS' \
+            'RESUKISU_STATIC_KEY_ABI=PASS' \
+            'RESUKISU_VERSION=35157' \
+            'RESUKISU_UAPI=4' \
+            'ARM64_THREAD_INFO_CONTRACT=PASS' \
+            'SELINUX_STATIC_EXPORT_CONTRACT=PASS' \
+            'RUN35344193301_REGRESSION=PASS' \
+            'RUN35346290137_REGRESSION=PASS' \
+            'RUN35350262681_REGRESSION=PASS' \
+            'RUN35352162500_REGRESSION=PASS' \
+            'EXECVEAT_POST_HOOK_GATE=PASS' \
+            'EXECVEAT_POST_HOOK_SUCCESS_PATH=PASS' \
+            'SYS_READ_ABI_GATE=PASS' \
+            'REBOOT_SUPERCALL_FLOW_GATE=PASS' \
+            'OPEN_REDIRECT_RETRY_FIX=PASS' \
+            'SUS_MOUNT_CLONE_RACE_FIX=PASS' \
+            'MODULE_LOAD_FILTER=EXCLUDED' \
+            'HOOK_MODE=SUSFS_INLINE' \
+            'SUSFS_VERSION=v2.3.0' \
+            'SUSFS_CODE_BASE=PINNED_5_4_DONOR_PORT' \
+            'SUSFS_UPSTREAM_REFERENCE_COMMIT=04a9d713106191ba98be680bd7ad9547ab1de964' \
+            'ERROR_SIGNATURES=0' \
+            'PACKAGE_PASS=NO' \
+            'STATIC_BOOT_PATH_PASS=NO' \
+            'DEVICE_PASS=NO'
+          do
+            grep -Fxq "$gate" "$RESULT" || {
+              echo "ERROR: missing result gate: $gate" >&2
+              exit 1
+            }
+          done
+
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$RESULT"
+          test "$(git -C "$VENDORED_RS" rev-parse HEAD)" = "$RESUKISU_COMMIT"
+          test "$(git -C "$VENDORED_RS" rev-parse HEAD:kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          test "$(git -C "$VENDORED_RS" hash-object kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          grep -Fq 'entries = kcalloc(max_allowed, sizeof(*entries), GFP_KERNEL);' "$VENDORED_RS/kernel/manager/manager.c"
+
+          image_bytes="$(stat -c '%s' "$IMAGE")"
+          image_sha="$(sha256sum "$IMAGE" | awk '{print $1}')"
+          test "$image_bytes" = "$V5_IMAGE_BYTES"
+          test "$image_sha" != "$V5_IMAGE_SHA256"
+
+          python3 - "$BUILD_LOG" "$V5_WARNING_COUNT" <<'PY' | tee "$AUDIT_DIR/04-warning-regression.txt"
+          from pathlib import Path
+          import re, sys
+
+          log = Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace').splitlines()
+          expected_count = int(sys.argv[2])
+          warnings = [line for line in log if re.search(r'(^|\s)warning:', line)]
+          if len(warnings) != expected_count:
+              raise SystemExit(f'warning count drift: expected {expected_count}, got {len(warnings)}')
+
+          expected = [
+              ('kernel/sched/core.c', 'mixing declarations and code is a C99 extension [-Wdeclaration-after-statement]'),
+              ('kernel/sched/fair.c', "unused label 'unlock' [-Wunused-label]"),
+              ('fs/kernfs/file.c', "stack frame size (4176) exceeds limit (2048) in 'kernfs_fop_write' [-Wframe-larger-than]"),
+              ('fs/proc/task_mmu.c', 'mixing declarations and code is a C99 extension [-Wdeclaration-after-statement]'),
+              ('fs/d_path.c', "stack frame size (4208) exceeds limit (2048) in '__arm64_sys_getcwd' [-Wframe-larger-than]"),
+              ('techpack/display/msm/sde/sde_crtc.c', "stack frame size (3296) exceeds limit (2048) in 'sde_crtc_atomic_check' [-Wframe-larger-than]"),
+              ('techpack/display/msm/sde/sde_connector.c', 'mixing declarations and code is a C99 extension [-Wdeclaration-after-statement]'),
+              ('techpack/display/msm/dsi/dsi_display.c', 'mixing declarations and code is a C99 extension [-Wdeclaration-after-statement]'),
+              ('techpack/display/msm/dsi/dsi_display.c', "variable 'connector' is uninitialized when used here [-Wuninitialized]"),
+          ]
+
+          remaining = warnings[:]
+          for rel, msg in expected:
+              hits = [w for w in remaining if rel in w and msg in w]
+              if len(hits) != 1:
+                  raise SystemExit(f'baseline warning fingerprint mismatch for {rel}: {msg}: hits={len(hits)}')
+              remaining.remove(hits[0])
+          if remaining:
+              raise SystemExit('unexpected warning(s):\n' + '\n'.join(remaining))
+          print(f'WARNING_BASELINE_COUNT={len(warnings)}')
+          print('NEW_WARNING_COUNT=0')
+          print('WARNING_REGRESSION_GATE=PASS')
+          PY
+
+          {
+            echo 'RESUKISU_RCU_FIX_CONTRACT=PASS'
+            echo 'RESUKISU_35157_IDENTITY=PASS'
+            echo 'WARNING_REGRESSION_GATE=PASS'
+            echo "IMAGE_SIZE=$image_bytes"
+            echo "IMAGE_SHA256=$image_sha"
+            echo 'COMPILE_R1=PASS'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } | tee "$AUDIT_DIR/04-r1-result.txt"
+
+      - name: Finalize 5.4.292 Update R1 verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          ROOT="$GITHUB_WORKSPACE/.work/5.4.292-update-r1"
+          RESULT="$ROOT/results/SUSFS_RESULT.txt"
+          IMAGE="$ROOT/out/arch/arm64/boot/Image"
+
+          grep -Fxq 'V5_LINEAGE_PIN=PASS' "$AUDIT_DIR/01-v5-lineage-pin.txt"
+          grep -Fxq 'RESUKISU_RCU_FIX_CONTRACT=PASS' "$AUDIT_DIR/02-resukisu-update-contract.txt"
+          grep -Fxq 'R1_LINEAGE_TRANSFORM=PASS' "$AUDIT_DIR/03-r1-lineage-transform.txt"
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$AUDIT_DIR/04-r1-result.txt"
+          grep -Fxq 'COMPILE_R1=PASS' "$AUDIT_DIR/04-r1-result.txt"
+          grep -Fxq 'SUSFS_COMPILE=PASS' "$RESULT"
+          grep -Fxq 'RESUKISU_COMPILE=PASS' "$RESULT"
+          grep -Fxq 'RESUKISU_VERSION=35157' "$RESULT"
+          grep -Fxq 'RESUKISU_UAPI=4' "$RESULT"
+          grep -Fxq 'SUSFS_VERSION=v2.3.0' "$RESULT"
+          grep -Fxq 'ERROR_SIGNATURES=0' "$RESULT"
+          test -s "$IMAGE"
+
+          {
+            echo 'WORKFLOW=14-UPDATE-R1'
+            echo 'KERNEL=5.4.292'
+            echo 'RESUKISU=35157'
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo 'UAPI=4'
+            echo 'SUSFS=2.3.0'
+            echo 'RESUKISU_RCU_FIX_CONTRACT=PASS'
+            echo 'WARNING_REGRESSION_GATE=PASS'
+            echo 'COMPILE_GREEN_CANDIDATE=PASS'
+            echo "IMAGE_BYTES=$(stat -c '%s' "$IMAGE")"
+            echo "IMAGE_SHA256=$(sha256sum "$IMAGE" | awk '{print $1}')"
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+            echo 'FINAL_R1_VERDICT=PASS'
+          } | tee "$AUDIT_DIR/99-FINAL-RESULT.txt"
+
+      - name: Capture failure context
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          AUDIT_DIR="$GITHUB_WORKSPACE/.audit/workflow-14-r1"
+          ROOT="$GITHUB_WORKSPACE/.work/5.4.292-update-r1"
+          mkdir -p "$AUDIT_DIR"
+          {
+            echo 'WORKFLOW_RESULT=FAIL'
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo
+            echo '=== source pins ==='
+            cat "$ROOT/results/source-pins.txt" 2>/dev/null || true
+            echo
+            echo '=== R1 update contract ==='
+            cat "$AUDIT_DIR/02-resukisu-update-contract.txt" 2>/dev/null || true
+            echo
+            echo '=== integrator selftest ==='
+            cat "$AUDIT_DIR/03-integrator-selftest.txt" 2>/dev/null || true
+            echo
+            echo '=== integration.log tail ==='
+            tail -n 320 "$ROOT/results/integration.log" 2>/dev/null || true
+            echo
+            echo '=== build.log tail ==='
+            tail -n 450 "$ROOT/results/build.log" 2>/dev/null || true
+            echo
+            echo '=== result ==='
+            cat "$ROOT/results/SUSFS_RESULT.txt" 2>/dev/null || true
+          } > "$AUDIT_DIR/failure-context.txt" 2>&1
+          exit 0
+
+      - name: Upload complete 5.4.292 Update R1 evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: VEUX-5.4.292-ReSukiSU-35157-SUSFS-2.3.0-update-r1-${{ github.run_id }}
+          path: |
+            .audit/workflow-14-r1/
+            .work/5.4.292-update-r1/results/
+            .work/5.4.292-update-r1/out/arch/arm64/boot/Image
+            .work/5.4.292-update-r1/out/fs/susfs.o
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Enforce real 5.4.292 Update R1 GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'FINAL_R1_VERDICT=PASS' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'COMPILE_GREEN_CANDIDATE=PASS' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'RESUKISU_RCU_FIX_CONTRACT=PASS' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'PACKAGE_PASS=NO' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          grep -Fxq 'DEVICE_PASS=NO' .audit/workflow-14-r1/99-FINAL-RESULT.txt
+          echo 'REAL_GITHUB_GREEN_GATE=PASS'
