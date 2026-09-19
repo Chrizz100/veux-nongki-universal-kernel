@@ -1,0 +1,586 @@
+name: VEUX GEN1 U5-O44 v1 5.4.302 ReSukiSU 35157 Self-Contained Port Audit
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-gen1-u5-o44-5.4.302-resukisu-35157-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      ARCH: arm64
+      TZ: UTC
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      EXPECTED_WORKFLOW_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+      SUPPORT_KIT_RELATIVE_PATH: lineages/5.4.302/O44_5.4.302_PORT_SUPPORT_V1.zip
+      SUPPORT_KIT_SHA256: da37f77bd7f985a2a54653ea60d9bb857599092ac49a0be4e637ddf15a0aa781
+      RESTORE_KIT_RELATIVE_PATH: lineages/5.4.274/P14_SOURCE_RESTORE_COMPACT_V2.zip
+      RESTORE_KIT_SHA256: 20327b9edc783429bd4987febff3e77e42cc9be62493be41c7aaec2af3d3b0db
+
+      BASE_DIR: ${{ github.workspace }}/kernel-p14r1-base
+      T302_DIR: ${{ github.workspace }}/kernel-5.4.302
+      RESUKISU_UPSTREAM: ${{ github.workspace }}/resukisu-upstream
+      TOOLCHAIN_DIR: ${{ github.workspace }}/toolchains/clang-r416183b
+      OUT302: ${{ github.workspace }}/out-5.4.302
+      AUDIT_DIR: ${{ github.workspace }}/u5-o44-audit
+      DIST_DIR: ${{ github.workspace }}/u5-o44-dist
+      SUPPORT_ROOT: ${{ github.workspace }}/.o44-support
+      RESTORE_ROOT: ${{ github.workspace }}/.o44-restore
+
+      # Exact O40 conflict-free 5.4.302 source delta.
+      O40_ARTIFACT_ID: '10493354572'
+      O40_ARTIFACT_NAME: VEUX-GEN1-U5-O40-5.4.302-final-six-block-conflict-resolution-train-official-stable-port-audit
+      O40_ARTIFACT_SHA256: 48a514fa835a068736898d6a273e2af0af6aa79933b202c0075d789532f4f2c0
+      O40_INTERNAL_SHA_COUNT: '426'
+      PATCH302_SHA256: e89094cb64aa714e4093b3892ef7420fea0536e35e3cde28f7dff172c0828f0f
+      EXPECTED_P13_PATCH_SHA256: d56725a9d6a6dc7bf1e73a5763b894bdabb544119f4c75df5f437ccd4ff29a52
+
+      # Exact O41 build-green dependency-closure evidence.
+      O41_ARTIFACT_ID: '10506656715'
+      O41_ARTIFACT_NAME: VEUX-GEN1-U5-O41-v5-robust-timer-sizeadd-dependency-closure-dual-build-audit-35241355584
+      O41_ARTIFACT_SHA256: 0e4e51d7d40b33e7acef99d996dba5d85ffe494dfdd3a744a8f3884a45086899
+      O41_PM302_PATCH_SHA256: 020b692bb47f631907fc5c7a3c14e67ad97c5b902d7f1cd24303c77b511ba17e
+      O41_TIMER_SIZEADD302_PATCH_SHA256: 9c1cb6965286f53a910733c84809ff51df7a826950853247843d816a10023577
+      O41_OLD_IMAGE_SHA256: 604b9e5f8189f0756de26079868db307b3b31980351eb1b6cd896743a58e3da7
+      O41_OLD_CONFIG_SHA256: fb16cd2d35439994f70e5f51bbc5eff1df3a519e722f0f94324ed752da64422a
+      EXPECTED_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+      EXPECTED_WARNING_COUNT: '4'
+
+      # Frozen 5.4.274 outer-source reconstruction.
+      EXPECTED_VENDOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      EXPECTED_VENDOR_KERNEL_VERSION: 5.4.268
+      EXPECTED_OUTER_TREE: 19b68131d7a3955085f60c4fb8cf64442427af0c
+      EXPECTED_P13_TREE: 27f712099ca93c93f7b6db8884cc1f3b6e61ae0f
+      RESTORE_ARTIFACT_ID: '9989363798'
+      RESTORE_ARTIFACT_NAME: clean-gen1-p6v11-v6-full-susfs-outer-integration-p7-test-boot-34031837372
+      RESTORE_ARTIFACT_SHA256: 87c15eac72ff64b6c65c9e993594f3cbe2404b327592afae94796ad655e1f45d
+      EXPECTED_P5I_COMMIT: f353a9475e40ca866d570c1d0ef55e24cf6556e4
+      EXPECTED_P5I_TREE: a947c1f2891c796a08373fc755e29b23139dc761
+      EXPECTED_RESUKISU_BASE_HEAD: 42034caa96466e8473fe7553eba8a1888c7f460f
+      EXPECTED_RESUKISU_BASE_TREE: d818d965b855d417edfe9eb38b152ff83e75e0fb
+      EXPECTED_P12_EXEC_SHA256: fa3b73421f35d6220fb9e03e112a9509b76c04933af2353c9a8c65d6fb6bd6a9
+      EXPECTED_P12_CONTRACT_SHA256: b6d1875f6a79231465bc78df6484f2856a427259998eb93ba9fd2597cb45ca53
+      EXPECTED_P12_SUSFS_C_SHA256: e430d573ba5875a55d1ca70ba1b304e4b6727bbc42b8c3ac16f2c175b29a59c1
+      EXPECTED_P12_SUSFS_H_SHA256: 3c5fb1bcc28a70c82ee5cfe0a7375bb8e7babd26618ce9b451e598fa31aa3b6e
+      EXPECTED_P12_SUSFS_DEF_SHA256: b16108a5fcd4cdd7203d9f084c2154da708ab3ae6bed17109e4ec63f04ff0f68
+
+      # Exact real-device P14R1 ReSukiSU integration lineage.
+      RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+      RESUKISU_COMMON_BASE: faccf4c5edc7be37776216e7d43dd3dca0239331
+      RESUKISU_DEVICE_PASS_BASE: 052ca27775cc9c8570e3b1ba3db7c29486d6020e
+      RESUKISU_P13_DEVICE_PASS: 7741f87849f7ad7cebf82bbb4c5b89880e61e37e
+      RESUKISU_P14_DEVICE_PASS: 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+      RESUKISU_TARGET: 3d1185d878a856ea6435799b436b3d3ec510da76
+      RESUKISU_EXPECTED_DELTA_COMMITS: '3'
+      EXPECTED_KSU_VERSION: '35157'
+      EXPECTED_KSU_UAPI: '4'
+      RESUKISU_EXCLUDED_MODULE_FILTER: b2ac2fc8703ce9f5226e2a38a59f8b72f8a3005c
+      RESUKISU_MANAGER_PARENT_BLOB: b96e219fb0ff155eaefefbd74cd989968d209bab
+      RESUKISU_MANAGER_TARGET_BLOB: 5166d5cf4d82a2e9bf7305fa775791ec4e1957e3
+      RESUKISU_IMAGE_IDENTITY: v4.2.0-rc2-3d1185d8-p14r1@ReSukiSU
+
+      # Proven VEUX build identity.
+      CLANG_PREBUILT_COMMIT: aa2e4a514a6c85eebcc4a27149eaf9244e951a1e
+      KBUILD_BUILD_USER: builder
+      KBUILD_BUILD_HOST: pangu-build-component-vendor-345942-54r9t-tw0tk-tq90c
+      KBUILD_BUILD_TIMESTAMP: Thu Dec 5 14:47:59 UTC 2024
+      KBUILD_BUILD_VERSION: '1'
+      SOURCE_DATE_EPOCH: '1733410079'
+      KBUILD_FIXED_SCM_SUFFIX: -g82179e362f33
+      EFFECTIVE_KCFLAGS: -D__ANDROID_COMMON_KERNEL__
+      EXPECTED_RELEASE_302: 5.4.302-qgki-g82179e362f33
+
+    steps:
+      - name: Repository and immutable-plan gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BASE_DIR" "$T302_DIR" "$RESUKISU_UPSTREAM" "$TOOLCHAIN_DIR" "$OUT302" \
+                 "$SUPPORT_ROOT" "$RESTORE_ROOT" "$AUDIT_DIR" "$DIST_DIR"
+          mkdir -p "$AUDIT_DIR" "$DIST_DIR" "$TOOLCHAIN_DIR"
+          {
+            echo "EXPECTED_REPOSITORY=$EXPECTED_WORKFLOW_REPOSITORY"
+            echo "ACTUAL_REPOSITORY=$GITHUB_REPOSITORY"
+          } | tee "$AUDIT_DIR/00-repository-gate.txt"
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_WORKFLOW_REPOSITORY"
+          cat > "$AUDIT_DIR/00-plan.txt" <<'EOF'
+          U5-O44 v1: VEUX Linux 5.4.302 ReSukiSU 35157 P14R1 integration port.
+          Runs self-contained in Chrizz100/veux-nongki-universal-kernel.
+          Frozen source lineage: authenticated O40/O41 support kit + compact P14 restore kit.
+          ReSukiSU lineage: real-device P14R1 / 35157 / UAPI4 / SUSFS 2.3.0.
+          P14R1 itself remains immutable.
+          This workflow is compile/integration evidence only.
+          PACKAGE_PASS=NO
+          STATIC_BOOT_PATH_PASS=NO
+          DEVICE_PASS=NO
+          EOF
+
+      - name: Checkout current universal-kernel project
+        uses: actions/checkout@v7
+        with:
+          path: project
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl flex git jq \
+            libelf-dev libncurses-dev libssl-dev patch python3 rsync unzip zip xz-utils zstd file
+
+      - name: Authenticate self-contained O40/O41 5.4.302 support kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$GITHUB_WORKSPACE/project/$SUPPORT_KIT_RELATIVE_PATH"
+          test -s "$kit"
+          actual="$(sha256sum "$kit" | awk '{print $1}')"
+          echo "SUPPORT_KIT_EXPECTED_SHA256=$SUPPORT_KIT_SHA256"
+          echo "SUPPORT_KIT_ACTUAL_SHA256=$actual"
+          test "$actual" = "$SUPPORT_KIT_SHA256"
+          unzip -t "$kit" >/dev/null
+          rm -rf "$SUPPORT_ROOT"
+          mkdir -p "$SUPPORT_ROOT"
+          unzip -q "$kit" -d "$SUPPORT_ROOT"
+          support="$SUPPORT_ROOT/O44_5.4.302_PORT_SUPPORT_V1"
+          test -d "$support"
+          test -f "$support/SHA256SUMS"
+          test -f "$support/PROVENANCE.txt"
+          (cd "$support" && sha256sum -c SHA256SUMS) | tee "$AUDIT_DIR/01-support-sha256.txt"
+
+          p302="$support/source/P13-to-5.4.302-AUTO-MERGED-PARTIAL.patch"
+          p13="$support/source/07-P13-post-exec.patch"
+          pm="$support/deps/07-pm-runtime-needs-force-resume-5.4.302.patch"
+          dep="$support/deps/09-timer-sizeadd-dependency-5.4.302.patch"
+          echo "$PATCH302_SHA256  $p302" | sha256sum -c -
+          echo "$EXPECTED_P13_PATCH_SHA256  $p13" | sha256sum -c -
+          echo "$O41_PM302_PATCH_SHA256  $pm" | sha256sum -c -
+          echo "$O41_TIMER_SIZEADD302_PATCH_SHA256  $dep" | sha256sum -c -
+
+          grep -Fxq 'repo=Chrizz100/veux-resukisu-builder' "$support/PROVENANCE.txt"
+          grep -Fxq 'run=35241355584' "$support/PROVENANCE.txt"
+          grep -Fxq "artifact_sha256=$O40_ARTIFACT_SHA256" "$support/PROVENANCE.txt"
+          grep -Fxq "artifact_sha256=$O41_ARTIFACT_SHA256" "$support/PROVENANCE.txt"
+
+          {
+            echo "P302_PATCH=$p302"
+            echo "P13_PATCH=$p13"
+            echo "PM_PATCH=$pm"
+            echo "DEP_PATCH=$dep"
+          } >> "$GITHUB_ENV"
+          {
+            echo 'SELF_CONTAINED_SUPPORT_KIT=PASS'
+            echo "SUPPORT_KIT_SHA256=$SUPPORT_KIT_SHA256"
+            echo "PATCH302_SHA256=$PATCH302_SHA256"
+            echo "P13_PATCH_SHA256=$EXPECTED_P13_PATCH_SHA256"
+            echo "PM_PATCH_SHA256=$O41_PM302_PATCH_SHA256"
+            echo "TIMER_SIZEADD_PATCH_SHA256=$O41_TIMER_SIZEADD302_PATCH_SHA256"
+          } | tee "$AUDIT_DIR/01-parent-gates.txt"
+
+      - name: Reconstruct exact frozen 5.4.274 outer source from compact repo kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/dereference23/kernel_xiaomi_sm6375.git "$BASE_DIR"
+          git -C "$BASE_DIR" checkout -q --detach "$EXPECTED_VENDOR_SHA"
+          test "$(git -C "$BASE_DIR" rev-parse HEAD)" = "$EXPECTED_VENDOR_SHA"
+          test "$(make -s -C "$BASE_DIR" kernelversion)" = "$EXPECTED_VENDOR_KERNEL_VERSION"
+
+          kit="$GITHUB_WORKSPACE/project/$RESTORE_KIT_RELATIVE_PATH"
+          test -s "$kit"
+          test "$(sha256sum "$kit" | awk '{print $1}')" = "$RESTORE_KIT_SHA256"
+          unzip -t "$kit" >/dev/null
+          rm -rf "$RESTORE_ROOT"
+          mkdir -p "$RESTORE_ROOT"
+          unzip -q "$kit" -d "$RESTORE_ROOT"
+          restore_dir="$RESTORE_ROOT/source-restore-kit"
+          result_file="$RESTORE_ROOT/17-result.txt"
+          test -d "$restore_dir"
+          test -f "$result_file"
+          test -f "$restore_dir/manifest.json"
+          test -f "$restore_dir/SHA256SUMS"
+          grep -Fxq 'CLEAN_GEN1_P6V11_FULL_SUSFS_OUTER_INTEGRATION_DETERMINISTIC_BUILD=PASS' "$result_file"
+          (cd "$restore_dir" && sha256sum -c SHA256SUMS) | tee "$AUDIT_DIR/02-restore-sha256.txt"
+
+          test "$(sha256sum "$restore_dir/manifest.json" | awk '{print $1}')" = '35ccea66e7c25078a0169e02d2cbb42061dc002c578a456c41c045935db1acc7'
+          test "$(sha256sum "$restore_dir/p5i/manifest.json" | awk '{print $1}')" = 'd905ddeedaf379de15d42f5094267b70897061cd08275041f1d588604c6e1546'
+          test "$(sha256sum "$restore_dir/p5i/vendor-20240619-to-p5i-outer.patch" | awk '{print $1}')" = '4016649007e50b67389c3c5860b7124d1454f9f29973079e9f0754a439c50991'
+          test "$(sha256sum "$restore_dir/p5i-to-p6-source-compat.patch" | awk '{print $1}')" = '1edd7b005f8af7bd9cad955bced33c6d5509347a6c17c51c4678be89fd3c1cbc'
+          test "$(sha256sum "$restore_dir/p6v10-to-p6v11-full-susfs-outer.patch" | awk '{print $1}')" = '220c388cc13640971802f422fee3804ef78bd892d7c077bcf216e0e80bf14e44'
+
+          jq -e \
+            --arg p5commit "$EXPECTED_P5I_COMMIT" \
+            --arg p5tree "$EXPECTED_P5I_TREE" \
+            --arg rhead "$EXPECTED_RESUKISU_BASE_HEAD" \
+            --arg rtree "$EXPECTED_RESUKISU_BASE_TREE" \
+            --arg outer "$EXPECTED_OUTER_TREE" \
+            '.stage == "CLEAN_GEN1_P6V11_SOURCE" and .p5i_commit == $p5commit and .p5i_tree == $p5tree and .resukisu_head == $rhead and .resukisu_tree == $rtree and .p6_source_tree == $outer' \
+            "$restore_dir/manifest.json" >/dev/null
+
+          git -C "$BASE_DIR" reset --hard "$EXPECTED_VENDOR_SHA"
+          git -C "$BASE_DIR" clean -fdx
+          for p in \
+            "$restore_dir/p5i/vendor-20240619-to-p5i-outer.patch" \
+            "$restore_dir/p5i-to-p6-source-compat.patch" \
+            "$restore_dir/p6v10-to-p6v11-full-susfs-outer.patch"; do
+            test -s "$p"
+            git -C "$BASE_DIR" apply --check --whitespace=error --binary "$p"
+            git -C "$BASE_DIR" apply --index --whitespace=error --binary "$p"
+          done
+          test "$(git -C "$BASE_DIR" write-tree)" = "$EXPECTED_OUTER_TREE"
+          test "$(make -s -C "$BASE_DIR" kernelversion)" = '5.4.274'
+          test "$(sha256sum "$BASE_DIR/fs/exec.c" | awk '{print $1}')" = "$EXPECTED_P12_EXEC_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/ksu_hook_contract.h" | awk '{print $1}')" = "$EXPECTED_P12_CONTRACT_SHA256"
+          test "$(sha256sum "$BASE_DIR/fs/susfs.c" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_C_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/susfs.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_H_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/susfs_def.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_DEF_SHA256"
+          {
+            echo 'OUTER_SOURCE_RECONSTRUCTION=PASS'
+            echo "RESTORE_KIT_SHA256=$RESTORE_KIT_SHA256"
+          } | tee "$AUDIT_DIR/02-outer-source.txt"
+
+      - name: Construct exact P14R1 ReSukiSU 35157 subtree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q "$RESUKISU_REPO" "$RESUKISU_UPSTREAM"
+          for c in "$RESUKISU_COMMON_BASE" "$RESUKISU_DEVICE_PASS_BASE" "$RESUKISU_P13_DEVICE_PASS" \
+                   "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" "$RESUKISU_EXCLUDED_MODULE_FILTER"; do
+            git -C "$RESUKISU_UPSTREAM" cat-file -e "${c}^{commit}"
+          done
+          git -C "$RESUKISU_UPSTREAM" merge-base --is-ancestor "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET"
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-list --count "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}")" = "$RESUKISU_EXPECTED_DELTA_COMMITS"
+          git -C "$RESUKISU_UPSTREAM" diff --name-only "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- kernel uapi \
+            | LC_ALL=C sort > "$AUDIT_DIR/03-resukisu-delta.txt"
+          printf '%s\n' 'kernel/manager/manager.c' > "$AUDIT_DIR/03-resukisu-delta.expected.txt"
+          diff -u "$AUDIT_DIR/03-resukisu-delta.expected.txt" "$AUDIT_DIR/03-resukisu-delta.txt"
+          git -C "$RESUKISU_UPSTREAM" diff --quiet "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- uapi
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-parse "$RESUKISU_P14_DEVICE_PASS:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_PARENT_BLOB"
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-parse "$RESUKISU_TARGET:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          target_count="$(git -C "$RESUKISU_UPSTREAM" rev-list --count "$RESUKISU_TARGET")"
+          target_version="$((30700 + target_count))"
+          test "$target_version" = "$EXPECTED_KSU_VERSION"
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-parse --short=8 "$RESUKISU_TARGET")" = '3d1185d8'
+          test "$(git -C "$RESUKISU_UPSTREAM" describe --abbrev=0 --tags "$RESUKISU_TARGET")" = 'v4.2.0-rc2'
+          git -C "$RESUKISU_UPSTREAM" show "$RESUKISU_TARGET:uapi/supercall.h" | grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};"
+
+          git -C "$RESUKISU_UPSTREAM" checkout -q --detach "$RESUKISU_TARGET"
+          git -C "$RESUKISU_UPSTREAM" reset --hard -q "$RESUKISU_TARGET"
+          git -C "$RESUKISU_UPSTREAM" clean -fdx -q
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root=Path(os.environ['RESUKISU_UPSTREAM'])
+          def remove_exact(path, block, expected=1):
+              p=root/path; t=p.read_text(encoding='utf-8')
+              if t.count(block) != expected:
+                  raise SystemExit(f'{path}: unexpected block count for {block!r}')
+              p.write_text(t.replace(block,'',expected), encoding='utf-8')
+          for rel in ('kernel/feature/module_load_filter.c','kernel/feature/module_load_filter.h'):
+              p=root/rel
+              if not p.is_file(): raise SystemExit('missing '+rel)
+              p.unlink()
+          remove_exact('kernel/Kbuild','kernelsu-objs += feature/module_load_filter.o\n')
+          remove_exact('kernel/core/init.c','#include "feature/module_load_filter.h"\n')
+          remove_exact('kernel/core/init.c','char ksu_block_modules[256];\nmodule_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules), 0);\nMODULE_PARM_DESC(block_modules, "Comma-separated preset module names to acknowledge without loading");\n\n')
+          remove_exact('kernel/core/init.c','        ksu_module_load_filter_hook_init();\n\n')
+          remove_exact('kernel/core/init.c','    ksu_module_load_filter_hook_exit();\n')
+          PY
+          ! grep -RFn 'module_load_filter' "$RESUKISU_UPSTREAM/kernel" "$RESUKISU_UPSTREAM/uapi"
+          ! grep -RFn 'block_modules' "$RESUKISU_UPSTREAM/kernel" "$RESUKISU_UPSTREAM/uapi"
+
+          import_patch="$AUDIT_DIR/03-p14r1-kernel-uapi.patch"
+          git -C "$RESUKISU_UPSTREAM" diff --binary "$RESUKISU_COMMON_BASE" -- kernel uapi > "$import_patch"
+          test -s "$import_patch"
+
+          rm -rf "$BASE_DIR/KernelSU"
+          git clone -q "$RESUKISU_REPO" "$BASE_DIR/KernelSU"
+          git -C "$BASE_DIR/KernelSU" checkout -q --detach "$RESUKISU_COMMON_BASE"
+          git -C "$BASE_DIR/KernelSU" reset --hard -q "$RESUKISU_COMMON_BASE"
+          git -C "$BASE_DIR/KernelSU" clean -fdx -q
+          git -C "$BASE_DIR/KernelSU" apply --check --whitespace=nowarn "$import_patch"
+          git -C "$BASE_DIR/KernelSU" apply --index --whitespace=nowarn "$import_patch"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+          import os
+          root=Path(os.environ['BASE_DIR'])/'KernelSU'
+          def ensure_include(rel, anchor):
+              p=root/rel; t=p.read_text(encoding='utf-8'); inc='#include <linux/ksu_hook_contract.h>'
+              if inc not in t:
+                  if anchor not in t: raise SystemExit('missing anchor '+rel)
+                  p.write_text(t.replace(anchor, anchor+'\n'+inc,1), encoding='utf-8')
+          ensure_include('kernel/feature/sucompat.h','#include "compat/kernel_compat.h"')
+          ensure_include('kernel/runtime/ksud_integration.c','#include <linux/version.h>')
+          ensure_include('kernel/supercall/supercall.c','#include <linux/anon_inodes.h>')
+          p=root/'kernel/Kbuild'; t=p.read_text(encoding='utf-8')
+          old=dedent('''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
+
+          KSU_TAG_NAME    := $(shell cd $(KSU_SRC); $(GIT_BIN) describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")
+          KSU_COMMIT_SHA  := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+          ifneq ($(shell cd $(KSU_SRC); $(GIT_BIN) diff-index --quiet HEAD; echo $$?),0)
+          KSU_COMMIT_SHA  := $(KSU_COMMIT_SHA)-dirty
+          endif
+          KSU_BRANCH_NAME := $(shell cd $(KSU_SRC); $(GIT_BIN) branch --show-current 2>/dev/null || echo "unknown")''')
+          new=dedent(f'''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := {os.environ['EXPECTED_KSU_VERSION']}
+          CLEAN_GEN1_UPSTREAM_TARGET := {os.environ['RESUKISU_TARGET']}
+          KSU_VERSION := $(CLEAN_GEN1_UPSTREAM_COMPAT_VERSION)
+
+          KSU_TAG_NAME    := v4.2.0-rc2
+          KSU_COMMIT_SHA  := 3d1185d8-p14r1
+          KSU_BRANCH_NAME := clean-gen1-p14r1''')
+          if old not in t: raise SystemExit('Kbuild identity block missing')
+          p.write_text(t.replace(old,new,1), encoding='utf-8')
+          PY
+          git -C "$BASE_DIR/KernelSU" add kernel uapi
+          test -z "$(git -C "$BASE_DIR/KernelSU" ls-files -u)"
+          grep -Fq "CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := $EXPECTED_KSU_VERSION" "$BASE_DIR/KernelSU/kernel/Kbuild"
+          grep -Fq "CLEAN_GEN1_UPSTREAM_TARGET := $RESUKISU_TARGET" "$BASE_DIR/KernelSU/kernel/Kbuild"
+          grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};" "$BASE_DIR/KernelSU/uapi/supercall.h"
+          test ! -e "$BASE_DIR/KernelSU/kernel/feature/module_load_filter.c"
+          test "$(git -C "$BASE_DIR/KernelSU" hash-object kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          python3 - "$BASE_DIR/KernelSU/kernel/manager/manager.c" <<'PY'
+          from pathlib import Path
+          import sys
+          t=Path(sys.argv[1]).read_text(encoding='utf-8')
+          f=t[t.index('int ksu_handle_get_managers_cmd'):t.index('int ksu_get_manager_signature_index_by_appid')]
+          assert f.index('entries = kcalloc') < f.index('rcu_read_lock();') < f.index('rcu_read_unlock();') < f.index('copy_to_user')
+          assert f.count('copy_to_user') == 1
+          print('RCU_MANAGER_FIX=PASS')
+          PY
+          echo 'P14R1_RESUKISU_SUBTREE=PASS' | tee "$AUDIT_DIR/03-resukisu-gate.txt"
+
+      - name: Reapply P13 outer hook and verify P14R1 keyring contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          p13="$P13_PATCH"
+          echo "$EXPECTED_P13_PATCH_SHA256  $p13" | sha256sum -c -
+          git -C "$BASE_DIR" apply --check --whitespace=error --binary "$p13"
+          git -C "$BASE_DIR" apply --index --whitespace=error --binary "$p13"
+          git -C "$BASE_DIR" diff --cached --check
+          test "$(git -C "$BASE_DIR" write-tree)" = "$EXPECTED_P13_TREE"
+          grep -Fq 'ksu_handle_post_execve' "$BASE_DIR/fs/exec.c"
+          ! grep -Fq 'ksu_install_su_fd' "$BASE_DIR/fs/exec.c"
+
+          ! grep -Fq 'key_need_perm' "$BASE_DIR/include/linux/key.h"
+          grep -Fq 'session_keyring;' "$BASE_DIR/include/linux/cred.h"
+          grep -Fq 'install_session_keyring_to_cred(struct cred *cred, struct key *keyring)' "$BASE_DIR/security/keys/process_keys.c"
+          ! grep -RFn 'KSU_COMPAT_REQUIRE_SESSION_KEYRING' "$BASE_DIR/KernelSU/kernel"
+          grep -Fq 'LSM_HOOK_INIT(key_permission, ksu_handle_key_permission)' "$BASE_DIR/KernelSU/kernel/hook/lsm_hooks.c"
+          grep -Fq 'install_session_keyring_to_cred(ksu_cred, init_session_keyring);' "$BASE_DIR/KernelSU/kernel/compat/kernel_compat.c"
+          grep -Fq 'init_session_keyring = ksu_get_session_keyring(current_cred());' "$BASE_DIR/KernelSU/kernel/core/init.c"
+
+          git -C "$BASE_DIR" config user.name 'VEUX O44 Audit'
+          git -C "$BASE_DIR" config user.email 'veux-o43@invalid.local'
+          outer_tree="$(git -C "$BASE_DIR" write-tree)"
+          base_commit="$(printf '%s\n' 'O44 exact P14R1 integration base' | git -C "$BASE_DIR" commit-tree "$outer_tree" -p "$EXPECTED_VENDOR_SHA")"
+          git -C "$BASE_DIR" reset --hard "$base_commit"
+          KSU_TREE="$(git -C "$BASE_DIR/KernelSU" write-tree)"
+          echo "BASE_COMMIT=$base_commit" >> "$GITHUB_ENV"
+          echo "KSU_TREE=$KSU_TREE" >> "$GITHUB_ENV"
+          {
+            echo "P13_OUTER_TREE=$outer_tree"
+            echo "P14R1_KERNELSU_TREE=$KSU_TREE"
+            echo 'P13_POST_EXEC=PASS'
+            echo 'P14R1_KEYRING_MATRIX=PASS'
+          } | tee "$AUDIT_DIR/04-p14r1-integration.txt"
+
+      - name: Materialize exact O41 5.4.302 source with P14R1 KernelSU
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$BASE_DIR" worktree add -q --detach "$T302_DIR" "$BASE_COMMIT"
+          p302="$P302_PATCH"
+          git -C "$T302_DIR" apply --check --whitespace=error --binary "$p302"
+          git -C "$T302_DIR" apply --index --whitespace=error --binary "$p302"
+          git -C "$T302_DIR" diff --cached --check
+          test "$(make -s -C "$T302_DIR" kernelversion)" = '5.4.302'
+          rm -rf "$T302_DIR/KernelSU"
+          cp -a "$BASE_DIR/KernelSU" "$T302_DIR/KernelSU"
+          test "$(git -C "$T302_DIR/KernelSU" write-tree)" = "$KSU_TREE"
+
+          pm="$PM_PATCH"
+          dep="$DEP_PATCH"
+          echo "$O41_PM302_PATCH_SHA256  $pm" | sha256sum -c -
+          echo "$O41_TIMER_SIZEADD302_PATCH_SHA256  $dep" | sha256sum -c -
+          git -C "$T302_DIR" apply --check --whitespace=error "$pm"
+          git -C "$T302_DIR" apply --index --whitespace=error "$pm"
+          git -C "$T302_DIR" apply --check --whitespace=error "$dep"
+          git -C "$T302_DIR" apply --index --whitespace=error "$dep"
+          git -C "$T302_DIR" diff --cached --check
+
+          grep -Fq 'del_timer_sync(&req->rsk_timer)' "$T302_DIR/net/ipv4/inet_connection_sock.c"
+          ! grep -Fq 'timer_delete_sync(&req->rsk_timer)' "$T302_DIR/net/ipv4/inet_connection_sock.c"
+          grep -Fq 'needs_force_resume:1;' "$T302_DIR/include/linux/pm.h"
+          grep -Eq 'static[[:space:]]+inline[[:space:]]+size_t[[:space:]]+smci_size_add[[:space:]]*\(' "$T302_DIR/drivers/soc/qcom/smcinvoke.c"
+          test "$(sha256sum "$T302_DIR/fs/susfs.c" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_C_SHA256"
+          test "$(sha256sum "$T302_DIR/include/linux/susfs.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_H_SHA256"
+          test "$(sha256sum "$T302_DIR/include/linux/susfs_def.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_DEF_SHA256"
+          echo 'TARGET_5.4.302_SOURCE=PASS' | tee "$AUDIT_DIR/05-source-302.txt"
+
+      - name: Install exact proven Android clang-r416183b
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_PREBUILT_COMMIT}/clang-r416183b.tar.gz"
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/clang-r416183b.tar.gz"
+          tar -xzf "$RUNNER_TEMP/clang-r416183b.tar.gz" -C "$TOOLCHAIN_DIR"
+          for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+            test -x "$TOOLCHAIN_DIR/bin/$tool"
+          done
+          "$TOOLCHAIN_DIR/bin/clang" --version | tee "$AUDIT_DIR/06-clang.txt"
+
+      - name: Compile and regression-audit 5.4.302
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+          export KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP KBUILD_BUILD_VERSION SOURCE_DATE_EPOCH
+          rm -rf "$OUT302"
+          make -C "$T302_DIR" O="$OUT302" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            veux_defconfig 2>&1 | tee "$AUDIT_DIR/07-config.log"
+          for q in \
+            'CONFIG_KSU=y' \
+            'CONFIG_KSU_SUSFS=y' \
+            '# CONFIG_KSU_MANUAL_HOOK is not set' \
+            'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
+            'CONFIG_LOCALVERSION="-qgki"'; do
+            grep -Fxq "$q" "$OUT302/.config"
+          done
+          test "$(sha256sum "$OUT302/.config" | awk '{print $1}')" = "$O41_OLD_CONFIG_SHA256"
+
+          make -C "$T302_DIR" -j"$(nproc)" O="$OUT302" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            KCFLAGS="$EFFECTIVE_KCFLAGS" Image dtbs 2>&1 | tee "$AUDIT_DIR/07-build.log"
+
+          image="$OUT302/arch/arm64/boot/Image"
+          dtb="$OUT302/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+          test -s "$image"; test -s "$dtb"
+          test "$(stat -c '%s' "$image")" -gt 20000000
+          release="$(make -s -C "$T302_DIR" O="$OUT302" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 kernelrelease)"
+          test "$release" = "$EXPECTED_RELEASE_302"
+          test "$(sha256sum "$dtb" | awk '{print $1}')" = "$EXPECTED_DTB_SHA256"
+
+          strings -a "$image" > "$AUDIT_DIR/07-image-strings.txt"
+          grep -Fq "Linux version $EXPECTED_RELEASE_302 ($KBUILD_BUILD_USER@$KBUILD_BUILD_HOST)" "$AUDIT_DIR/07-image-strings.txt"
+          grep -Fq "$RESUKISU_IMAGE_IDENTITY" "$AUDIT_DIR/07-image-strings.txt"
+          grep -Fq 'susfs' "$AUDIT_DIR/07-image-strings.txt"
+
+          mkdir -p "$DIST_DIR/5.4.302"
+          cp "$image" "$DIST_DIR/5.4.302/Image"
+          cp "$dtb" "$DIST_DIR/5.4.302/veux.dtb"
+          cp "$OUT302/.config" "$DIST_DIR/5.4.302/config"
+
+          python3 - "$AUDIT_DIR/07-build.log" "$EXPECTED_WARNING_COUNT" <<'PY'
+          from pathlib import Path
+          import re, sys
+          lines=Path(sys.argv[1]).read_text(errors='replace').splitlines()
+          got=[]
+          for line in lines:
+              if 'warning:' not in line.lower(): continue
+              m=re.search(r'((?:drivers|fs|net)/[^:]+:\d+:\d+: warning: .*)$', line)
+              if m: got.append(m.group(1))
+              else: got.append(line.strip())
+          expected=[
+          "drivers/clk/qcom/clk-rpmh.c:283:14: warning: comparison of distinct pointer types ('typeof (cmd_state) *' (aka 'unsigned int *') and 'typeof (16383) *' (aka 'int *')) [-Wcompare-distinct-pointer-types]",
+          "fs/namei.c:3320:12: warning: unused function 'atomic_open' [-Wunused-function]",
+          "drivers/cpufreq/qcom-cpufreq-hw.c:551:23: warning: unused variable 'c' [-Wunused-variable]",
+          "net/ipv4/tcp_output.c:2028:14: warning: comparison of distinct pointer types ('typeof (srtt_in_ns >> 1) *' (aka 'unsigned long long *') and 'typeof (1000000L) *' (aka 'long *')) [-Wcompare-distinct-pointer-types]",
+          ]
+          if len(got) != int(sys.argv[2]):
+              raise SystemExit(f'warning count changed: {len(got)} != {sys.argv[2]}\n'+"\n".join(got))
+          got_sorted=sorted(got)
+          expected_sorted=sorted(expected)
+          if got_sorted != expected_sorted:
+              raise SystemExit('warning fingerprint changed\nGOT(sorted):\n'+'\n'.join(got_sorted)+'\nEXPECTED(sorted):\n'+'\n'.join(expected_sorted))
+          print('WARNING_REGRESSION_GATE=PASS')
+          PY
+          ! grep -Ei '(^|[^A-Za-z])(error:|fatal error:|undefined reference|ld\.lld: error:)' "$AUDIT_DIR/07-build.log"
+
+          new_sha="$(sha256sum "$image" | awk '{print $1}')"
+          test "$new_sha" != "$O41_OLD_IMAGE_SHA256"
+          {
+            echo "KERNEL_RELEASE=$release"
+            echo "RESUKISU_VERSION=$EXPECTED_KSU_VERSION"
+            echo "RESUKISU_COMMIT=$RESUKISU_TARGET"
+            echo "UAPI=$EXPECTED_KSU_UAPI"
+            echo 'SUSFS=2.3.0'
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+            echo 'P14R1_KEYRING_MATRIX=PASS'
+            echo 'P13_POST_EXEC=PASS'
+            echo 'RESUKISU_RCU_FIX_CONTRACT=PASS'
+            echo 'WARNING_REGRESSION_GATE=PASS'
+            echo "IMAGE_BYTES=$(stat -c '%s' "$image")"
+            echo "IMAGE_SHA256=$new_sha"
+            echo "CONFIG_SHA256=$(sha256sum "$OUT302/.config" | awk '{print $1}')"
+            echo "DTB_SHA256=$(sha256sum "$dtb" | awk '{print $1}')"
+            echo 'COMPILE_GREEN_CANDIDATE=PASS'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } | tee "$AUDIT_DIR/08-result.txt"
+          (cd "$DIST_DIR/5.4.302" && sha256sum Image veux.dtb config > SHA256SUMS.txt)
+          echo "O44_BUILD_PASS=1" >> "$GITHUB_ENV"
+
+      - name: Prepare immutable evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR" "$DIST_DIR"
+          {
+            echo 'WORKFLOW=U5-O44-V1-5.4.302-RESUKISU-35157-SELF-CONTAINED'
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+            echo "SUPPORT_KIT_SHA256=$SUPPORT_KIT_SHA256"
+            echo "RESTORE_KIT_SHA256=$RESTORE_KIT_SHA256"
+            echo "O40_SOURCE_ARTIFACT_SHA256=$O40_ARTIFACT_SHA256"
+            echo "O41_SOURCE_ARTIFACT_SHA256=$O41_ARTIFACT_SHA256"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "DEVICE_PASS=NO"
+          } > "$AUDIT_DIR/98-manifest.txt"
+          find "$AUDIT_DIR" "$DIST_DIR" -type f ! -name '99-SHA256SUMS.txt' -print0 | \
+            sort -z | xargs -0 -r sha256sum > "$AUDIT_DIR/99-SHA256SUMS.txt"
+
+      - name: Upload O44 compile evidence and Image
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-5.4.302-ReSukiSU-35157-P14R1-O44V1-${{ github.run_id }}
+          path: |
+            u5-o44-audit
+            u5-o44-dist
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Final real GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${O44_BUILD_PASS:-0}" = '1'
+          grep -Fxq 'COMPILE_GREEN_CANDIDATE=PASS' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'P14R1_KEYRING_MATRIX=PASS' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'RESUKISU_RCU_FIX_CONTRACT=PASS' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'PACKAGE_PASS=NO' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$AUDIT_DIR/08-result.txt"
+          grep -Fxq 'DEVICE_PASS=NO' "$AUDIT_DIR/08-result.txt"
+          echo 'O44V1_FINAL=REAL_COMPILE_GREEN_PASS'
