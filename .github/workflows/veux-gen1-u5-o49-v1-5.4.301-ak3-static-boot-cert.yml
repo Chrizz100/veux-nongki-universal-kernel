@@ -1,0 +1,416 @@
+name: VEUX GEN1 U5-O49 v1 5.4.301 AK3 Static Boot Certification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-gen1-u5-o49-v1-5.4.301-ak3-static-boot-cert
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  O47_RUN_ID: '35462028634'
+  O47_HEAD_SHA: 7a8f82bd6eba92a2a03ea61415974752c640d454
+  O47_ARTIFACT_NAME: VEUX-5.4.301-ReSukiSU-35157-P14R1-O47V1-PACKAGE-35462028634
+  O47_ARTIFACT_DIGEST: sha256:eee992c758880cc09aef13c12665835021994ff688522065eef2affa5984009f
+  AK3_NAME: VEUX-5.4.301-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-AK3.zip
+  AK3_SHA256: 05f7125d7bf66eb43edf03112912dd060e2b5a6f3bee460c295044675929ddbb
+  AK3_IMAGE_SHA256: d331865930fd6544bb7457d6d6e0241fc3b181f1f831a6c9ae921a57f79b8c82
+  EXPECTED_KERNEL_BYTES: '29911552'
+
+  O48_RUN_ID: '35464960333'
+  O48_HEAD_SHA: 63b6b16d46ac0ee925823fd22f7b8ef8c6d54a70
+  O48_STATIC_ARTIFACT_NAME: VEUX-5.4.301-ReSukiSU-35157-O48V2-STATIC-BOOT-35464960333
+  O48_STATIC_ARTIFACT_DIGEST: sha256:fc28900275041cc25d5e005a44fe5fe45b164fe72cd46762b45907a56be0c4a1
+  O48_AUDIT_ARTIFACT_NAME: VEUX-5.4.301-O48V2-AUDIT-35464960333
+  O48_AUDIT_ARTIFACT_DIGEST: sha256:efe503dabac16685abf9781390cbc6db059362c0a092f6ca3d6d4a6161d1cc72
+  O48_BOOT_SHA256: 3df3f61e2a372269d69d42aff5d3606d6e621cb38e834150b977c0820084cafe
+  O48_VBMETA_DIGEST_SHA256: 1f49022879b01aec9d4c3419a575a49bf6144910498303af1edadeb63a06f1c8
+  BOOT_PARTITION_SIZE: '134217728'
+  EXPECTED_HEADER_VERSION: '3'
+
+  WORK_DIR: ${{ github.workspace }}/o49-work
+  O47_DIR: ${{ github.workspace }}/o49-o47
+  O48_STATIC_DIR: ${{ github.workspace }}/o49-o48-static
+  O48_AUDIT_DIR: ${{ github.workspace }}/o49-o48-audit
+  AUDIT_DIR: ${{ github.workspace }}/u5-o49-audit
+  DIST_DIR: ${{ github.workspace }}/u5-o49-dist
+
+jobs:
+  ak3-static-boot-cert:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Repository and immutable plan gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          rm -rf "$WORK_DIR" "$O47_DIR" "$O48_STATIC_DIR" "$O48_AUDIT_DIR" "$AUDIT_DIR" "$DIST_DIR"
+          mkdir -p "$WORK_DIR" "$O47_DIR" "$O48_STATIC_DIR" "$O48_AUDIT_DIR" "$AUDIT_DIR" "$DIST_DIR"
+          cat > "$AUDIT_DIR/00-plan.txt" <<'EOF'
+          U5-O49 v1: certify the CLEAN 5.4.301 AnyKernel3 package for STATIC BOOT PATH PASS.
+          The AK3 file itself remains byte-identical to the O47 PACKAGE PASS artifact.
+          Certification method:
+          1. Authenticate O47 GREEN run and exact package artifact digest.
+          2. Validate AK3 ZIP CRC, image-only payload and AnyKernel3 VEUX/A13/A-B contract.
+          3. Require dump_boot -> write_boot ordering and active-slot boot target.
+          4. Authenticate O48 v2 GREEN static-boot run and both exact O48 artifact digests.
+          5. Verify O48 audit SHA256SUMS and key Boot-v3/Ramdisk/AVB gates.
+          6. Extract the kernel payload directly from the O48 boot.img and require byte identity with the Image inside AK3.
+          7. Only then set AK3_STATIC_BOOT_PATH_PASS=PASS and STATIC_BOOT_PATH_PASS=PASS.
+          DEVICE_PASS remains NO until a real VEUX device flash/boot test.
+          EOF
+
+      - name: Authenticate O47 GREEN package authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json')
+
+          curl --fail --silent --show-error --location "${auth[@]}" \
+            "$api/actions/runs/$O47_RUN_ID" > "$AUDIT_DIR/01-o47-run.json"
+          jq -e --arg sha "$O47_HEAD_SHA" \
+            '.status == "completed" and .conclusion == "success" and .head_sha == $sha' \
+            "$AUDIT_DIR/01-o47-run.json" >/dev/null
+
+          curl --fail --silent --show-error --location "${auth[@]}" \
+            "$api/actions/runs/$O47_RUN_ID/artifacts?per_page=100" > "$AUDIT_DIR/01-o47-artifacts.json"
+
+          count="$(jq --arg n "$O47_ARTIFACT_NAME" '[.artifacts[] | select(.name == $n and .expired == false)] | length' "$AUDIT_DIR/01-o47-artifacts.json")"
+          test "$count" = '1'
+          digest="$(jq -r --arg n "$O47_ARTIFACT_NAME" '.artifacts[] | select(.name == $n and .expired == false) | .digest' "$AUDIT_DIR/01-o47-artifacts.json")"
+          test "$digest" = "$O47_ARTIFACT_DIGEST"
+
+          {
+            echo 'O47_RUN_AUTH=PASS'
+            echo 'O47_PACKAGE_ARTIFACT_AUTH=PASS'
+            echo "O47_PACKAGE_ARTIFACT_DIGEST=$digest"
+          } | tee "$AUDIT_DIR/01-o47-auth.txt"
+
+      - name: Download authenticated O47 package artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ env.O47_ARTIFACT_NAME }}
+          path: ${{ env.O47_DIR }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.O47_RUN_ID }}
+
+      - name: Validate CLEAN AK3 payload and AnyKernel3 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ak3="$O47_DIR/$AK3_NAME"
+          test -s "$ak3"
+          test "$(sha256sum "$ak3" | awk '{print $1}')" = "$AK3_SHA256"
+          unzip -t "$ak3" > "$AUDIT_DIR/02-ak3-zip-test.txt"
+
+          mapfile -t names < <(zipinfo -1 "$ak3")
+          printf '%s\n' "${names[@]}" > "$AUDIT_DIR/02-ak3-files.txt"
+
+          forbidden='^(boot(\.img)?|vendor_boot(\.img)?|dtb|dtbo(\.img)?|vbmeta(\.img)?|recovery(\.img)?|super(\.img)?)$'
+          if printf '%s\n' "${names[@]}" | grep -Eiq "$forbidden"; then
+            echo "::error::Forbidden embedded boot/partition payload found in CLEAN AK3"
+            exit 1
+          fi
+
+          unzip -p "$ak3" Image > "$WORK_DIR/ak3-Image"
+          unzip -p "$ak3" anykernel.sh > "$WORK_DIR/anykernel.sh"
+          unzip -p "$ak3" tools/ak3-core.sh > "$WORK_DIR/ak3-core.sh"
+
+          test "$(stat -c '%s' "$WORK_DIR/ak3-Image")" = "$EXPECTED_KERNEL_BYTES"
+          test "$(sha256sum "$WORK_DIR/ak3-Image" | awk '{print $1}')" = "$AK3_IMAGE_SHA256"
+          bash -n "$WORK_DIR/anykernel.sh"
+          bash -n "$WORK_DIR/ak3-core.sh"
+
+          python3 - "$WORK_DIR/anykernel.sh" "$WORK_DIR/ak3-core.sh" > "$AUDIT_DIR/02-ak3-contract.txt" <<'PY'
+          import sys
+          ak = open(sys.argv[1], encoding='utf-8').read()
+          core = open(sys.argv[2], encoding='utf-8').read()
+
+          required = [
+              "do.devicecheck=1",
+              "do.modules=0",
+              "do.systemless=1",
+              "do.cleanup=1",
+              "device.name1=veux",
+              "supported.versions=13",
+              "BLOCK=boot;",
+              "IS_SLOT_DEVICE=1;",
+              "SLOT_SELECT=active;",
+              "RAMDISK_COMPRESSION=auto;",
+              "PATCH_VBMETA_FLAG=0;",
+              ". tools/ak3-core.sh;",
+          ]
+          for item in required:
+              if item not in ak:
+                  raise SystemExit(f"missing AK3 contract item: {item}")
+
+          if ak.count("dump_boot;") != 1:
+              raise SystemExit("dump_boot must occur exactly once in anykernel.sh")
+          if ak.count("write_boot;") != 1:
+              raise SystemExit("write_boot must occur exactly once in anykernel.sh")
+          if ak.index("dump_boot;") > ak.index("write_boot;"):
+              raise SystemExit("dump_boot must precede write_boot")
+          if "dump_boot() {" not in core:
+              raise SystemExit("ak3-core.sh dump_boot function missing")
+          if "write_boot() {" not in core:
+              raise SystemExit("ak3-core.sh write_boot function missing")
+
+          print("AK3_DEVICECHECK=PASS")
+          print("AK3_DEVICE=veux")
+          print("AK3_ANDROID=13")
+          print("AK3_BLOCK=boot")
+          print("AK3_SLOT_MODE=active")
+          print("AK3_RAMDISK_COMPRESSION=auto")
+          print("AK3_PATCH_VBMETA_FLAG=0")
+          print("AK3_DUMP_BOOT_WRITE_BOOT_ORDER=PASS")
+          print("AK3_CORE_FUNCTIONS=PASS")
+          PY
+
+          {
+            echo 'AK3_ZIP_CRC=PASS'
+            echo 'AK3_IMAGE_ONLY_PAYLOAD=PASS'
+            echo 'AK3_IMAGE_HASH=PASS'
+            echo 'AK3_SCRIPT_SYNTAX=PASS'
+            echo 'AK3_CONTRACT=PASS'
+          } | tee "$AUDIT_DIR/02-ak3-gate.txt"
+
+      - name: Authenticate O48 v2 GREEN static boot authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json')
+
+          curl --fail --silent --show-error --location "${auth[@]}" \
+            "$api/actions/runs/$O48_RUN_ID" > "$AUDIT_DIR/03-o48-run.json"
+          jq -e --arg sha "$O48_HEAD_SHA" \
+            '.status == "completed" and .conclusion == "success" and .head_sha == $sha' \
+            "$AUDIT_DIR/03-o48-run.json" >/dev/null
+
+          curl --fail --silent --show-error --location "${auth[@]}" \
+            "$api/actions/runs/$O48_RUN_ID/artifacts?per_page=100" > "$AUDIT_DIR/03-o48-artifacts.json"
+
+          for spec in \
+            "$O48_STATIC_ARTIFACT_NAME|$O48_STATIC_ARTIFACT_DIGEST" \
+            "$O48_AUDIT_ARTIFACT_NAME|$O48_AUDIT_ARTIFACT_DIGEST"
+          do
+            name="${spec%%|*}"
+            expected="${spec#*|}"
+            count="$(jq --arg n "$name" '[.artifacts[] | select(.name == $n and .expired == false)] | length' "$AUDIT_DIR/03-o48-artifacts.json")"
+            test "$count" = '1'
+            digest="$(jq -r --arg n "$name" '.artifacts[] | select(.name == $n and .expired == false) | .digest' "$AUDIT_DIR/03-o48-artifacts.json")"
+            test "$digest" = "$expected"
+          done
+
+          {
+            echo 'O48_RUN_AUTH=PASS'
+            echo 'O48_STATIC_ARTIFACT_AUTH=PASS'
+            echo 'O48_AUDIT_ARTIFACT_AUTH=PASS'
+          } | tee "$AUDIT_DIR/03-o48-auth.txt"
+
+      - name: Download authenticated O48 static boot artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ env.O48_STATIC_ARTIFACT_NAME }}
+          path: ${{ env.O48_STATIC_DIR }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.O48_RUN_ID }}
+
+      - name: Download authenticated O48 audit artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ env.O48_AUDIT_ARTIFACT_NAME }}
+          path: ${{ env.O48_AUDIT_DIR }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.O48_RUN_ID }}
+
+      - name: Validate O48 GREEN evidence and bind AK3 Image to boot.img
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$O48_STATIC_DIR/FINAL-RESULT.txt"
+          boot="$O48_STATIC_DIR/boot.img"
+
+          test -s "$result"
+          test -s "$boot"
+          test "$(stat -c '%s' "$boot")" = "$BOOT_PARTITION_SIZE"
+          test "$(sha256sum "$boot" | awk '{print $1}')" = "$O48_BOOT_SHA256"
+
+          (
+            cd "$O48_STATIC_DIR"
+            sha256sum -c SHA256SUMS.txt
+          ) | tee "$AUDIT_DIR/04-o48-static-sha256.txt"
+
+          (
+            cd "$O48_AUDIT_DIR"
+            sha256sum -c SHA256SUMS.txt
+          ) | tee "$AUDIT_DIR/04-o48-audit-sha256.txt"
+
+          grep -Fxq 'VEUX_5.4.301_O48_STATIC_BOOT=PASS' "$result"
+          grep -Fxq 'DEVICE=veux' "$result"
+          grep -Fxq 'ANDROID_BOOT_HEADER=3' "$result"
+          grep -Fxq "BOOT_BYTES=$BOOT_PARTITION_SIZE" "$result"
+          grep -Fxq "BOOT_SHA256=$O48_BOOT_SHA256" "$result"
+          grep -Fxq "KERNEL_SHA256=$AK3_IMAGE_SHA256" "$result"
+          grep -Fxq "AVB_VBMETA_DIGEST_SHA256=$O48_VBMETA_DIGEST_SHA256" "$result"
+          grep -Fxq 'AVB_VERIFY_IMAGE=PASS' "$result"
+          grep -Fxq 'AVB_PROPERTIES_PRESERVED=PASS' "$result"
+          grep -Fxq 'PACKAGE_PASS=YES' "$result"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=PASS' "$result"
+          grep -Fxq 'DEVICE_PASS=NO' "$result"
+
+          grep -Fxq 'BOOT_V3_REFERENCE_AUTH=PASS' "$O48_AUDIT_DIR/05-base-gate.txt"
+          grep -Fxq 'BASE_KERNEL_IDENTITY=PASS' "$O48_AUDIT_DIR/06-reference-components.txt"
+          grep -Fxq 'RAW_STOCK_RAMDISK_IDENTITY=PASS' "$O48_AUDIT_DIR/06-reference-components.txt"
+          grep -Fxq 'AVB_HASH_FOOTER_REGENERATED=PASS' "$O48_AUDIT_DIR/07-avb-gate.txt"
+          grep -Fxq 'AVB_PROPERTIES_PRESERVED=PASS' "$O48_AUDIT_DIR/07-avb-gate.txt"
+          grep -Fxq 'AVB_ORIGINAL_IMAGE_SIZE_PRESERVED=PASS' "$O48_AUDIT_DIR/07-avb-gate.txt"
+          grep -Fxq 'FINAL_KERNEL_REEXTRACT=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+          grep -Fxq 'RAW_RAMDISK_BYTE_IDENTITY=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+          grep -Fxq 'DECODED_RAMDISK_BYTE_IDENTITY=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+          grep -Fxq 'BOOT_HEADER_PAGE_IDENTITY=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+          grep -Fxq 'BOOT_HEADER_V3=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+          grep -Fxq 'KERNEL_IDENTITY_STRINGS=PASS' "$O48_AUDIT_DIR/08-static-reextract.txt"
+
+          python3 - "$boot" "$WORK_DIR/ak3-Image" "$EXPECTED_HEADER_VERSION" "$EXPECTED_KERNEL_BYTES" > "$AUDIT_DIR/04-ak3-to-o48-binding.txt" <<'PY'
+          import hashlib, struct, sys
+          boot_path, image_path, expected_ver, expected_kernel = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+          with open(boot_path, 'rb') as f:
+              header = f.read(4096)
+              if header[:8] != b'ANDROID!':
+                  raise SystemExit('ANDROID boot magic missing')
+              kernel_size = struct.unpack_from('<I', header, 8)[0]
+              ramdisk_size = struct.unpack_from('<I', header, 12)[0]
+              header_size = struct.unpack_from('<I', header, 20)[0]
+              header_version = struct.unpack_from('<I', header, 40)[0]
+              if header_version != expected_ver:
+                  raise SystemExit(f'header version mismatch: {header_version}')
+              if kernel_size != expected_kernel:
+                  raise SystemExit(f'kernel size mismatch: {kernel_size}')
+              if ramdisk_size <= 0 or header_size <= 0:
+                  raise SystemExit('invalid boot-v3 sizes')
+              f.seek(4096)
+              boot_kernel = f.read(kernel_size)
+          ak3_image = open(image_path, 'rb').read()
+          if boot_kernel != ak3_image:
+              raise SystemExit('AK3 Image is not byte-identical to O48 boot kernel payload')
+          print('BOOT_MAGIC=PASS')
+          print(f'HEADER_VERSION={header_version}')
+          print(f'KERNEL_SIZE={kernel_size}')
+          print(f'RAMDISK_SIZE={ramdisk_size}')
+          print('AK3_IMAGE_EQUALS_O48_BOOT_KERNEL=PASS')
+          print('AK3_IMAGE_SHA256=' + hashlib.sha256(ak3_image).hexdigest())
+          PY
+
+          echo 'AK3_TO_O48_STATIC_BOOT_BINDING=PASS' | tee "$AUDIT_DIR/04-binding-gate.txt"
+
+      - name: Write AK3 STATIC BOOT certification
+        shell: bash
+        run: |
+          set -euo pipefail
+          ak3="$O47_DIR/$AK3_NAME"
+          cp "$ak3" "$DIST_DIR/$AK3_NAME"
+          cmp -s "$ak3" "$DIST_DIR/$AK3_NAME"
+          test "$(sha256sum "$DIST_DIR/$AK3_NAME" | awk '{print $1}')" = "$AK3_SHA256"
+
+          {
+            echo 'VEUX_5.4.301_O49_AK3_STATIC_BOOT_CERTIFICATION=PASS'
+            echo 'DEVICE=veux'
+            echo 'ANDROID=13'
+            echo "AK3_NAME=$AK3_NAME"
+            echo "AK3_SHA256=$AK3_SHA256"
+            echo "AK3_IMAGE_SHA256=$AK3_IMAGE_SHA256"
+            echo 'AK3_IMAGE_ONLY_PAYLOAD=PASS'
+            echo 'AK3_DEVICECHECK=PASS'
+            echo 'AK3_DUMP_BOOT_WRITE_BOOT_ORDER=PASS'
+            echo 'AK3_ACTIVE_SLOT_BOOT_TARGET=PASS'
+            echo 'AK3_TO_O48_STATIC_BOOT_BINDING=PASS'
+            echo "O48_BOOT_SHA256=$O48_BOOT_SHA256"
+            echo "O48_VBMETA_DIGEST_SHA256=$O48_VBMETA_DIGEST_SHA256"
+            echo 'PACKAGE_PASS=YES'
+            echo 'AK3_STATIC_BOOT_PATH_PASS=PASS'
+            echo 'STATIC_BOOT_PATH_PASS=PASS'
+            echo 'DEVICE_PASS=NO'
+          } | tee "$DIST_DIR/AK3-STATIC-BOOT-CERTIFICATION.txt"
+
+          (
+            cd "$DIST_DIR"
+            sha256sum "$AK3_NAME" AK3-STATIC-BOOT-CERTIFICATION.txt > SHA256SUMS.txt
+          )
+          (
+            cd "$AUDIT_DIR"
+            sha256sum ./* | LC_ALL=C sort > SHA256SUMS.txt
+          )
+
+      - name: Upload certified CLEAN AK3
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-5.4.301-ReSukiSU-35157-O49V1-AK3-STATIC-BOOT-${{ github.run_id }}
+          path: u5-o49-dist/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Record failure diagnostic
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          {
+            echo 'O49V1_AK3_STATIC_BOOT_CERTIFICATION=FAIL'
+            echo "RUN_ID=$GITHUB_RUN_ID"
+            echo "HEAD_SHA=$GITHUB_SHA"
+            echo 'PACKAGE_PASS=YES'
+            echo 'AK3_STATIC_BOOT_PATH_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$AUDIT_DIR/99-failure.txt"
+
+      - name: Upload O49 AK3 static boot audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-5.4.301-O49V1-AK3-STATIC-BOOT-AUDIT-${{ github.run_id }}
+          path: u5-o49-audit/
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real AK3 STATIC BOOT GREEN gate
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$DIST_DIR/AK3-STATIC-BOOT-CERTIFICATION.txt"
+          test -s "$result"
+          grep -Fxq 'VEUX_5.4.301_O49_AK3_STATIC_BOOT_CERTIFICATION=PASS' "$result"
+          grep -Fxq 'DEVICE=veux' "$result"
+          grep -Fxq 'ANDROID=13' "$result"
+          grep -Fxq 'AK3_IMAGE_ONLY_PAYLOAD=PASS' "$result"
+          grep -Fxq 'AK3_DEVICECHECK=PASS' "$result"
+          grep -Fxq 'AK3_DUMP_BOOT_WRITE_BOOT_ORDER=PASS' "$result"
+          grep -Fxq 'AK3_ACTIVE_SLOT_BOOT_TARGET=PASS' "$result"
+          grep -Fxq 'AK3_TO_O48_STATIC_BOOT_BINDING=PASS' "$result"
+          grep -Fxq 'PACKAGE_PASS=YES' "$result"
+          grep -Fxq 'AK3_STATIC_BOOT_PATH_PASS=PASS' "$result"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=PASS' "$result"
+          grep -Fxq 'DEVICE_PASS=NO' "$result"
+          test -s "$DIST_DIR/$AK3_NAME"
+          test "$(sha256sum "$DIST_DIR/$AK3_NAME" | awk '{print $1}')" = "$AK3_SHA256"
+          echo 'O49V1_REAL_AK3_STATIC_BOOT_GREEN_GATE=PASS'
