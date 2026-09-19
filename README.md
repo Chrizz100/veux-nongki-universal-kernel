@@ -83,9 +83,8 @@ Static validation verifies the generated boot image structure and the known VEUX
 2. Make sure the installed ROM/vendor environment is the supported **Android 13 stock ROM / stock vendor base**.
 3. Keep a known-good boot image or recovery / rollback method available.
 4. Download the matching **AnyKernel3 ZIP** or `boot.img` from the release.
-5. Verify its SHA-256 checksum against the published checksum.
-6. Flash only the file matching the intended installation method.
-7. Reboot and verify:
+5. Flash only the file matching the intended installation method.
+6. Reboot and verify:
 
    * kernel version
    * ReSukiSU status
