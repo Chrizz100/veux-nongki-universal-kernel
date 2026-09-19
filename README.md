@@ -1,6 +1,6 @@
 # VEUX ReSukiSU + SUSFS Kernel Builds
 
-Custom Linux 5.4 kernel builds for **Xiaomi / POCO `veux` (SM6375)** with **ReSukiSU**, **SUSFS** and **AnyKernel3** packaging.
+Custom 5.4 kernel builds for **Xiaomi / POCO `veux` (SM6375)** with **ReSukiSU**, **SUSFS** and **AnyKernel3** packaging.
 
 ## Supported platform
 
@@ -40,9 +40,9 @@ Kernel version alone is therefore not a compatibility guarantee.
 
 ## Validation status
 
-### 5.4.274 P14R1
+### 5.4.274 
 
-The P14R1 build has been tested on real VEUX hardware and passed:
+This build has been tested on real VEUX hardware and passed:
 
 * Build
 * Packaging
