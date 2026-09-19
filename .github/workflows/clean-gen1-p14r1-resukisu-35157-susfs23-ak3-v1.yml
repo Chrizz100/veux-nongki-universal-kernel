@@ -1,0 +1,1013 @@
+name: CLEAN GEN1 P14R1 - ReSukiSU 35157 + SUSFS 2.3 AK3 v1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: clean-gen1-p14r1-35157-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  p14r1-build:
+    name: VEUX 5.4.274 P14R1 ReSukiSU 35157 + SUSFS 2.3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    env:
+      ARCH: arm64
+      TZ: UTC
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+
+      VENDOR_REPO: dereference23/kernel_xiaomi_sm6375
+      VENDOR_TAG: '20240619'
+      EXPECTED_VENDOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+
+      P6V11_ARTIFACT_PREFIX: clean-gen1-p6v11-v6-full-susfs-outer-integration-p7-test-boot-
+      EXPECTED_P5I_COMMIT: f353a9475e40ca866d570c1d0ef55e24cf6556e4
+      EXPECTED_P5I_TREE: a947c1f2891c796a08373fc755e29b23139dc761
+      EXPECTED_RESUKISU_BASE_HEAD: 42034caa96466e8473fe7553eba8a1888c7f460f
+      EXPECTED_RESUKISU_BASE_TREE: d818d965b855d417edfe9eb38b152ff83e75e0fb
+
+      RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+      RESUKISU_COMMON_BASE: faccf4c5edc7be37776216e7d43dd3dca0239331
+      RESUKISU_DEVICE_PASS_BASE: 052ca27775cc9c8570e3b1ba3db7c29486d6020e
+      RESUKISU_P13_DEVICE_PASS: 7741f87849f7ad7cebf82bbb4c5b89880e61e37e
+      RESUKISU_P14_DEVICE_PASS: 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+      RESUKISU_TARGET: 3d1185d878a856ea6435799b436b3d3ec510da76
+      RESUKISU_EXPECTED_DELTA_COMMITS: '3'
+      EXPECTED_KSU_VERSION: '35157'
+      EXPECTED_KSU_UAPI: '4'
+      RESUKISU_EXCLUDED_MODULE_FILTER: b2ac2fc8703ce9f5226e2a38a59f8b72f8a3005c
+      RESUKISU_MANAGER_PARENT_BLOB: b96e219fb0ff155eaefefbd74cd989968d209bab
+      RESUKISU_MANAGER_TARGET_BLOB: 5166d5cf4d82a2e9bf7305fa775791ec4e1957e3
+
+      CLANG_PREBUILT_COMMIT: aa2e4a514a6c85eebcc4a27149eaf9244e951a1e
+      TOOLCHAIN_DIR: ${{ github.workspace }}/toolchains/clang-r416183b
+      OUT_DIR: ${{ github.workspace }}/kernel/out-p14r1
+      AUDIT_DIR: ${{ github.workspace }}/clean-gen1-p14r1-audit
+      DIST_DIR: ${{ github.workspace }}/clean-gen1-p14r1-dist
+      BACKUP_DIR: ${{ github.workspace }}/p6v11-backup
+
+      KBUILD_BUILD_USER: builder
+      KBUILD_BUILD_HOST: pangu-build-component-vendor-345942-54r9t-tw0tk-tq90c
+      KBUILD_BUILD_TIMESTAMP: Thu Dec 5 14:47:59 UTC 2024
+      KBUILD_BUILD_VERSION: '1'
+      SOURCE_DATE_EPOCH: '1733410079'
+      KBUILD_FIXED_SCM_SUFFIX: -g82179e362f33
+      STOCK_KERNEL_RELEASE: 5.4.274-qgki-g82179e362f33
+      EFFECTIVE_KCFLAGS: -D__ANDROID_COMMON_KERNEL__
+
+      AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+      AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+
+      EXPECTED_P13_PATCH_SHA256: d56725a9d6a6dc7bf1e73a5763b894bdabb544119f4c75df5f437ccd4ff29a52
+      EXPECTED_P12_EXEC_SHA256: fa3b73421f35d6220fb9e03e112a9509b76c04933af2353c9a8c65d6fb6bd6a9
+      EXPECTED_P12_CONTRACT_SHA256: b6d1875f6a79231465bc78df6484f2856a427259998eb93ba9fd2597cb45ca53
+      EXPECTED_P12_SUSFS_C_SHA256: e430d573ba5875a55d1ca70ba1b304e4b6727bbc42b8c3ac16f2c175b29a59c1
+      EXPECTED_P12_SUSFS_H_SHA256: 3c5fb1bcc28a70c82ee5cfe0a7375bb8e7babd26618ce9b451e598fa31aa3b6e
+      EXPECTED_P12_SUSFS_DEF_SHA256: b16108a5fcd4cdd7203d9f084c2154da708ab3ae6bed17109e4ec63f04ff0f68
+      EXPECTED_P14_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+      EXPECTED_BASELINE_WARNING_COUNT: '2'
+
+    steps:
+      - name: Initialize immutable P14 to P14R1 update
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BACKUP_DIR" "$AUDIT_DIR" "$DIST_DIR" "$OUT_DIR" \
+                 "$GITHUB_WORKSPACE/resukisu-upstream" \
+                 "$GITHUB_WORKSPACE/AnyKernel3" \
+                 "$GITHUB_WORKSPACE/toolchains"
+          mkdir -p "$BACKUP_DIR" "$AUDIT_DIR" "$DIST_DIR" "$TOOLCHAIN_DIR"
+
+          cat > "$AUDIT_DIR/00-plan.txt" <<'EOF'
+          CLEAN GEN1 P14R1
+          Device: VEUX / SM6375
+          Linux: 5.4.274
+
+          Immutable real-device parent:
+          - P14 DEVICE PASS
+          - ReSukiSU 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+          - KSU 35154 / UAPI 4
+          - SUSFS 2.3.0
+          - session-keyring runtime PASS
+          - P13 post-exec regression PASS
+          - module-load-filter excluded
+
+          P14R1 single update target:
+          - ReSukiSU 3d1185d878a856ea6435799b436b3d3ec510da76
+          - KSU 35157 / UAPI 4
+          - kernel/uapi delta since P14 must be exactly kernel/manager/manager.c
+          - copy_to_user must be outside rcu_read_lock
+          - SUSFS 2.3.0 remains frozen
+          - all P14/P13 VEUX compatibility contracts remain frozen
+
+          P14R1 is a new candidate.
+          DEVICE PASS must NOT be inherited from P14.
+          EOF
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl flex git jq \
+            libelf-dev libncurses-dev libssl-dev patch python3 rsync unzip zip xz-utils zstd
+
+      - name: Checkout exact VEUX vendor source
+        uses: actions/checkout@v7
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: '20240619'
+          fetch-depth: 0
+          path: kernel
+          persist-credentials: false
+
+      - name: Reconstruct exact frozen 5.4.274 P14 outer source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test "$(git -C kernel rev-parse HEAD)" = "$EXPECTED_VENDOR_SHA"
+          test "$(make -s -C kernel kernelversion)" = "5.4.268"
+
+          candidates="$RUNNER_TEMP/p6v11-candidates.tsv"
+          : > "$candidates"
+
+          for page in $(seq 1 20); do
+            json="$RUNNER_TEMP/artifacts-${page}.json"
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100&page=${page}" \
+              -o "$json"
+
+            count="$(jq '.artifacts | length' "$json")"
+            jq -r --arg prefix "$P6V11_ARTIFACT_PREFIX" '
+              .artifacts[]
+              | select(.expired == false)
+              | select(.name | startswith($prefix))
+              | [.created_at, (.id|tostring), .name, .archive_download_url]
+              | @tsv
+            ' "$json" >> "$candidates"
+            test "$count" -eq 100 || break
+          done
+
+          test -s "$candidates"
+          IFS=$'\t' read -r created artifact_id artifact_name archive_url \
+            < <(LC_ALL=C sort -r "$candidates" | head -n1)
+          test -n "$artifact_id"
+          test -n "$archive_url"
+
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$archive_url" -o "$RUNNER_TEMP/p6v11-backup.zip"
+          unzip -q "$RUNNER_TEMP/p6v11-backup.zip" -d "$BACKUP_DIR"
+
+          restore_dir="$(find "$BACKUP_DIR" -type d -name source-restore-kit -print -quit)"
+          result_file="$(find "$BACKUP_DIR" -type f -name 17-result.txt -print -quit)"
+          test -n "$restore_dir"
+          test -n "$result_file"
+          test -f "$restore_dir/manifest.json"
+          test -f "$restore_dir/SHA256SUMS"
+          grep -Fxq 'CLEAN_GEN1_P6V11_FULL_SUSFS_OUTER_INTEGRATION_DETERMINISTIC_BUILD=PASS' "$result_file"
+
+          (
+            cd "$restore_dir"
+            sha256sum -c SHA256SUMS
+          ) | tee "$AUDIT_DIR/01-restore-sha256.txt"
+
+          jq -e \
+            --arg p5commit "$EXPECTED_P5I_COMMIT" \
+            --arg p5tree "$EXPECTED_P5I_TREE" \
+            --arg rhead "$EXPECTED_RESUKISU_BASE_HEAD" \
+            --arg rtree "$EXPECTED_RESUKISU_BASE_TREE" \
+            '.stage == "CLEAN_GEN1_P6V11_SOURCE"
+             and .p5i_commit == $p5commit
+             and .p5i_tree == $p5tree
+             and .resukisu_head == $rhead
+             and .resukisu_tree == $rtree' \
+            "$restore_dir/manifest.json" >/dev/null
+
+          echo "RESTORE_DIR=$restore_dir" >> "$GITHUB_ENV"
+          {
+            echo "RESTORE_ARTIFACT_CREATED=$created"
+            echo "RESTORE_ARTIFACT_ID=$artifact_id"
+            echo "RESTORE_ARTIFACT_NAME=$artifact_name"
+            echo "RESTORE_KIT_AUTH=PASS"
+          } | tee "$AUDIT_DIR/01-restore-selection.txt"
+
+          cd kernel
+          git reset --hard "$EXPECTED_VENDOR_SHA"
+          git clean -fdx
+          rm -rf "$OUT_DIR"
+
+          for p in \
+            "$restore_dir/p5i/vendor-20240619-to-p5i-outer.patch" \
+            "$restore_dir/p5i-to-p6-source-compat.patch" \
+            "$restore_dir/p6v10-to-p6v11-full-susfs-outer.patch"
+          do
+            test -s "$p"
+            git apply --check --whitespace=error --binary "$p"
+            git apply --index --whitespace=error --binary "$p"
+          done
+
+          final_expected_tree="$(jq -r '.p6_source_tree' "$restore_dir/manifest.json")"
+          test "$final_expected_tree" != "null"
+          test "${#final_expected_tree}" -eq 40
+          test "$(git write-tree)" = "$final_expected_tree"
+          test "$(make -s kernelversion)" = "5.4.274"
+
+          grep -Fxq 'CONFIG_KSU=y' arch/arm64/configs/veux_defconfig
+          grep -Fxq 'CONFIG_KSU_SUSFS=y' arch/arm64/configs/veux_defconfig
+          grep -Fxq '# CONFIG_KSU_MANUAL_HOOK is not set' arch/arm64/configs/veux_defconfig
+          grep -Fxq 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' arch/arm64/configs/veux_defconfig
+          grep -Fxq 'CONFIG_LOCALVERSION="-qgki"' arch/arm64/configs/veux_defconfig
+
+          grep -Fq 'DEFINE_SRCU(susfs_srcu_open_redirect)' fs/susfs.c
+          grep -Fq 'susfs_set_current_proc_no_su' include/linux/susfs_def.h
+          test -s include/linux/ksu_hook_contract.h
+
+          test "$(sha256sum fs/exec.c | awk '{print $1}')" = "$EXPECTED_P12_EXEC_SHA256"
+          test "$(sha256sum include/linux/ksu_hook_contract.h | awk '{print $1}')" = "$EXPECTED_P12_CONTRACT_SHA256"
+          test "$(sha256sum fs/susfs.c | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_C_SHA256"
+          test "$(sha256sum include/linux/susfs.h | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_H_SHA256"
+          test "$(sha256sum include/linux/susfs_def.h | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_DEF_SHA256"
+
+          sha256sum fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h \
+            include/linux/ksu_hook_contract.h > "$AUDIT_DIR/02-frozen-outer-before.sha256"
+
+          {
+            echo "CLEAN_SOURCE_RECONSTRUCTION=PASS"
+            echo "OUTER_SOURCE_TREE=$final_expected_tree"
+            echo "KERNEL_VERSION=5.4.274"
+            echo "P12_FROZEN_HASHES=PASS"
+          } | tee "$AUDIT_DIR/02-source.txt"
+
+      - name: Authenticate ReSukiSU 35154 to 35157 delta and construct target subtree
+        shell: bash
+        run: |
+          set -euo pipefail
+          up="$GITHUB_WORKSPACE/resukisu-upstream"
+          rm -rf "$up"
+          git clone -q "$RESUKISU_REPO" "$up"
+
+          for c in \
+            "$RESUKISU_COMMON_BASE" \
+            "$RESUKISU_DEVICE_PASS_BASE" \
+            "$RESUKISU_P13_DEVICE_PASS" \
+            "$RESUKISU_P14_DEVICE_PASS" \
+            "$RESUKISU_TARGET" \
+            "$RESUKISU_EXCLUDED_MODULE_FILTER"
+          do
+            git -C "$up" cat-file -e "${c}^{commit}"
+          done
+
+          git -C "$up" merge-base --is-ancestor "$RESUKISU_COMMON_BASE" "$RESUKISU_TARGET"
+          git -C "$up" merge-base --is-ancestor "$RESUKISU_DEVICE_PASS_BASE" "$RESUKISU_TARGET"
+          git -C "$up" merge-base --is-ancestor "$RESUKISU_P13_DEVICE_PASS" "$RESUKISU_TARGET"
+          git -C "$up" merge-base --is-ancestor "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET"
+
+          delta_count="$(git -C "$up" rev-list --count "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}")"
+          test "$delta_count" = "$RESUKISU_EXPECTED_DELTA_COMMITS"
+
+          git -C "$up" diff --name-only "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- kernel uapi \
+            | LC_ALL=C sort > "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.txt"
+          printf '%s\n' 'kernel/manager/manager.c' > "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.expected.txt"
+          diff -u "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.expected.txt" \
+            "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.txt"
+          git -C "$up" diff --quiet "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- uapi
+
+          mapfile -t kernel_commits < <(
+            git -C "$up" log --format='%H' "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}" -- kernel uapi
+          )
+          test "${#kernel_commits[@]}" -eq 1
+          test "${kernel_commits[0]}" = "$RESUKISU_TARGET"
+
+          test "$(git -C "$up" rev-parse "$RESUKISU_P14_DEVICE_PASS:kernel/manager/manager.c")" \
+            = "$RESUKISU_MANAGER_PARENT_BLOB"
+          test "$(git -C "$up" rev-parse "$RESUKISU_TARGET:kernel/manager/manager.c")" \
+            = "$RESUKISU_MANAGER_TARGET_BLOB"
+
+          git -C "$up" show "$RESUKISU_P14_DEVICE_PASS:kernel/manager/manager.c" \
+            > "$RUNNER_TEMP/manager-parent.c"
+          git -C "$up" show "$RESUKISU_TARGET:kernel/manager/manager.c" \
+            > "$RUNNER_TEMP/manager-target.c"
+
+          python3 - "$RUNNER_TEMP/manager-parent.c" "$RUNNER_TEMP/manager-target.c" <<'PY'
+          from pathlib import Path
+          import sys
+
+          old = Path(sys.argv[1]).read_text(encoding='utf-8')
+          new = Path(sys.argv[2]).read_text(encoding='utf-8')
+          begin = 'int ksu_handle_get_managers_cmd'
+          end = 'int ksu_get_manager_signature_index_by_appid'
+          old_fn = old[old.index(begin):old.index(end)]
+          new_fn = new[new.index(begin):new.index(end)]
+
+          assert 'copy_to_user' in old_fn
+          assert old_fn.index('rcu_read_lock();') < old_fn.index('copy_to_user') < old_fn.index('rcu_read_unlock();')
+
+          required = (
+              'struct ksu_manager_entry *entries;',
+              'entries = kcalloc(max_allowed, sizeof(*entries), GFP_KERNEL);',
+              'copy_count = min_t(int, count, max_allowed);',
+              'kfree(entries);',
+          )
+          for token in required:
+              assert token in new_fn, token
+
+          alloc = new_fn.index('entries = kcalloc')
+          lock = new_fn.index('rcu_read_lock();')
+          unlock = new_fn.index('rcu_read_unlock();')
+          copy = new_fn.index('copy_to_user')
+          assert alloc < lock < unlock < copy
+          assert new_fn.count('copy_to_user') == 1
+          assert 'struct ksu_manager_entry entry =' not in new_fn
+          print('RESUKISU_RCU_FIX_CONTRACT=PASS')
+          PY
+
+          target_count="$(git -C "$up" rev-list --count "$RESUKISU_TARGET")"
+          target_version="$((30700 + target_count))"
+          test "$target_version" = "$EXPECTED_KSU_VERSION"
+          target_tag="$(git -C "$up" describe --abbrev=0 --tags "$RESUKISU_TARGET")"
+          test "$target_tag" = 'v4.2.0-rc2'
+          target_short="$(git -C "$up" rev-parse --short=8 "$RESUKISU_TARGET")"
+          test "$target_short" = '3d1185d8'
+          git -C "$up" show "$RESUKISU_TARGET:uapi/supercall.h" \
+            | grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};"
+
+          git -C "$up" log --reverse --format='%H %s' \
+            "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}" \
+            | tee "$AUDIT_DIR/03-resukisu-delta-commits.txt"
+
+          {
+            echo "RESUKISU_PARENT=$RESUKISU_P14_DEVICE_PASS"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "RESUKISU_DELTA_COMMITS=$delta_count"
+            echo "RESUKISU_KERNEL_UAPI_DELTA=kernel/manager/manager.c"
+            echo "RESUKISU_UAPI_DELTA=NONE"
+            echo "RESUKISU_MANAGER_PARENT_BLOB=$RESUKISU_MANAGER_PARENT_BLOB"
+            echo "RESUKISU_MANAGER_TARGET_BLOB=$RESUKISU_MANAGER_TARGET_BLOB"
+            echo "RESUKISU_RCU_FIX_CONTRACT=PASS"
+            echo "TARGET_TAG=$target_tag"
+            echo "TARGET_SHORT=$target_short"
+            echo "TARGET_KSU_VERSION=$target_version"
+            echo "TARGET_KSU_UAPI=$EXPECTED_KSU_UAPI"
+          } | tee "$AUDIT_DIR/03-resukisu-update-contract.txt"
+
+          echo "P14R1_KSU_VERSION=$target_version" >> "$GITHUB_ENV"
+          echo "P14R1_TARGET_TAG=$target_tag" >> "$GITHUB_ENV"
+          echo "P14R1_TARGET_SHORT=$target_short" >> "$GITHUB_ENV"
+
+          git -C "$up" checkout -q --detach "$RESUKISU_TARGET"
+          git -C "$up" reset --hard -q "$RESUKISU_TARGET"
+          git -C "$up" clean -fdx -q
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          root = Path(os.environ['GITHUB_WORKSPACE']) / 'resukisu-upstream'
+
+          def remove_exact(path, block, expected=1):
+              p = root / path
+              text = p.read_text(encoding='utf-8')
+              count = text.count(block)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected}, found {count}: {block!r}')
+              p.write_text(text.replace(block, '', expected), encoding='utf-8')
+
+          for rel in (
+              'kernel/feature/module_load_filter.c',
+              'kernel/feature/module_load_filter.h',
+          ):
+              p = root / rel
+              if not p.is_file():
+                  raise SystemExit(f'missing expected file: {rel}')
+              p.unlink()
+
+          remove_exact('kernel/Kbuild', 'kernelsu-objs += feature/module_load_filter.o\n')
+          remove_exact('kernel/core/init.c', '#include "feature/module_load_filter.h"\n')
+          remove_exact(
+              'kernel/core/init.c',
+              'char ksu_block_modules[256];\n'
+              'module_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules), 0);\n'
+              'MODULE_PARM_DESC(block_modules, "Comma-separated preset module names to acknowledge without loading");\n\n'
+          )
+          remove_exact('kernel/core/init.c', '        ksu_module_load_filter_hook_init();\n\n')
+          remove_exact('kernel/core/init.c', '    ksu_module_load_filter_hook_exit();\n')
+          PY
+
+          test ! -e "$up/kernel/feature/module_load_filter.c"
+          test ! -e "$up/kernel/feature/module_load_filter.h"
+          ! grep -RFn 'module_load_filter' "$up/kernel" "$up/uapi"
+          ! grep -RFn 'ksu_block_modules' "$up/kernel" "$up/uapi"
+          ! grep -RFn 'block_modules' "$up/kernel" "$up/uapi"
+
+          patch="$AUDIT_DIR/04-current-kernel-uapi-minus-module-filter.patch"
+          git -C "$up" diff --binary "$RESUKISU_COMMON_BASE" -- kernel uapi > "$patch"
+          test -s "$patch"
+
+          cd "$GITHUB_WORKSPACE/kernel"
+          rm -rf KernelSU
+          git clone -q "$RESUKISU_REPO" KernelSU
+          git -C KernelSU checkout -q --detach "$RESUKISU_COMMON_BASE"
+          git -C KernelSU reset --hard -q "$RESUKISU_COMMON_BASE"
+          git -C KernelSU clean -fdx -q
+          git -C KernelSU apply --check --whitespace=nowarn "$patch"
+          git -C KernelSU apply --index --whitespace=nowarn "$patch"
+          test -z "$(git -C KernelSU ls-files -u)"
+
+          diff -qr "$up/kernel" KernelSU/kernel > "$AUDIT_DIR/04-kernel-parity.txt"
+          diff -qr "$up/uapi" KernelSU/uapi > "$AUDIT_DIR/04-uapi-parity.txt"
+
+          test "$(git -C KernelSU hash-object kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          grep -Fq 'entries = kcalloc(max_allowed, sizeof(*entries), GFP_KERNEL);' \
+            KernelSU/kernel/manager/manager.c
+
+          {
+            echo "CURRENT_KERNEL_UAPI_PATCH=PASS"
+            echo "MODULE_LOAD_FILTER_EXCLUDED=PASS"
+            echo "TARGET_SUBTREE_BYTE_PARITY=PASS"
+            echo "MANAGER_TARGET_BLOB=PASS"
+          } | tee "$AUDIT_DIR/04-subtree-import.txt"
+
+      - name: Reapply frozen CLEAN-GEN1 integration and immutable P13 post-exec delta
+        shell: bash
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+          import os
+
+          def ensure_include(path, anchor):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              inc = '#include <linux/ksu_hook_contract.h>'
+              if inc not in text:
+                  if anchor not in text:
+                      raise SystemExit(f'anchor missing in {path}: {anchor!r}')
+                  text = text.replace(anchor, anchor + '\n' + inc, 1)
+                  p.write_text(text, encoding='utf-8')
+
+          ensure_include('KernelSU/kernel/feature/sucompat.h', '#include "compat/kernel_compat.h"')
+          ensure_include('KernelSU/kernel/runtime/ksud_integration.c', '#include <linux/version.h>')
+          ensure_include('KernelSU/kernel/supercall/supercall.c', '#include <linux/anon_inodes.h>')
+
+          p = Path('KernelSU/kernel/Kbuild')
+          text = p.read_text(encoding='utf-8')
+          old = dedent('''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
+
+          KSU_TAG_NAME    := $(shell cd $(KSU_SRC); $(GIT_BIN) describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")
+          KSU_COMMIT_SHA  := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+          ifneq ($(shell cd $(KSU_SRC); $(GIT_BIN) diff-index --quiet HEAD; echo $$?),0)
+          KSU_COMMIT_SHA  := $(KSU_COMMIT_SHA)-dirty
+          endif
+          KSU_BRANCH_NAME := $(shell cd $(KSU_SRC); $(GIT_BIN) branch --show-current 2>/dev/null || echo "unknown")''')
+
+          version = os.environ['P14R1_KSU_VERSION']
+          tag = os.environ['P14R1_TARGET_TAG']
+          short = os.environ['P14R1_TARGET_SHORT']
+          target = os.environ['RESUKISU_TARGET']
+          new = dedent(f'''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := {version}
+          CLEAN_GEN1_UPSTREAM_TARGET := {target}
+          KSU_VERSION := $(CLEAN_GEN1_UPSTREAM_COMPAT_VERSION)
+
+          KSU_TAG_NAME    := {tag}
+          KSU_COMMIT_SHA  := {short}-p14r1
+          KSU_BRANCH_NAME := clean-gen1-p14r1''')
+
+          if old not in text:
+              raise SystemExit('expected ReSukiSU Kbuild version block not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          git -C KernelSU add kernel uapi
+          test -z "$(git -C KernelSU ls-files -u)"
+
+          grep -Fq '#include <linux/ksu_hook_contract.h>' KernelSU/kernel/feature/sucompat.h
+          grep -Fq '#include <linux/ksu_hook_contract.h>' KernelSU/kernel/runtime/ksud_integration.c
+          grep -Fq '#include <linux/ksu_hook_contract.h>' KernelSU/kernel/supercall/supercall.c
+          grep -Fq "CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := $P14R1_KSU_VERSION" KernelSU/kernel/Kbuild
+          grep -Fq "CLEAN_GEN1_UPSTREAM_TARGET := $RESUKISU_TARGET" KernelSU/kernel/Kbuild
+
+          grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};" KernelSU/uapi/supercall.h
+          grep -Fq 'KSU_GET_INFO_FLAG_BUNDLED' KernelSU/uapi/supercall.h
+          grep -Fq 'always flag that, to avoid old version of susfs hang in boot' \
+            KernelSU/kernel/feature/sucompat.c
+          grep -Fq '#define TIF_PROC_IN_KSU_EXECVE 61' KernelSU/kernel/feature/sucompat.h
+          grep -Fq '#include <linux/sched/task_stack.h>' KernelSU/kernel/feature/adb_root.c
+          grep -Fq 'if (profile->uid != 0)' KernelSU/kernel/policy/app_profile.c
+          grep -Fq 'memcpy(&cred->cap_inheritable, &profile->capabilities.effective, sizeof(cred->cap_inheritable));' \
+            KernelSU/kernel/policy/app_profile.c
+          grep -Fq 'memcpy(&cred->cap_ambient, &profile->capabilities.effective, sizeof(cred->cap_ambient));' \
+            KernelSU/kernel/policy/app_profile.c
+
+          test ! -e KernelSU/kernel/feature/module_load_filter.c
+          test ! -e KernelSU/kernel/feature/module_load_filter.h
+          ! grep -RFn 'module_load_filter' KernelSU/kernel KernelSU/uapi
+          ! grep -RFn 'block_modules' KernelSU/kernel KernelSU/uapi
+
+          test "$(git -C KernelSU hash-object kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('KernelSU/kernel/manager/manager.c')
+          text = p.read_text(encoding='utf-8')
+          fn = text[text.index('int ksu_handle_get_managers_cmd'):text.index('int ksu_get_manager_signature_index_by_appid')]
+          alloc = fn.index('entries = kcalloc')
+          lock = fn.index('rcu_read_lock();')
+          unlock = fn.index('rcu_read_unlock();')
+          copy = fn.index('copy_to_user')
+          if not (alloc < lock < unlock < copy):
+              raise SystemExit('manager RCU/copy_to_user ordering regression')
+          if fn.count('copy_to_user') != 1:
+              raise SystemExit('unexpected copy_to_user count')
+          print('INTEGRATED_RCU_FIX_CONTRACT=PASS')
+          PY
+
+          cmp -s "$AUDIT_DIR/02-frozen-outer-before.sha256" \
+            <(sha256sum fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h include/linux/ksu_hook_contract.h)
+
+          test "$(sha256sum fs/exec.c | awk '{print $1}')" = "$EXPECTED_P12_EXEC_SHA256"
+          test "$(sha256sum include/linux/ksu_hook_contract.h | awk '{print $1}')" = "$EXPECTED_P12_CONTRACT_SHA256"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hdr = Path('include/linux/ksu_hook_contract.h')
+          text = hdr.read_text(encoding='utf-8')
+          anchor = """int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+                                  void *argv, void *envp, int *flags);
+          """
+          addition = anchor + """
+          #ifdef CONFIG_KSU_SUSFS
+          int ksu_handle_post_execve(int *fd, const char *filename,
+                                     void *argv, void *envp,
+                                     int *flags, int *retval);
+          #endif
+          """
+          if text.count(anchor) != 1:
+              raise SystemExit(f'header execveat anchor count={text.count(anchor)}')
+          if 'int ksu_handle_post_execve(' in text:
+              raise SystemExit('post-exec prototype already exists unexpectedly')
+          hdr.write_text(text.replace(anchor, addition, 1), encoding='utf-8')
+
+          execp = Path('fs/exec.c')
+          text = execp.read_text(encoding='utf-8')
+          anchor = """\tsecurity_bprm_committed_creds(bprm);
+          \tmutex_unlock(&current->signal->cred_guard_mutex);
+          """
+          replacement = """\tsecurity_bprm_committed_creds(bprm);
+          #ifdef CONFIG_KSU_SUSFS
+          \tksu_handle_post_execve(NULL, NULL, NULL, NULL, NULL, NULL);
+          #endif
+          \tmutex_unlock(&current->signal->cred_guard_mutex);
+          """
+          if text.count(anchor) != 1:
+              raise SystemExit(f'fs/exec.c committed-creds anchor count={text.count(anchor)}')
+          if 'ksu_handle_post_execve(' in text:
+              raise SystemExit('post-exec call already exists unexpectedly')
+          execp.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
+          PY
+
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | LC_ALL=C sort)
+          test "${#changed[@]}" -eq 2
+          test "${changed[0]}" = 'fs/exec.c'
+          test "${changed[1]}" = 'include/linux/ksu_hook_contract.h'
+
+          test "$(grep -Fc 'ksu_handle_post_execve(NULL, NULL, NULL, NULL, NULL, NULL);' fs/exec.c)" -eq 1
+          ! grep -Fq 'ksu_install_su_fd' fs/exec.c
+          test "$(grep -Fc 'int ksu_handle_post_execve(' include/linux/ksu_hook_contract.h)" -eq 1
+
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('fs/exec.c').read_text(encoding='utf-8')
+          commit = s.index('commit_creds(bprm->cred);')
+          security = s.index('security_bprm_committed_creds(bprm);', commit)
+          post = s.index('ksu_handle_post_execve(NULL, NULL, NULL, NULL, NULL, NULL);', security)
+          unlock = s.index('mutex_unlock(&current->signal->cred_guard_mutex);', post)
+          if not (commit < security < post < unlock):
+              raise SystemExit('invalid P13 post-exec ordering')
+          print('P13_POST_EXEC_ORDER=PASS')
+          PY
+
+          p13_patch="$AUDIT_DIR/05-P13-CANDIDATE-post-exec-hook.patch"
+          git diff --binary -- fs/exec.c include/linux/ksu_hook_contract.h > "$p13_patch"
+          test -s "$p13_patch"
+          test "$(sha256sum "$p13_patch" | awk '{print $1}')" = "$EXPECTED_P13_PATCH_SHA256"
+
+          grep -Fq 'grep -q "ksu_handle_post_execve" $(srctree)/fs/exec.c' \
+            KernelSU/kernel/tools/kernel_compat.mk
+          grep -Fq '#ifdef KSU_COMPAT_NO_POST_EXECVE_HOOK' KernelSU/kernel/hook/lsm_hooks.c
+          grep -Fq 'LSM_HOOK_INIT(bprm_committed_creds, ksu_handle_bprm_committed_creds)' \
+            KernelSU/kernel/hook/lsm_hooks.c
+          grep -Fq 'grep -q "ksu_install_su_fd" $(srctree)/fs/exec.c' \
+            KernelSU/kernel/tools/susfs_compat.mk
+
+          test "$(sha256sum fs/susfs.c | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_C_SHA256"
+          test "$(sha256sum include/linux/susfs.h | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_H_SHA256"
+          test "$(sha256sum include/linux/susfs_def.h | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_DEF_SHA256"
+
+          {
+            echo "CLEAN_GEN1_5_4_INTEGRATION_REAPPLIED=PASS"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "KSU_VERSION=$P14R1_KSU_VERSION"
+            echo "KSU_UAPI=$EXPECTED_KSU_UAPI"
+            echo "OLD_SUSFS_COMPAT_FIX_052CA277=PASS"
+            echo "NONROOT_EXECVE_CAPABILITY_FIX_7741F878=PASS"
+            echo "P13_AUDITED_SOURCE_DELTA=PASS"
+            echo "P13_PATCH_SHA256=$EXPECTED_P13_PATCH_SHA256"
+            echo "SUSFS_2_3_OUTER_BYTE_PRESERVED=PASS"
+            echo "MODULE_LOAD_FILTER_EXCLUDED=PASS"
+            echo "INTEGRATED_RCU_FIX_CONTRACT=PASS"
+          } | tee "$AUDIT_DIR/05-integration-boundaries.txt"
+
+      - name: Verify VEUX keyring compatibility remains P14-identical
+        shell: bash
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+
+          ! grep -Fq 'key_need_perm' include/linux/key.h
+          grep -Fq 'struct key' include/linux/key.h
+          grep -Fq 'session_keyring;' include/linux/cred.h
+          grep -Fq 'install_session_keyring_to_cred(struct cred *cred, struct key *keyring)' \
+            security/keys/process_keys.c
+          grep -Fq '__key_get(keyring);' security/keys/process_keys.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          lsm = Path('include/linux/lsm_hooks.h').read_text(encoding='utf-8')
+          sec = Path('security/security.c').read_text(encoding='utf-8')
+          cred = Path('include/linux/cred.h').read_text(encoding='utf-8')
+          keys = Path('security/keys/process_keys.c').read_text(encoding='utf-8')
+          kh = Path('include/linux/key.h').read_text(encoding='utf-8')
+
+          checks = {
+              'LSM_KEY_PERMISSION_UNSIGNED': re.search(
+                  r'int\s*\(\*key_permission\)\s*\(\s*key_ref_t\s+key_ref\s*,\s*'
+                  r'const\s+struct\s+cred\s*\*\s*cred\s*,\s*unsigned\s+perm\s*\)',
+                  lsm, re.S),
+              'SECURITY_KEY_PERMISSION_UNSIGNED': re.search(
+                  r'int\s+security_key_permission\s*\(\s*key_ref_t\s+key_ref\s*,\s*'
+                  r'const\s+struct\s+cred\s*\*\s*cred\s*,\s*unsigned\s+perm\s*\)',
+                  sec, re.S),
+              'CRED_SESSION_KEYRING_PRESENT': re.search(r'struct\s+key\s*\*\s*session_keyring\s*;', cred),
+              'INSTALL_SESSION_KEYRING_PRESENT': re.search(
+                  r'int\s+install_session_keyring_to_cred\s*\(\s*struct\s+cred\s*\*\s*cred\s*,\s*'
+                  r'struct\s+key\s*\*\s*keyring\s*\)', keys, re.S),
+              'KEY_NEED_PERM_ABSENT': 'key_need_perm' not in kh,
+          }
+          failed = [k for k, v in checks.items() if not v]
+          for k, v in checks.items():
+              print(f"{k}={'PASS' if v else 'FAIL'}")
+          if failed:
+              raise SystemExit('VEUX keyring/LSM matrix failed: ' + ', '.join(failed))
+          PY
+
+          ! grep -RFn 'KSU_COMPAT_REQUIRE_SESSION_KEYRING' KernelSU/kernel
+          grep -Fq 'LSM_HOOK_INIT(key_permission, ksu_handle_key_permission)' \
+            KernelSU/kernel/hook/lsm_hooks.c
+          grep -Fq 'static int ksu_handle_key_permission(key_ref_t key_ref, const struct cred *cred, unsigned perm)' \
+            KernelSU/kernel/hook/lsm_hooks.c
+          grep -Fq 'init_session_keyring = ksu_get_session_keyring(cred);' \
+            KernelSU/kernel/hook/lsm_hooks.c
+          grep -Fq 'install_session_keyring_to_cred(ksu_cred, init_session_keyring);' \
+            KernelSU/kernel/compat/kernel_compat.c
+          grep -Fq 'init_session_keyring = ksu_get_session_keyring(current_cred());' \
+            KernelSU/kernel/core/init.c
+          grep -Fq 'grep -q -F "key_need_perm" $(srctree)/include/linux/key.h' \
+            KernelSU/kernel/tools/kernel_compat.mk
+
+          mapfile -t outer_changed < <(git diff --name-only | LC_ALL=C sort)
+          test "${#outer_changed[@]}" -eq 2
+          test "${outer_changed[0]}" = 'fs/exec.c'
+          test "${outer_changed[1]}" = 'include/linux/ksu_hook_contract.h'
+          test "$(sha256sum "$AUDIT_DIR/05-P13-CANDIDATE-post-exec-hook.patch" | awk '{print $1}')" \
+            = "$EXPECTED_P13_PATCH_SHA256"
+
+          {
+            echo "VEUX_KEY_NEED_PERM=ABSENT"
+            echo "VEUX_KEY_PERMISSION_SIGNATURE=unsigned_perm"
+            echo "VEUX_CRED_SESSION_KEYRING=PASS"
+            echo "VEUX_INSTALL_SESSION_KEYRING_TO_CRED=PASS"
+            echo "RESUKISU_SESSION_KEYRING_GATE_REMOVED=PASS"
+            echo "RESUKISU_KEY_PERMISSION_HOOK_REGISTERED=PASS"
+            echo "P13_OUTER_DELTA_PRESERVED=PASS"
+            echo "P14R1_SOURCE_MATRIX=PASS"
+          } | tee "$AUDIT_DIR/06-keyring-lsm-matrix.txt"
+
+      - name: Install pinned Android clang-r416183b
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$TOOLCHAIN_DIR"
+          mkdir -p "$TOOLCHAIN_DIR"
+          url="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_PREBUILT_COMMIT}/clang-r416183b.tar.gz"
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/clang-r416183b.tar.gz"
+          tar -xzf "$RUNNER_TEMP/clang-r416183b.tar.gz" -C "$TOOLCHAIN_DIR"
+          for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+            test -x "$TOOLCHAIN_DIR/bin/$tool"
+          done
+          "$TOOLCHAIN_DIR/bin/clang" --version | tee "$AUDIT_DIR/07-clang.txt"
+
+      - name: Compile P14R1 and enforce P14 warning/DTB regression gates
+        shell: bash
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+          export KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP
+          export KBUILD_BUILD_VERSION SOURCE_DATE_EPOCH KBUILD_FIXED_SCM_SUFFIX
+
+          rm -rf "$OUT_DIR"
+          make O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            veux_defconfig 2>&1 | tee "$AUDIT_DIR/08-config.log"
+          cp "$OUT_DIR/.config" "$AUDIT_DIR/08-dotconfig.txt"
+
+          grep -Fxq 'CONFIG_KEYS=y' "$OUT_DIR/.config"
+          grep -Fxq 'CONFIG_SECURITY=y' "$OUT_DIR/.config"
+          grep -Fxq 'CONFIG_KSU=y' "$OUT_DIR/.config"
+          grep -Fxq 'CONFIG_KSU_SUSFS=y' "$OUT_DIR/.config"
+          grep -Fxq '# CONFIG_KSU_MANUAL_HOOK is not set' "$OUT_DIR/.config"
+          grep -Fxq 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' "$OUT_DIR/.config"
+
+          make -j"$(nproc)" \
+            O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            KCFLAGS="$EFFECTIVE_KCFLAGS" Image dtbs \
+            2>&1 | tee "$AUDIT_DIR/08-build.log"
+
+          image="$OUT_DIR/arch/arm64/boot/Image"
+          dtb="$OUT_DIR/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+          test -s "$image"
+          test -s "$dtb"
+          test "$(stat -c '%s' "$image")" -gt 20000000
+
+          strings -a "$image" > "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq "Linux version $STOCK_KERNEL_RELEASE ($KBUILD_BUILD_USER@$KBUILD_BUILD_HOST)" \
+            "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq "$P14R1_TARGET_TAG-$P14R1_TARGET_SHORT-p14r1@ReSukiSU" \
+            "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq 'got init_session_keyring, trying install..' "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq 'install init_session_keyring to ksu_cred' "$AUDIT_DIR/08-image-strings.txt"
+
+          ! grep -Fq 'key need perm as enum found' "$AUDIT_DIR/08-build.log"
+          ! grep -Fq 'ksu_handle_post_execve hook not found' "$AUDIT_DIR/08-build.log"
+          ! grep -Fq 'ksu_install_su_fd direct call found' "$AUDIT_DIR/08-build.log"
+
+          grep -n 'warning:' "$AUDIT_DIR/08-build.log" > "$AUDIT_DIR/08-warnings.txt" || true
+          grep -n 'error:' "$AUDIT_DIR/08-build.log" > "$AUDIT_DIR/08-errors.txt" || true
+          test ! -s "$AUDIT_DIR/08-errors.txt"
+          test "$(wc -l < "$AUDIT_DIR/08-warnings.txt")" -eq "$EXPECTED_BASELINE_WARNING_COUNT"
+          grep -Fq "unused function 'atomic_open'" "$AUDIT_DIR/08-warnings.txt"
+          grep -Fq "unused variable 'c'" "$AUDIT_DIR/08-warnings.txt"
+
+          test "$(sha256sum "$dtb" | awk '{print $1}')" = "$EXPECTED_P14_DTB_SHA256"
+
+          cp "$image" "$DIST_DIR/Image"
+          cp "$dtb" "$DIST_DIR/veux.dtb"
+          sha256sum "$DIST_DIR/Image" "$DIST_DIR/veux.dtb" > "$DIST_DIR/BUILD-SHA256SUMS"
+
+          {
+            echo "FRESH_P14R1_KERNEL_BUILD=PASS"
+            echo "CONFIG_KEYS=YES"
+            echo "CONFIG_SECURITY=YES"
+            echo "KEY_PERMISSION_COMPAT=unsigned_perm"
+            echo "P13_POST_EXEC_COMPAT_SELECTION=PASS"
+            echo "SESSION_KEYRING_RUNTIME_STRINGS=PASS"
+            echo "RESUKISU_RCU_FIX_CONTRACT=PASS"
+            echo "COMPILER_ERRORS=0"
+            echo "COMPILER_WARNINGS=2_BASELINE_ONLY"
+            echo "WARNING_REGRESSION_GATE=PASS"
+            echo "P14_DTB_REGRESSION_GATE=PASS"
+            echo "IMAGE_BYTES=$(stat -c '%s' "$image")"
+            echo "IMAGE_SHA256=$(sha256sum "$image" | awk '{print $1}')"
+            echo "VEUX_DTB_SHA256=$(sha256sum "$dtb" | awk '{print $1}')"
+            echo "KSU_VERSION=$P14R1_KSU_VERSION"
+            echo "KSU_UAPI=$EXPECTED_KSU_UAPI"
+          } | tee "$AUDIT_DIR/08-build-result.txt"
+
+      - name: Build CLEAN Image-only P14R1 AnyKernel3 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ak3="$GITHUB_WORKSPACE/AnyKernel3"
+          rm -rf "$ak3"
+          git clone -q "$AK3_REPO" "$ak3"
+          git -C "$ak3" checkout -q --detach "$AK3_COMMIT"
+          test "$(git -C "$ak3" rev-parse HEAD)" = "$AK3_COMMIT"
+
+          image="$OUT_DIR/arch/arm64/boot/Image"
+          test -s "$image"
+
+          rm -f "$ak3/Image" "$ak3/Image.gz" "$ak3/Image.gz-dtb" "$ak3/dtb" "$ak3/dtbo.img"
+          cp "$image" "$ak3/Image"
+
+          cat > "$ak3/anykernel.sh" <<EOF
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=VEUX GEN1 P14R1 Linux 5.4.274 ReSukiSU ${P14R1_TARGET_SHORT} UAPI${EXPECTED_KSU_UAPI} + SUSFS 2.3
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          chmod 0755 "$ak3/anykernel.sh"
+
+          rm -rf "$ak3/.git" "$ak3/.github"
+          rm -f "$ak3/README.md"
+          find "$ak3" -type f -name '*placeholder' -delete
+          find "$ak3" -maxdepth 1 -type f -name '*.txt' -delete
+
+          zip_name="VEUX-5.4.274-P14R1-ReSukiSU-35157-UAPI4-SUSFS-2.3-AK3-CLEAN.zip"
+          (
+            cd "$ak3"
+            zip -r9 "$DIST_DIR/$zip_name" . \
+              -x '.github/*' 'README.md' '*placeholder' '*.txt'
+          )
+          test -s "$DIST_DIR/$zip_name"
+          echo "AK3_ZIP=$DIST_DIR/$zip_name" >> "$GITHUB_ENV"
+
+          {
+            echo "P14R1_AK3_BUILD=PASS"
+            echo "AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS"
+            echo "AK3_IMAGE_ONLY=PASS"
+            echo "AK3_CLEAN_PUBLIC_PAYLOAD=PASS"
+          } | tee "$AUDIT_DIR/09-ak3-build.txt"
+
+      - name: Validate CLEAN AK3 and write final P14R1 result
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$AK3_ZIP"
+          unzip -t "$AK3_ZIP" | tee "$AUDIT_DIR/10-ak3-unzip.txt"
+
+          for required in anykernel.sh tools/ak3-core.sh Image META-INF/com/google/android/update-binary META-INF/com/google/android/updater-script; do
+            unzip -Z1 "$AK3_ZIP" | grep -Fxq "$required"
+          done
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          unzip -p "$AK3_ZIP" Image > "$tmp/Image"
+          cmp -s "$DIST_DIR/Image" "$tmp/Image"
+
+          unzip -p "$AK3_ZIP" anykernel.sh > "$tmp/anykernel.sh"
+          bash -n "$tmp/anykernel.sh"
+          grep -Fqx 'device.name1=veux' "$tmp/anykernel.sh"
+          grep -Fqx 'supported.versions=13' "$tmp/anykernel.sh"
+          grep -Fqx 'BLOCK=boot;' "$tmp/anykernel.sh"
+          grep -Fqx 'IS_SLOT_DEVICE=1;' "$tmp/anykernel.sh"
+          grep -Fqx 'SLOT_SELECT=active;' "$tmp/anykernel.sh"
+          grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$tmp/anykernel.sh"
+          grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$tmp/anykernel.sh"
+          ! grep -Eq '^(block|is_slot_device|slot_select|ramdisk_compression|patch_vbmeta_flag)=' "$tmp/anykernel.sh"
+
+          ! unzip -Z1 "$AK3_ZIP" | grep -Eq '(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$'
+          ! unzip -Z1 "$AK3_ZIP" | grep -Ei '(^|/)(audit|build-info|final-result|sha256sums)([^/]*)$'
+
+          python3 - "$AK3_ZIP" <<'PY'
+          import stat, sys, zipfile
+          zpath = sys.argv[1]
+          with zipfile.ZipFile(zpath) as z:
+              names = z.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit('duplicate ZIP entries')
+              for info in z.infolist():
+                  name = info.filename
+                  parts = [p for p in name.replace('\\', '/').split('/') if p not in ('', '.')]
+                  if name.startswith('/') or '..' in parts:
+                      raise SystemExit(f'unsafe ZIP path: {name}')
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f'symlink not allowed: {name}')
+          print('ZIP_PATH_AND_SYMLINK_GUARD=PASS')
+          PY
+
+          sha256sum "$AK3_ZIP" > "$AK3_ZIP.sha256"
+
+          grep -Fxq 'RESUKISU_RCU_FIX_CONTRACT=PASS' "$AUDIT_DIR/03-resukisu-update-contract.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER_EXCLUDED=PASS' "$AUDIT_DIR/05-integration-boundaries.txt"
+          grep -Fxq 'P13_AUDITED_SOURCE_DELTA=PASS' "$AUDIT_DIR/05-integration-boundaries.txt"
+          grep -Fxq 'SUSFS_2_3_OUTER_BYTE_PRESERVED=PASS' "$AUDIT_DIR/05-integration-boundaries.txt"
+          grep -Fxq 'P14R1_SOURCE_MATRIX=PASS' "$AUDIT_DIR/06-keyring-lsm-matrix.txt"
+          grep -Fxq 'FRESH_P14R1_KERNEL_BUILD=PASS' "$AUDIT_DIR/08-build-result.txt"
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$AUDIT_DIR/08-build-result.txt"
+          grep -Fxq 'P14_DTB_REGRESSION_GATE=PASS' "$AUDIT_DIR/08-build-result.txt"
+          grep -Fxq 'P14R1_AK3_BUILD=PASS' "$AUDIT_DIR/09-ak3-build.txt"
+
+          {
+            echo "CLEAN_GEN1_P14R1_RESUKISU_35157_AK3=PASS"
+            echo "DEVICE=veux"
+            echo "LINUX=5.4.274"
+            echo "IMMUTABLE_DEVICE_PASS_PARENT=P14"
+            echo "P14_PARENT_RESUKISU=$RESUKISU_P14_DEVICE_PASS"
+            echo "P14_PARENT_DEVICE_PASS=YES"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "RESUKISU_TAG=$P14R1_TARGET_TAG"
+            echo "KSU_VERSION=$P14R1_KSU_VERSION"
+            echo "KSU_UAPI=$EXPECTED_KSU_UAPI"
+            echo "RESUKISU_RCU_FIX_CONTRACT=PASS"
+            echo "SUSFS=2.3.0_FROZEN"
+            echo "VEUX_KEY_PERMISSION_SIGNATURE=unsigned_perm"
+            echo "SESSION_KEYRING_UPDATE=PRESERVED"
+            echo "P13_POST_EXEC_DELTA=PRESERVED"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "WARNING_REGRESSION_GATE=PASS"
+            echo "P14_DTB_REGRESSION_GATE=PASS"
+            echo "COMPILE_PASS=YES"
+            echo "PACKAGE_PASS=YES"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+            echo "IMAGE_BYTES=$(stat -c '%s' "$DIST_DIR/Image")"
+            echo "IMAGE_SHA256=$(sha256sum "$DIST_DIR/Image" | awk '{print $1}')"
+            echo "VEUX_DTB_SHA256=$(sha256sum "$DIST_DIR/veux.dtb" | awk '{print $1}')"
+            echo "AK3=$(basename "$AK3_ZIP")"
+            echo "AK3_SHA256=$(sha256sum "$AK3_ZIP" | awk '{print $1}')"
+            echo "AK3_PIN=$AK3_COMMIT"
+            echo "AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS"
+          } | tee "$DIST_DIR/FINAL-RESULT.txt"
+
+          (
+            cd "$DIST_DIR"
+            sha256sum Image veux.dtb "$(basename "$AK3_ZIP")" \
+              "$(basename "$AK3_ZIP").sha256" FINAL-RESULT.txt \
+              > SUPPORT-SHA256SUMS
+          )
+          sha256sum "$AUDIT_DIR"/* | LC_ALL=C sort > "$AUDIT_DIR/SHA256SUMS"
+
+      - name: Upload P14R1 kernel and CLEAN AK3
+        uses: actions/upload-artifact@v7
+        with:
+          name: clean-gen1-p14r1-veux-resukisu-35157-susfs23-ak3-${{ github.run_id }}
+          path: clean-gen1-p14r1-dist/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload P14R1 audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clean-gen1-p14r1-audit-${{ github.run_id }}
+          path: clean-gen1-p14r1-audit/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Final real GREEN gate
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$DIST_DIR/FINAL-RESULT.txt"
+          test -s "$result"
+          grep -Fxq 'CLEAN_GEN1_P14R1_RESUKISU_35157_AK3=PASS' "$result"
+          grep -Fxq 'KSU_VERSION=35157' "$result"
+          grep -Fxq 'KSU_UAPI=4' "$result"
+          grep -Fxq 'RESUKISU_RCU_FIX_CONTRACT=PASS' "$result"
+          grep -Fxq 'SUSFS=2.3.0_FROZEN' "$result"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$result"
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$result"
+          grep -Fxq 'P14_DTB_REGRESSION_GATE=PASS' "$result"
+          grep -Fxq 'COMPILE_PASS=YES' "$result"
+          grep -Fxq 'PACKAGE_PASS=YES' "$result"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$result"
+          grep -Fxq 'DEVICE_PASS=NO' "$result"
+          echo 'P14R1_REAL_GREEN_GATE=PASS'
