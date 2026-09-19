@@ -1,0 +1,502 @@
+name: VEUX U6-O50 v2 All Kernel ReSukiSU 35158 + SUSFS Upstream Audit
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u6-o50-v2-upstream-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_CURRENT: 3d1185d878a856ea6435799b436b3d3ec510da76
+  RESUKISU_TARGET: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_EXPECTED_VERSION: '35158'
+  RESUKISU_EXPECTED_UAPI: '4'
+  RESUKISU_EXPECTED_DELTA_COUNT: '1'
+  RESUKISU_EXPECTED_CHANGED_PATH: manager/app/src/main/java/com/resukisu/resukisu/data/settings/SettingsPlatformRepository.kt
+
+  SUSFS_PRIMARY_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_MIRROR_REPO: https://github.com/ShirkNeko/susfs4ksu.git
+  SUSFS_BRANCH: gki-android13-5.10
+  SUSFS_CURRENT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_EXPECTED_VERSION: v2.3.0
+
+  RESTORE_274: lineages/5.4.274/P14_SOURCE_RESTORE_COMPACT_V2.zip
+  RESTORE_274_SHA256: 20327b9edc783429bd4987febff3e77e42cc9be62493be41c7aaec2af3d3b0db
+
+  BUILD_292: lineages/5.4.292/SUSFS_BUILD_V5.sh
+  BUILD_292_SHA256: 464930172ed054ec90ec211a9edafece1e512a1f3fbad2cbc5bfa13549114d33
+  INTEGRATOR_292: lineages/5.4.292/SUSFS_INTEGRATE_V5.py
+  INTEGRATOR_292_SHA256: d78bf535c86797b87de1f342394801fd9aee99cb53486539bb0fb1b58674e297
+
+  SUPPORT_300: lineages/5.4.300/O43_5.4.300_PORT_SUPPORT_V1.zip
+  SUPPORT_300_SHA256: 51109cb711dec8216a9ff55a9cb984cfdceb7b4fac244381c61ad02c4187abe4
+
+  SUPPORT_301: lineages/5.4.301/O45_5.4.301_PORT_SUPPORT_V1.zip
+  SUPPORT_301_SHA256: cf53241b1354e0c3ec415f707e18a5da0b4398f6f60c9a77e8f2aa0faa68558f
+
+  SUPPORT_302: lineages/5.4.302/O44_5.4.302_PORT_SUPPORT_V1.zip
+  SUPPORT_302_SHA256: da37f77bd7f985a2a54653ea60d9bb857599092ac49a0be4e637ddf15a0aa781
+
+jobs:
+  upstream-audit:
+    name: ReSukiSU + SUSFS upstream decision gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      resukisu_version: ${{ steps.decision.outputs.resukisu_version }}
+      resukisu_target: ${{ steps.decision.outputs.resukisu_target }}
+      susfs_version: ${{ steps.decision.outputs.susfs_version }}
+      susfs_target: ${{ steps.decision.outputs.susfs_target }}
+      functional_update_required: ${{ steps.decision.outputs.functional_update_required }}
+
+    steps:
+      - name: Repository identity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout current project read-only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize immutable audit plan after checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf audit upstream-resukisu upstream-susfs
+          mkdir -p audit
+          cat > audit/00-plan.txt <<'EOF'
+          VEUX U6-O50 v2
+          Purpose: audit the exact new ReSukiSU/SUSFS upstream state before touching all VEUX kernels.
+
+          Frozen current VEUX integration:
+          - ReSukiSU 35157 @ 3d1185d878a856ea6435799b436b3d3ec510da76
+          - UAPI 4
+          - SUSFS v2.3.0 @ 04a9d713106191ba98be680bd7ad9547ab1de964
+          - module-load-filter excluded
+
+          Candidate:
+          - ReSukiSU 35158 @ 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+          - SUSFS must remain the exact gki-android13-5.10 HEAD at the frozen pin.
+
+          Fail closed if:
+          - ReSukiSU changed kernel/uapi/userspace code between 35157 and 35158;
+          - ReSukiSU version calculation is not exactly 35158;
+          - SUSFS gki-android13-5.10 has moved beyond the audited pin;
+          - SUSFS no longer reports v2.3.0.
+
+          No kernel is built or modified by O50.
+          Existing DEVICE PASS is not transferred to any future rebuilt candidate.
+          EOF
+
+      - name: Install audit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates git jq python3 unzip
+
+      - name: Audit exact ReSukiSU 35157 to 35158 delta
+        id: resukisu_audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q --filter=blob:none "$RESUKISU_REPO" upstream-resukisu
+
+          test "$(git -C upstream-resukisu rev-parse HEAD)" = "$RESUKISU_TARGET"
+          git -C upstream-resukisu cat-file -e "$RESUKISU_CURRENT^{commit}"
+          git -C upstream-resukisu cat-file -e "$RESUKISU_TARGET^{commit}"
+          git -C upstream-resukisu merge-base --is-ancestor "$RESUKISU_CURRENT" "$RESUKISU_TARGET"
+
+          delta_count="$(git -C upstream-resukisu rev-list --count "$RESUKISU_CURRENT..$RESUKISU_TARGET")"
+          test "$delta_count" = "$RESUKISU_EXPECTED_DELTA_COUNT"
+
+          git -C upstream-resukisu diff --name-only "$RESUKISU_CURRENT" "$RESUKISU_TARGET" \
+            | LC_ALL=C sort > audit/01-resukisu-all-paths.txt
+
+          printf '%s\n' "$RESUKISU_EXPECTED_CHANGED_PATH" > audit/01-resukisu-all-paths.expected.txt
+          diff -u audit/01-resukisu-all-paths.expected.txt audit/01-resukisu-all-paths.txt
+
+          git -C upstream-resukisu diff --name-only "$RESUKISU_CURRENT" "$RESUKISU_TARGET" -- \
+            kernel uapi userspace > audit/01-resukisu-kernel-uapi-userspace-delta.txt
+          test ! -s audit/01-resukisu-kernel-uapi-userspace-delta.txt
+
+          grep -Fq 'KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)' \
+            upstream-resukisu/kernel/Kbuild
+          grep -Fq 'KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)' \
+            upstream-resukisu/kernel/Kbuild
+
+          local_count="$(git -C upstream-resukisu rev-list --count "$RESUKISU_TARGET")"
+          calculated_version="$((30000 + local_count + 700))"
+          test "$calculated_version" = "$RESUKISU_EXPECTED_VERSION"
+
+          {
+            echo "RESUKISU_CURRENT=$RESUKISU_CURRENT"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "RESUKISU_DELTA_COMMITS=$delta_count"
+            echo "RESUKISU_VERSION=$calculated_version"
+            echo "RESUKISU_UAPI=$RESUKISU_EXPECTED_UAPI"
+            echo "RESUKISU_CHANGED_PATH=$RESUKISU_EXPECTED_CHANGED_PATH"
+            echo 'RESUKISU_KERNEL_DELTA=NONE'
+            echo 'RESUKISU_UAPI_DELTA=NONE'
+            echo 'RESUKISU_USERSPACE_DELTA=NONE'
+            echo 'RESUKISU_MANAGER_ONLY_DELTA=PASS'
+            echo 'RESUKISU_VERSION_CALCULATION=PASS'
+          } | tee audit/01-resukisu-result.txt
+
+      - name: Audit exact SUSFS Android 13 5.10 upstream head
+        id: susfs_audit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          primary_head="$(git ls-remote "$SUSFS_PRIMARY_REPO" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}')"
+          mirror_head="$(git ls-remote "$SUSFS_MIRROR_REPO" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}')"
+
+          test -n "$primary_head"
+          test -n "$mirror_head"
+          test "$primary_head" = "$mirror_head"
+          test "$primary_head" = "$SUSFS_CURRENT"
+
+          git init -q upstream-susfs
+          git -C upstream-susfs remote add origin "$SUSFS_MIRROR_REPO"
+          git -C upstream-susfs fetch -q --depth=1 origin "$SUSFS_CURRENT"
+          git -C upstream-susfs checkout -q --detach FETCH_HEAD
+          test "$(git -C upstream-susfs rev-parse HEAD)" = "$SUSFS_CURRENT"
+
+          test -f upstream-susfs/ksu_module_susfs/module.prop
+          actual_version="$(sed -n 's/^version=//p' upstream-susfs/ksu_module_susfs/module.prop | head -n1)"
+          test "$actual_version" = "$SUSFS_EXPECTED_VERSION"
+
+          {
+            echo "SUSFS_PRIMARY_HEAD=$primary_head"
+            echo "SUSFS_MIRROR_HEAD=$mirror_head"
+            echo "SUSFS_BRANCH=$SUSFS_BRANCH"
+            echo "SUSFS_VERSION=$actual_version"
+            echo 'SUSFS_BRANCH_HEAD_AGREEMENT=PASS'
+            echo 'SUSFS_NEW_COMMIT_FOR_ANDROID13_5_10=NO'
+            echo 'SUSFS_FUNCTIONAL_UPDATE_REQUIRED=NO'
+          } | tee audit/02-susfs-result.txt
+
+      - name: Final upstream update decision
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fxq 'RESUKISU_KERNEL_DELTA=NONE' audit/01-resukisu-result.txt
+          grep -Fxq 'RESUKISU_UAPI_DELTA=NONE' audit/01-resukisu-result.txt
+          grep -Fxq 'RESUKISU_USERSPACE_DELTA=NONE' audit/01-resukisu-result.txt
+          grep -Fxq 'RESUKISU_MANAGER_ONLY_DELTA=PASS' audit/01-resukisu-result.txt
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_EXPECTED_VERSION" audit/01-resukisu-result.txt
+          grep -Fxq 'SUSFS_NEW_COMMIT_FOR_ANDROID13_5_10=NO' audit/02-susfs-result.txt
+          grep -Fxq 'SUSFS_FUNCTIONAL_UPDATE_REQUIRED=NO' audit/02-susfs-result.txt
+
+          {
+            echo 'UPSTREAM_AUDIT=PASS'
+            echo "RESUKISU_TARGET_VERSION=$RESUKISU_EXPECTED_VERSION"
+            echo "RESUKISU_TARGET_COMMIT=$RESUKISU_TARGET"
+            echo 'RESUKISU_KERNEL_DELTA=NONE'
+            echo 'RESUKISU_UAPI_DELTA=NONE'
+            echo 'RESUKISU_UPDATE_CLASS=IDENTITY_VERSION_ONLY'
+            echo "SUSFS_TARGET_VERSION=$SUSFS_EXPECTED_VERSION"
+            echo "SUSFS_TARGET_COMMIT=$SUSFS_CURRENT"
+            echo 'SUSFS_UPDATE_CLASS=NO_CHANGE_FOR_ANDROID13_5_10'
+            echo 'FUNCTIONAL_KERNEL_UPDATE_REQUIRED=NO'
+            echo 'MASS_35158_IDENTITY_REBUILD=READY_FOR_LINEAGE_AUDIT'
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+            echo 'DEVICE_PASS=NO_CHANGE_TO_EXISTING_ARTIFACTS'
+          } | tee audit/03-final-upstream-decision.txt
+
+          echo "resukisu_version=$RESUKISU_EXPECTED_VERSION" >> "$GITHUB_OUTPUT"
+          echo "resukisu_target=$RESUKISU_TARGET" >> "$GITHUB_OUTPUT"
+          echo "susfs_version=$SUSFS_EXPECTED_VERSION" >> "$GITHUB_OUTPUT"
+          echo "susfs_target=$SUSFS_CURRENT" >> "$GITHUB_OUTPUT"
+          echo 'functional_update_required=no' >> "$GITHUB_OUTPUT"
+
+      - name: Finalize upstream diagnostics
+        if: always()
+        shell: bash
+        env:
+          RESUKISU_AUDIT_OUTCOME: ${{ steps.resukisu_audit.outcome }}
+          SUSFS_AUDIT_OUTCOME: ${{ steps.susfs_audit.outcome }}
+          DECISION_OUTCOME: ${{ steps.decision.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          {
+            echo "RESUKISU_AUDIT_OUTCOME=$RESUKISU_AUDIT_OUTCOME"
+            echo "SUSFS_AUDIT_OUTCOME=$SUSFS_AUDIT_OUTCOME"
+            echo "DECISION_OUTCOME=$DECISION_OUTCOME"
+            echo "RUN_ID=$GITHUB_RUN_ID"
+            echo "RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "HEAD_SHA=$GITHUB_SHA"
+          } > audit/99-step-outcomes.txt
+
+          (
+            cd audit
+            rm -f SHA256SUMS.txt
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0               | LC_ALL=C sort -z               | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Upload upstream audit evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O50V2-UPSTREAM-AUDIT-${{ github.run_id }}
+          path: audit/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  lineage-readiness:
+    name: ${{ matrix.kernel }} update readiness
+    needs: upstream-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel:
+          - '5.4.274'
+          - '5.4.292'
+          - '5.4.293'
+          - '5.4.300'
+          - '5.4.301'
+          - '5.4.302'
+
+    steps:
+      - name: Checkout current project read-only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate exact lineage prerequisites
+        id: validate_lineage
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          audit="lineage-audit-$KERNEL"
+          mkdir -p "$audit"
+          test -d "lineages/$KERNEL"
+
+          case "$KERNEL" in
+            5.4.274)
+              test -s "$RESTORE_274"
+              unzip -t "$RESTORE_274" > "$audit/zip-test.txt"
+              actual="$(sha256sum "$RESTORE_274" | awk '{print $1}')"
+              test "$actual" = "$RESTORE_274_SHA256"
+              authority="$RESTORE_274"
+              authority_sha="$actual"
+              test -f .github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml
+              ;;
+            5.4.292)
+              test -s "$BUILD_292"
+              test -s "$INTEGRATOR_292"
+              bash -n "$BUILD_292"
+              python3 -m py_compile "$INTEGRATOR_292"
+              build_sha="$(sha256sum "$BUILD_292" | awk '{print $1}')"
+              integrator_sha="$(sha256sum "$INTEGRATOR_292" | awk '{print $1}')"
+              test "$build_sha" = "$BUILD_292_SHA256"
+              test "$integrator_sha" = "$INTEGRATOR_292_SHA256"
+              authority="$BUILD_292 + $INTEGRATOR_292"
+              authority_sha="$build_sha/$integrator_sha"
+              test -f .github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml
+              ;;
+            5.4.293)
+              test -s lineages/5.4.293/SUSFS_INTEGRATE_R1.py
+              python3 -m py_compile lineages/5.4.293/SUSFS_INTEGRATE_R1.py
+              authority='lineages/5.4.293/SUSFS_INTEGRATE_R1.py'
+              authority_sha="$(sha256sum lineages/5.4.293/SUSFS_INTEGRATE_R1.py | awk '{print $1}')"
+              wf=.github/workflows/13-veux-5.4.293-resukisu-35157-susfs-update-r1.yml
+              test -f "$wf"
+              grep -Fq 'SOURCE_COMMIT: fb3bbb10bc0480282c01b88ccaf39c0145cd9f51' "$wf"
+              grep -Fq 'RESUKISU_COMMIT: 3d1185d878a856ea6435799b436b3d3ec510da76' "$wf"
+              grep -Fq 'SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964' "$wf"
+              ;;
+            5.4.300)
+              test -s "$SUPPORT_300"
+              unzip -t "$SUPPORT_300" > "$audit/zip-test.txt"
+              actual="$(sha256sum "$SUPPORT_300" | awk '{print $1}')"
+              test "$actual" = "$SUPPORT_300_SHA256"
+              authority="$SUPPORT_300"
+              authority_sha="$actual"
+              test -f .github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml
+              ;;
+            5.4.301)
+              test -s "$SUPPORT_301"
+              unzip -t "$SUPPORT_301" > "$audit/zip-test.txt"
+              actual="$(sha256sum "$SUPPORT_301" | awk '{print $1}')"
+              test "$actual" = "$SUPPORT_301_SHA256"
+              authority="$SUPPORT_301"
+              authority_sha="$actual"
+              test -f .github/workflows/veux-gen1-u5-o45-v2-5.4.301-resukisu-35157-incremental.yml
+              test -f .github/workflows/veux-gen1-u5-o47-v1-5.4.301-package-audit.yml
+              test -f .github/workflows/veux-gen1-u5-o48-v2-5.4.301-static-boot.yml
+              test -f .github/workflows/veux-gen1-u5-o49-v2-5.4.301-ak3-static-boot-cert.yml
+              ;;
+            5.4.302)
+              test -s "$SUPPORT_302"
+              unzip -t "$SUPPORT_302" > "$audit/zip-test.txt"
+              actual="$(sha256sum "$SUPPORT_302" | awk '{print $1}')"
+              test "$actual" = "$SUPPORT_302_SHA256"
+              authority="$SUPPORT_302"
+              authority_sha="$actual"
+              test -f .github/workflows/veux-gen1-u5-o44-v1-5.4.302-resukisu-35157-selfcontained.yml
+              ;;
+            *)
+              echo "::error::Unsupported kernel matrix value: $KERNEL"
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "KERNEL=$KERNEL"
+            echo "LINEAGE_AUTHORITY=$authority"
+            echo "LINEAGE_AUTHORITY_SHA256=$authority_sha"
+            echo "RESUKISU_CURRENT=$RESUKISU_CURRENT"
+            echo "RESUKISU_TARGET=${{ needs.upstream-audit.outputs.resukisu_target }}"
+            echo "RESUKISU_TARGET_VERSION=${{ needs.upstream-audit.outputs.resukisu_version }}"
+            echo "SUSFS_TARGET=${{ needs.upstream-audit.outputs.susfs_target }}"
+            echo "SUSFS_TARGET_VERSION=${{ needs.upstream-audit.outputs.susfs_version }}"
+            echo 'LINEAGE_SOURCE_AUTHORITY=PASS'
+            echo 'UPDATE_TRANSFORM_READINESS=PASS'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'NEW_CANDIDATE_DEVICE_PASS=NO'
+          } | tee "$audit/result.txt"
+
+          (
+            cd "$audit"
+            sha256sum ./* | LC_ALL=C sort > SHA256SUMS.txt
+          )
+
+      - name: Finalize lineage diagnostics
+        if: always()
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+          VALIDATION_OUTCOME: ${{ steps.validate_lineage.outcome }}
+        run: |
+          set -euo pipefail
+          audit="lineage-audit-$KERNEL"
+          mkdir -p "$audit"
+          {
+            echo "KERNEL=$KERNEL"
+            echo "VALIDATION_OUTCOME=$VALIDATION_OUTCOME"
+            echo "RUN_ID=$GITHUB_RUN_ID"
+            echo "RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "HEAD_SHA=$GITHUB_SHA"
+          } > "$audit/99-step-outcome.txt"
+
+          (
+            cd "$audit"
+            rm -f SHA256SUMS.txt
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0               | LC_ALL=C sort -z               | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Upload lineage readiness evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O50V2-${{ matrix.kernel }}-READINESS-${{ github.run_id }}
+          path: lineage-audit-${{ matrix.kernel }}/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  final-gate:
+    name: All six kernel update readiness GREEN gate
+    if: always()
+    needs:
+      - upstream-audit
+      - lineage-readiness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Write final status and enforce GREEN gate
+        shell: bash
+        env:
+          UPSTREAM_RESULT: ${{ needs.upstream-audit.result }}
+          LINEAGE_RESULT: ${{ needs.lineage-readiness.result }}
+          RESUKISU_VERSION_OUT: ${{ needs.upstream-audit.outputs.resukisu_version }}
+          RESUKISU_TARGET_OUT: ${{ needs.upstream-audit.outputs.resukisu_target }}
+          SUSFS_VERSION_OUT: ${{ needs.upstream-audit.outputs.susfs_version }}
+          SUSFS_TARGET_OUT: ${{ needs.upstream-audit.outputs.susfs_target }}
+          FUNCTIONAL_UPDATE_OUT: ${{ needs.upstream-audit.outputs.functional_update_required }}
+        run: |
+          set -euo pipefail
+          mkdir -p final
+
+          {
+            echo "UPSTREAM_JOB_RESULT=$UPSTREAM_RESULT"
+            echo "LINEAGE_JOB_RESULT=$LINEAGE_RESULT"
+            echo "RESUKISU_VERSION_OUT=$RESUKISU_VERSION_OUT"
+            echo "RESUKISU_TARGET_OUT=$RESUKISU_TARGET_OUT"
+            echo "SUSFS_VERSION_OUT=$SUSFS_VERSION_OUT"
+            echo "SUSFS_TARGET_OUT=$SUSFS_TARGET_OUT"
+            echo "FUNCTIONAL_UPDATE_OUT=$FUNCTIONAL_UPDATE_OUT"
+            echo 'KERNELS=5.4.274,5.4.292,5.4.293,5.4.300,5.4.301,5.4.302'
+          } > final/FINAL-RESULT.txt
+
+          gate=PASS
+          test "$UPSTREAM_RESULT" = 'success' || gate=FAIL
+          test "$LINEAGE_RESULT" = 'success' || gate=FAIL
+          test "$RESUKISU_VERSION_OUT" = '35158' || gate=FAIL
+          test "$RESUKISU_TARGET_OUT" = '6d18926ae6eeb571a04c1ce7552c324d606fa9d8' || gate=FAIL
+          test "$SUSFS_VERSION_OUT" = 'v2.3.0' || gate=FAIL
+          test "$SUSFS_TARGET_OUT" = '04a9d713106191ba98be680bd7ad9547ab1de964' || gate=FAIL
+          test "$FUNCTIONAL_UPDATE_OUT" = 'no' || gate=FAIL
+
+          if [ "$gate" = PASS ]; then
+            {
+              echo 'VEUX_U6_O50_ALL_KERNEL_UPSTREAM_UPDATE_AUDIT=PASS'
+              echo 'RESUKISU_OLD_VERSION=35157'
+              echo 'RESUKISU_NEW_VERSION=35158'
+              echo 'RESUKISU_NEW_COMMIT=6d18926ae6eeb571a04c1ce7552c324d606fa9d8'
+              echo 'RESUKISU_KERNEL_DELTA=NONE'
+              echo 'RESUKISU_UAPI_DELTA=NONE'
+              echo 'RESUKISU_UPDATE_CLASS=IDENTITY_VERSION_ONLY'
+              echo 'SUSFS_VERSION=v2.3.0'
+              echo 'SUSFS_COMMIT=04a9d713106191ba98be680bd7ad9547ab1de964'
+              echo 'SUSFS_UPDATE_FOR_ANDROID13_5_10=NONE'
+              echo 'ALL_SIX_LINEAGES_UPDATE_READY=PASS'
+              echo 'MASS_35158_IDENTITY_REBUILD_READY=PASS'
+              echo 'MODULE_LOAD_FILTER=EXCLUDED'
+              echo 'EXISTING_ARTIFACTS_UNCHANGED=YES'
+              echo 'NEW_BUILD_PACKAGE_PASS=NO'
+              echo 'NEW_BUILD_STATIC_BOOT_PATH_PASS=NO'
+              echo 'NEW_BUILD_DEVICE_PASS=NO'
+              echo 'O50V2_REAL_GREEN_GATE=PASS'
+            } >> final/FINAL-RESULT.txt
+          else
+            echo 'O50V2_REAL_GREEN_GATE=FAIL' >> final/FINAL-RESULT.txt
+          fi
+
+          sha256sum final/FINAL-RESULT.txt > final/SHA256SUMS.txt
+          cat final/FINAL-RESULT.txt
+          test "$gate" = PASS
+
+      - name: Upload final decision even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O50V2-FINAL-${{ github.run_id }}
+          path: final/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
