@@ -1,0 +1,1021 @@
+name: VEUX GEN1 U5-O46 v2 5.4.301 Lineage Freeze Audit
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-gen1-u5-o46-v2-5.4.301-lineage-freeze-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 170
+    env:
+      ARCH: arm64
+      TZ: UTC
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      EXPECTED_WORKFLOW_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+      SUPPORT_KIT_RELATIVE_PATH: lineages/5.4.300/O43_5.4.300_PORT_SUPPORT_V1.zip
+      SUPPORT_KIT_SHA256: 51109cb711dec8216a9ff55a9cb984cfdceb7b4fac244381c61ad02c4187abe4
+      RESTORE_KIT_RELATIVE_PATH: lineages/5.4.274/P14_SOURCE_RESTORE_COMPACT_V2.zip
+      RESTORE_KIT_SHA256: 20327b9edc783429bd4987febff3e77e42cc9be62493be41c7aaec2af3d3b0db
+
+      BASE_DIR: ${{ github.workspace }}/kernel-p14r1-base
+      TARGET_DIR: ${{ github.workspace }}/kernel-5.4.301
+      RESUKISU_UPSTREAM: ${{ github.workspace }}/resukisu-upstream
+      STABLE_DIR: ${{ github.workspace }}/linux-stable-5.4
+      TOOLCHAIN_DIR: ${{ github.workspace }}/toolchains/clang-r416183b
+      OUT301: ${{ github.workspace }}/out-5.4.301
+      AUDIT_DIR: ${{ github.workspace }}/u5-o46-audit
+      DIST_DIR: ${{ github.workspace }}/u5-o46-dist
+      SUPPORT_ROOT: ${{ github.workspace }}/.o46-support
+      RESTORE_ROOT: ${{ github.workspace }}/.o46-restore
+
+      # Frozen, already-GREEN 5.4.300 reconstruction.
+      O40_ARTIFACT_SHA256: 48a514fa835a068736898d6a273e2af0af6aa79933b202c0075d789532f4f2c0
+      PATCH300_SHA256: 960cf65c673423f2fe7c08d26612d477f898595f7d259e1f2700ebc5e24e57e8
+      EXPECTED_P13_PATCH_SHA256: d56725a9d6a6dc7bf1e73a5763b894bdabb544119f4c75df5f437ccd4ff29a52
+      O41_ARTIFACT_SHA256: 0e4e51d7d40b33e7acef99d996dba5d85ffe494dfdd3a744a8f3884a45086899
+      O41_PM300_PATCH_SHA256: 020b692bb47f631907fc5c7a3c14e67ad97c5b902d7f1cd24303c77b511ba17e
+      O41_TIMER_SIZEADD300_PATCH_SHA256: 9c1cb6965286f53a910733c84809ff51df7a826950853247843d816a10023577
+      EXPECTED_300_PRE_DEP_TREE: 99c17a0f1f9767c181f3ab3c93eba98f4ad5bc88
+
+      # O40-proven semantic resolutions reused only where 5.4.300->5.4.301 conflicts.
+      # These three paths are unchanged again in official 5.4.301->5.4.302.
+      EXPECTED_REGMAP_301_SHA256: 892df435693b2c0b386107b4862d93cfa4e1861de4d62b41af0dec3afa61cd27
+      EXPECTED_IVTV_300_SHA256: 85607cd90ceeb11766ab0a146cb60462ef37e4b0d163389fb1616f61e29a3943
+      EXPECTED_IVTV_301_SHA256: dcd2ea466fe31d79fb227da06463d4c871ed99bddd884a3bc911eff5ff50bab4
+      EXPECTED_IVTV_O40_PATCH_SHA256: aa632b5915aa4a88d1909602a7bad08dd7617332d2ab44d27fc278f330f22502
+      EXPECTED_RPMH_300_SHA256: 3d87f01be6c41c2525549130cdc4fe584b8b79df717ce3175423fadee9ee525b
+      EXPECTED_RPMH_301_SHA256: 845007d3c7a7cc3975f8750dfc34a88eb6db318a10f6285b1948fabca9086acb
+      EXPECTED_RPMH_O40_PATCH_SHA256: 88c6156262243429ff294349ae98448b82e77478a1700d92d1513626e4d1491e
+
+      # Official signed stable authority. O40 already verified v5.4.300;
+      # v5.4.301 is pinned by annotated-tag object and dereferenced commit.
+      STABLE_REPO: https://github.com/gregkh/linux.git
+      STABLE_300_TAG_OBJECT: a169431f26a8b4ae3e22cfb9aa396c71bdd3b37c
+      STABLE_300_COMMIT: 86b57fd7c54e976bdcee78ead678932821a68e2d
+      STABLE_301_TAG_OBJECT: 534a497d360743322d061d0945e5484b412b4a73
+      STABLE_301_COMMIT: 2e58fc1413e9339d56fb7df491f45ecc698b161f
+
+      # Frozen 5.4.274 outer-source reconstruction.
+      EXPECTED_VENDOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      EXPECTED_VENDOR_KERNEL_VERSION: 5.4.268
+      EXPECTED_OUTER_TREE: 19b68131d7a3955085f60c4fb8cf64442427af0c
+      EXPECTED_P13_TREE: 27f712099ca93c93f7b6db8884cc1f3b6e61ae0f
+      EXPECTED_P5I_COMMIT: f353a9475e40ca866d570c1d0ef55e24cf6556e4
+      EXPECTED_P5I_TREE: a947c1f2891c796a08373fc755e29b23139dc761
+      EXPECTED_RESUKISU_BASE_HEAD: 42034caa96466e8473fe7553eba8a1888c7f460f
+      EXPECTED_RESUKISU_BASE_TREE: d818d965b855d417edfe9eb38b152ff83e75e0fb
+      EXPECTED_P12_EXEC_SHA256: fa3b73421f35d6220fb9e03e112a9509b76c04933af2353c9a8c65d6fb6bd6a9
+      EXPECTED_P12_CONTRACT_SHA256: b6d1875f6a79231465bc78df6484f2856a427259998eb93ba9fd2597cb45ca53
+      EXPECTED_P12_SUSFS_C_SHA256: e430d573ba5875a55d1ca70ba1b304e4b6727bbc42b8c3ac16f2c175b29a59c1
+      EXPECTED_P12_SUSFS_H_SHA256: 3c5fb1bcc28a70c82ee5cfe0a7375bb8e7babd26618ce9b451e598fa31aa3b6e
+      EXPECTED_P12_SUSFS_DEF_SHA256: b16108a5fcd4cdd7203d9f084c2154da708ab3ae6bed17109e4ec63f04ff0f68
+
+      # Exact real-device P14R1 ReSukiSU lineage.
+      RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+      RESUKISU_COMMON_BASE: faccf4c5edc7be37776216e7d43dd3dca0239331
+      RESUKISU_DEVICE_PASS_BASE: 052ca27775cc9c8570e3b1ba3db7c29486d6020e
+      RESUKISU_P13_DEVICE_PASS: 7741f87849f7ad7cebf82bbb4c5b89880e61e37e
+      RESUKISU_P14_DEVICE_PASS: 6ec8d9a8a8be30878c388504cacf8ae7849c757b
+      RESUKISU_TARGET: 3d1185d878a856ea6435799b436b3d3ec510da76
+      RESUKISU_EXPECTED_DELTA_COMMITS: '3'
+      EXPECTED_KSU_VERSION: '35157'
+      EXPECTED_KSU_UAPI: '4'
+      RESUKISU_EXCLUDED_MODULE_FILTER: b2ac2fc8703ce9f5226e2a38a59f8b72f8a3005c
+      RESUKISU_MANAGER_PARENT_BLOB: b96e219fb0ff155eaefefbd74cd989968d209bab
+      RESUKISU_MANAGER_TARGET_BLOB: 5166d5cf4d82a2e9bf7305fa775791ec4e1957e3
+      RESUKISU_IMAGE_IDENTITY: v4.2.0-rc2-3d1185d8-p14r1@ReSukiSU
+
+      # Proven VEUX build identity.
+      CLANG_PREBUILT_COMMIT: aa2e4a514a6c85eebcc4a27149eaf9244e951a1e
+      KBUILD_BUILD_USER: builder
+      KBUILD_BUILD_HOST: pangu-build-component-vendor-345942-54r9t-tw0tk-tq90c
+      KBUILD_BUILD_TIMESTAMP: Thu Dec 5 14:47:59 UTC 2024
+      KBUILD_BUILD_VERSION: '1'
+      SOURCE_DATE_EPOCH: '1733410079'
+      KBUILD_FIXED_SCM_SUFFIX: -g82179e362f33
+      EFFECTIVE_KCFLAGS: -D__ANDROID_COMMON_KERNEL__
+      EXPECTED_RELEASE_301: 5.4.301-qgki-g82179e362f33
+      EXPECTED_CONFIG_301_SHA256: 864c412f9a98e724fae63a6207838783bb1d4b36e6213d2dbe0965c22de45f3d
+      EXPECTED_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+      REFERENCE_IMAGE_300_SHA256: 59e565ac5fd273ebe4af5636700f48d81ef3ab2f63b73b1c758c840ef83e721c
+      REFERENCE_IMAGE_302_SHA256: 67807748edd57e9fa714d444a39fccf54d88b95c92d54de029b4c12bc868345a
+
+      # Proven O45-v2 source/compile evidence being frozen.
+      O45V2_RUN_ID: '35450814757'
+      O45V2_HEAD_SHA: 58047eeccf55a152574f4bf25ff2c1de304b5a5b
+      O45V2_ARTIFACT_SHA256: 36bccc1807ae4263f561831b0423fd9f4bb2ef0d90b788ed4edf36be543f9d6d
+      O45V2_IMAGE_SHA256: d331865930fd6544bb7457d6d6e0241fc3b181f1f831a6c9ae921a57f79b8c82
+      SUPPORT301_NAME: O45_5.4.301_PORT_SUPPORT_V1
+
+    steps:
+      - name: Repository and immutable-plan gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BASE_DIR" "$TARGET_DIR" "$RESUKISU_UPSTREAM" "$STABLE_DIR" \
+                 "$TOOLCHAIN_DIR" "$OUT301" "$SUPPORT_ROOT" "$RESTORE_ROOT" \
+                 "$AUDIT_DIR" "$DIST_DIR"
+          mkdir -p "$AUDIT_DIR" "$DIST_DIR" "$TOOLCHAIN_DIR"
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_WORKFLOW_REPOSITORY"
+          cat > "$AUDIT_DIR/00-plan.txt" <<'EOF'
+          U5-O46 v1: freeze the proven O45-v2 VEUX Linux 5.4.301 source lineage.
+          Frozen parent: O43 v4 5.4.300 source/integration lineage.
+          Official delta: signed gregkh/linux v5.4.300 -> v5.4.301.
+          ReSukiSU lineage: P14R1 / 35157 / UAPI4 / SUSFS 2.3.0.
+          Module-load-filter remains excluded.
+          This workflow replays SOURCE/PORT + COMPILE and freezes a self-contained 5.4.301 support lineage.
+          PACKAGE_PASS=NO
+          STATIC_BOOT_PATH_PASS=NO
+          DEVICE_PASS=NO
+          EOF
+
+      - name: Checkout current universal-kernel project
+        uses: actions/checkout@v7
+        with:
+          path: project
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl flex git jq \
+            libelf-dev libncurses-dev libssl-dev patch python3 rsync unzip xz-utils zstd file
+
+      - name: Authenticate frozen 5.4.300 support kit
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$GITHUB_WORKSPACE/project/$SUPPORT_KIT_RELATIVE_PATH"
+          test -s "$kit"
+          test "$(sha256sum "$kit" | awk '{print $1}')" = "$SUPPORT_KIT_SHA256"
+          unzip -t "$kit" >/dev/null
+          mkdir -p "$SUPPORT_ROOT"
+          unzip -q "$kit" -d "$SUPPORT_ROOT"
+          support="$SUPPORT_ROOT/O43_5.4.300_PORT_SUPPORT_V1"
+          test -d "$support"
+          test -f "$support/SHA256SUMS"
+          test -f "$support/PROVENANCE.txt"
+          (cd "$support" && sha256sum -c SHA256SUMS) | tee "$AUDIT_DIR/01-support-sha256.txt"
+
+          p300="$support/source/P13-to-5.4.300-AUTO-MERGED-PARTIAL.patch"
+          p13="$support/source/07-P13-post-exec.patch"
+          pm="$support/deps/06-pm-runtime-needs-force-resume-5.4.300.patch"
+          dep="$support/deps/08-timer-sizeadd-dependency-5.4.300.patch"
+          echo "$PATCH300_SHA256  $p300" | sha256sum -c -
+          echo "$EXPECTED_P13_PATCH_SHA256  $p13" | sha256sum -c -
+          echo "$O41_PM300_PATCH_SHA256  $pm" | sha256sum -c -
+          echo "$O41_TIMER_SIZEADD300_PATCH_SHA256  $dep" | sha256sum -c -
+          grep -Fxq 'repo=Chrizz100/veux-resukisu-builder' "$support/PROVENANCE.txt"
+          grep -Fxq 'run=35241355584' "$support/PROVENANCE.txt"
+          grep -Fxq "artifact_sha256=$O40_ARTIFACT_SHA256" "$support/PROVENANCE.txt"
+          grep -Fxq "artifact_sha256=$O41_ARTIFACT_SHA256" "$support/PROVENANCE.txt"
+          {
+            echo "P300_PATCH=$p300"
+            echo "P13_PATCH=$p13"
+            echo "PM_PATCH=$pm"
+            echo "DEP_PATCH=$dep"
+          } >> "$GITHUB_ENV"
+          echo 'SELF_CONTAINED_300_SUPPORT=PASS' | tee "$AUDIT_DIR/01-parent-gates.txt"
+
+      - name: Reconstruct exact frozen 5.4.274 outer source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/dereference23/kernel_xiaomi_sm6375.git "$BASE_DIR"
+          git -C "$BASE_DIR" checkout -q --detach "$EXPECTED_VENDOR_SHA"
+          test "$(git -C "$BASE_DIR" rev-parse HEAD)" = "$EXPECTED_VENDOR_SHA"
+          test "$(make -s -C "$BASE_DIR" kernelversion)" = "$EXPECTED_VENDOR_KERNEL_VERSION"
+
+          kit="$GITHUB_WORKSPACE/project/$RESTORE_KIT_RELATIVE_PATH"
+          test -s "$kit"
+          test "$(sha256sum "$kit" | awk '{print $1}')" = "$RESTORE_KIT_SHA256"
+          mkdir -p "$RESTORE_ROOT"
+          unzip -q "$kit" -d "$RESTORE_ROOT"
+          restore_dir="$RESTORE_ROOT/source-restore-kit"
+          result_file="$RESTORE_ROOT/17-result.txt"
+          test -d "$restore_dir"
+          test -f "$result_file"
+          grep -Fxq 'CLEAN_GEN1_P6V11_FULL_SUSFS_OUTER_INTEGRATION_DETERMINISTIC_BUILD=PASS' "$result_file"
+          (cd "$restore_dir" && sha256sum -c SHA256SUMS) | tee "$AUDIT_DIR/02-restore-sha256.txt"
+
+          test "$(sha256sum "$restore_dir/manifest.json" | awk '{print $1}')" = '35ccea66e7c25078a0169e02d2cbb42061dc002c578a456c41c045935db1acc7'
+          test "$(sha256sum "$restore_dir/p5i/manifest.json" | awk '{print $1}')" = 'd905ddeedaf379de15d42f5094267b70897061cd08275041f1d588604c6e1546'
+          test "$(sha256sum "$restore_dir/p5i/vendor-20240619-to-p5i-outer.patch" | awk '{print $1}')" = '4016649007e50b67389c3c5860b7124d1454f9f29973079e9f0754a439c50991'
+          test "$(sha256sum "$restore_dir/p5i-to-p6-source-compat.patch" | awk '{print $1}')" = '1edd7b005f8af7bd9cad955bced33c6d5509347a6c17c51c4678be89fd3c1cbc'
+          test "$(sha256sum "$restore_dir/p6v10-to-p6v11-full-susfs-outer.patch" | awk '{print $1}')" = '220c388cc13640971802f422fee3804ef78bd892d7c077bcf216e0e80bf14e44'
+
+          jq -e \
+            --arg p5commit "$EXPECTED_P5I_COMMIT" \
+            --arg p5tree "$EXPECTED_P5I_TREE" \
+            --arg rhead "$EXPECTED_RESUKISU_BASE_HEAD" \
+            --arg rtree "$EXPECTED_RESUKISU_BASE_TREE" \
+            --arg outer "$EXPECTED_OUTER_TREE" \
+            '.stage == "CLEAN_GEN1_P6V11_SOURCE" and .p5i_commit == $p5commit and .p5i_tree == $p5tree and .resukisu_head == $rhead and .resukisu_tree == $rtree and .p6_source_tree == $outer' \
+            "$restore_dir/manifest.json" >/dev/null
+
+          git -C "$BASE_DIR" reset --hard "$EXPECTED_VENDOR_SHA"
+          git -C "$BASE_DIR" clean -fdx
+          for p in \
+            "$restore_dir/p5i/vendor-20240619-to-p5i-outer.patch" \
+            "$restore_dir/p5i-to-p6-source-compat.patch" \
+            "$restore_dir/p6v10-to-p6v11-full-susfs-outer.patch"; do
+            git -C "$BASE_DIR" apply --check --whitespace=error --binary "$p"
+            git -C "$BASE_DIR" apply --index --whitespace=error --binary "$p"
+          done
+          test "$(git -C "$BASE_DIR" write-tree)" = "$EXPECTED_OUTER_TREE"
+          test "$(make -s -C "$BASE_DIR" kernelversion)" = '5.4.274'
+          test "$(sha256sum "$BASE_DIR/fs/exec.c" | awk '{print $1}')" = "$EXPECTED_P12_EXEC_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/ksu_hook_contract.h" | awk '{print $1}')" = "$EXPECTED_P12_CONTRACT_SHA256"
+          test "$(sha256sum "$BASE_DIR/fs/susfs.c" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_C_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/susfs.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_H_SHA256"
+          test "$(sha256sum "$BASE_DIR/include/linux/susfs_def.h" | awk '{print $1}')" = "$EXPECTED_P12_SUSFS_DEF_SHA256"
+          echo 'OUTER_SOURCE_RECONSTRUCTION=PASS' | tee "$AUDIT_DIR/02-outer-source.txt"
+
+      - name: Construct exact P14R1 ReSukiSU 35157 subtree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q "$RESUKISU_REPO" "$RESUKISU_UPSTREAM"
+          for c in "$RESUKISU_COMMON_BASE" "$RESUKISU_DEVICE_PASS_BASE" "$RESUKISU_P13_DEVICE_PASS" \
+                   "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" "$RESUKISU_EXCLUDED_MODULE_FILTER"; do
+            git -C "$RESUKISU_UPSTREAM" cat-file -e "${c}^{commit}"
+          done
+          git -C "$RESUKISU_UPSTREAM" merge-base --is-ancestor "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET"
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-list --count "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}")" = "$RESUKISU_EXPECTED_DELTA_COMMITS"
+          git -C "$RESUKISU_UPSTREAM" diff --name-only "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- kernel uapi \
+            | LC_ALL=C sort > "$AUDIT_DIR/03-resukisu-delta.txt"
+          printf '%s\n' 'kernel/manager/manager.c' > "$AUDIT_DIR/03-resukisu-delta.expected.txt"
+          diff -u "$AUDIT_DIR/03-resukisu-delta.expected.txt" "$AUDIT_DIR/03-resukisu-delta.txt"
+          git -C "$RESUKISU_UPSTREAM" diff --quiet "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_TARGET" -- uapi
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-parse "$RESUKISU_P14_DEVICE_PASS:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_PARENT_BLOB"
+          test "$(git -C "$RESUKISU_UPSTREAM" rev-parse "$RESUKISU_TARGET:kernel/manager/manager.c")" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          target_count="$(git -C "$RESUKISU_UPSTREAM" rev-list --count "$RESUKISU_TARGET")"
+          test "$((30700 + target_count))" = "$EXPECTED_KSU_VERSION"
+          git -C "$RESUKISU_UPSTREAM" show "$RESUKISU_TARGET:uapi/supercall.h" | grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};"
+
+          git -C "$RESUKISU_UPSTREAM" checkout -q --detach "$RESUKISU_TARGET"
+          git -C "$RESUKISU_UPSTREAM" reset --hard -q "$RESUKISU_TARGET"
+          git -C "$RESUKISU_UPSTREAM" clean -fdx -q
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root=Path(os.environ['RESUKISU_UPSTREAM'])
+          def remove_exact(path, block, expected=1):
+              p=root/path
+              t=p.read_text(encoding='utf-8')
+              if t.count(block) != expected:
+                  raise SystemExit(f'{path}: unexpected block count')
+              p.write_text(t.replace(block,'',expected), encoding='utf-8')
+          for rel in ('kernel/feature/module_load_filter.c','kernel/feature/module_load_filter.h'):
+              p=root/rel
+              if not p.is_file(): raise SystemExit('missing '+rel)
+              p.unlink()
+          remove_exact('kernel/Kbuild','kernelsu-objs += feature/module_load_filter.o\n')
+          remove_exact('kernel/core/init.c','#include "feature/module_load_filter.h"\n')
+          remove_exact('kernel/core/init.c','char ksu_block_modules[256];\nmodule_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules), 0);\nMODULE_PARM_DESC(block_modules, "Comma-separated preset module names to acknowledge without loading");\n\n')
+          remove_exact('kernel/core/init.c','        ksu_module_load_filter_hook_init();\n\n')
+          remove_exact('kernel/core/init.c','    ksu_module_load_filter_hook_exit();\n')
+          PY
+          ! grep -RFn 'module_load_filter' "$RESUKISU_UPSTREAM/kernel" "$RESUKISU_UPSTREAM/uapi"
+          ! grep -RFn 'block_modules' "$RESUKISU_UPSTREAM/kernel" "$RESUKISU_UPSTREAM/uapi"
+
+          import_patch="$AUDIT_DIR/03-p14r1-kernel-uapi.patch"
+          git -C "$RESUKISU_UPSTREAM" diff --binary "$RESUKISU_COMMON_BASE" -- kernel uapi > "$import_patch"
+          test -s "$import_patch"
+          rm -rf "$BASE_DIR/KernelSU"
+          git clone -q "$RESUKISU_REPO" "$BASE_DIR/KernelSU"
+          git -C "$BASE_DIR/KernelSU" checkout -q --detach "$RESUKISU_COMMON_BASE"
+          git -C "$BASE_DIR/KernelSU" reset --hard -q "$RESUKISU_COMMON_BASE"
+          git -C "$BASE_DIR/KernelSU" clean -fdx -q
+          git -C "$BASE_DIR/KernelSU" apply --check --whitespace=nowarn "$import_patch"
+          git -C "$BASE_DIR/KernelSU" apply --index --whitespace=nowarn "$import_patch"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+          import os
+          root=Path(os.environ['BASE_DIR'])/'KernelSU'
+          def ensure_include(rel, anchor):
+              p=root/rel; t=p.read_text(encoding='utf-8'); inc='#include <linux/ksu_hook_contract.h>'
+              if inc not in t:
+                  if anchor not in t: raise SystemExit('missing anchor '+rel)
+                  p.write_text(t.replace(anchor, anchor+'\n'+inc,1), encoding='utf-8')
+          ensure_include('kernel/feature/sucompat.h','#include "compat/kernel_compat.h"')
+          ensure_include('kernel/runtime/ksud_integration.c','#include <linux/version.h>')
+          ensure_include('kernel/supercall/supercall.c','#include <linux/anon_inodes.h>')
+          p=root/'kernel/Kbuild'; t=p.read_text(encoding='utf-8')
+          old=dedent('''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + 700)
+
+          KSU_TAG_NAME    := $(shell cd $(KSU_SRC); $(GIT_BIN) describe --abbrev=0 --tags 2>/dev/null || echo "v4.1.0")
+          KSU_COMMIT_SHA  := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+          ifneq ($(shell cd $(KSU_SRC); $(GIT_BIN) diff-index --quiet HEAD; echo $$?),0)
+          KSU_COMMIT_SHA  := $(KSU_COMMIT_SHA)-dirty
+          endif
+          KSU_BRANCH_NAME := $(shell cd $(KSU_SRC); $(GIT_BIN) branch --show-current 2>/dev/null || echo "unknown")''')
+          new=dedent(f'''\
+          KSU_LOCAL_VERSION := $(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)
+          CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := {os.environ['EXPECTED_KSU_VERSION']}
+          CLEAN_GEN1_UPSTREAM_TARGET := {os.environ['RESUKISU_TARGET']}
+          KSU_VERSION := $(CLEAN_GEN1_UPSTREAM_COMPAT_VERSION)
+
+          KSU_TAG_NAME    := v4.2.0-rc2
+          KSU_COMMIT_SHA  := 3d1185d8-p14r1
+          KSU_BRANCH_NAME := clean-gen1-p14r1''')
+          if old not in t: raise SystemExit('Kbuild identity block missing')
+          p.write_text(t.replace(old,new,1), encoding='utf-8')
+          PY
+          git -C "$BASE_DIR/KernelSU" add kernel uapi
+          test -z "$(git -C "$BASE_DIR/KernelSU" ls-files -u)"
+          grep -Fq "CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := $EXPECTED_KSU_VERSION" "$BASE_DIR/KernelSU/kernel/Kbuild"
+          grep -Fq "CLEAN_GEN1_UPSTREAM_TARGET := $RESUKISU_TARGET" "$BASE_DIR/KernelSU/kernel/Kbuild"
+          grep -Eq "KERNEL_SU_UAPI_VERSION = ${EXPECTED_KSU_UAPI};" "$BASE_DIR/KernelSU/uapi/supercall.h"
+          test ! -e "$BASE_DIR/KernelSU/kernel/feature/module_load_filter.c"
+          test "$(git -C "$BASE_DIR/KernelSU" hash-object kernel/manager/manager.c)" = "$RESUKISU_MANAGER_TARGET_BLOB"
+          echo 'P14R1_RESUKISU_SUBTREE=PASS' | tee "$AUDIT_DIR/03-resukisu-gate.txt"
+
+      - name: Reapply P13 outer hook and verify P14R1 contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$BASE_DIR" apply --check --whitespace=error --binary "$P13_PATCH"
+          git -C "$BASE_DIR" apply --index --whitespace=error --binary "$P13_PATCH"
+          git -C "$BASE_DIR" diff --cached --check
+          test "$(git -C "$BASE_DIR" write-tree)" = "$EXPECTED_P13_TREE"
+          grep -Fq 'ksu_handle_post_execve' "$BASE_DIR/fs/exec.c"
+          ! grep -Fq 'ksu_install_su_fd' "$BASE_DIR/fs/exec.c"
+          ! grep -Fq 'key_need_perm' "$BASE_DIR/include/linux/key.h"
+          grep -Fq 'session_keyring;' "$BASE_DIR/include/linux/cred.h"
+          grep -Fq 'LSM_HOOK_INIT(key_permission, ksu_handle_key_permission)' "$BASE_DIR/KernelSU/kernel/hook/lsm_hooks.c"
+          grep -Fq 'install_session_keyring_to_cred(ksu_cred, init_session_keyring);' "$BASE_DIR/KernelSU/kernel/compat/kernel_compat.c"
+          grep -Fq 'init_session_keyring = ksu_get_session_keyring(current_cred());' "$BASE_DIR/KernelSU/kernel/core/init.c"
+
+          git -C "$BASE_DIR" config user.name 'VEUX O45 Audit'
+          git -C "$BASE_DIR" config user.email 'veux-o45@invalid.local'
+          outer_tree="$(git -C "$BASE_DIR" write-tree)"
+          base_commit="$(printf '%s\n' 'O45 exact P14R1 integration base' | git -C "$BASE_DIR" commit-tree "$outer_tree" -p "$EXPECTED_VENDOR_SHA")"
+          git -C "$BASE_DIR" reset --hard "$base_commit"
+          KSU_TREE="$(git -C "$BASE_DIR/KernelSU" write-tree)"
+          echo "BASE_COMMIT=$base_commit" >> "$GITHUB_ENV"
+          echo "KSU_TREE=$KSU_TREE" >> "$GITHUB_ENV"
+          {
+            echo "P13_OUTER_TREE=$outer_tree"
+            echo "P14R1_KERNELSU_TREE=$KSU_TREE"
+            echo 'P13_POST_EXEC=PASS'
+            echo 'P14R1_KEYRING_MATRIX=PASS'
+          } | tee "$AUDIT_DIR/04-p14r1-integration.txt"
+
+      - name: Materialize exact proven 5.4.300 parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$BASE_DIR" worktree add -q --detach "$TARGET_DIR" "$BASE_COMMIT"
+          git -C "$TARGET_DIR" apply --check --whitespace=error --binary "$P300_PATCH"
+          git -C "$TARGET_DIR" apply --index --whitespace=error --binary "$P300_PATCH"
+          git -C "$TARGET_DIR" diff --cached --check
+          test "$(make -s -C "$TARGET_DIR" kernelversion)" = '5.4.300'
+          test "$(git -C "$TARGET_DIR" write-tree)" = "$EXPECTED_300_PRE_DEP_TREE"
+          rm -rf "$TARGET_DIR/KernelSU"
+          cp -a "$BASE_DIR/KernelSU" "$TARGET_DIR/KernelSU"
+          test "$(git -C "$TARGET_DIR/KernelSU" write-tree)" = "$KSU_TREE"
+
+          git -C "$TARGET_DIR" apply --check --whitespace=error "$PM_PATCH"
+          git -C "$TARGET_DIR" apply --index --whitespace=error "$PM_PATCH"
+          git -C "$TARGET_DIR" apply --check --whitespace=error "$DEP_PATCH"
+          git -C "$TARGET_DIR" apply --index --whitespace=error "$DEP_PATCH"
+          git -C "$TARGET_DIR" diff --cached --check
+          grep -Fq 'del_timer_sync(&req->rsk_timer)' "$TARGET_DIR/net/ipv4/inet_connection_sock.c"
+          ! grep -Fq 'timer_delete_sync(&req->rsk_timer)' "$TARGET_DIR/net/ipv4/inet_connection_sock.c"
+          grep -Fq 'needs_force_resume:1;' "$TARGET_DIR/include/linux/pm.h"
+          grep -Eq 'static[[:space:]]+inline[[:space:]]+size_t[[:space:]]+smci_size_add[[:space:]]*\(' "$TARGET_DIR/drivers/soc/qcom/smcinvoke.c"
+          echo 'PARENT_5.4.300_SOURCE=PASS' | tee "$AUDIT_DIR/05-parent-300.txt"
+
+      - name: Pin official v5.4.300 and v5.4.301 stable tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init -q "$STABLE_DIR"
+          git -C "$STABLE_DIR" remote add origin "$STABLE_REPO"
+          git -C "$STABLE_DIR" fetch -q --depth=1 origin \
+            refs/tags/v5.4.300:refs/tags/v5.4.300
+          git -C "$STABLE_DIR" fetch -q --depth=1 origin \
+            refs/tags/v5.4.301:refs/tags/v5.4.301
+          test "$(git -C "$STABLE_DIR" rev-parse refs/tags/v5.4.300)" = "$STABLE_300_TAG_OBJECT"
+          test "$(git -C "$STABLE_DIR" rev-parse 'refs/tags/v5.4.300^{commit}')" = "$STABLE_300_COMMIT"
+          test "$(git -C "$STABLE_DIR" rev-parse refs/tags/v5.4.301)" = "$STABLE_301_TAG_OBJECT"
+          test "$(git -C "$STABLE_DIR" rev-parse 'refs/tags/v5.4.301^{commit}')" = "$STABLE_301_COMMIT"
+          git -C "$STABLE_DIR" show -s --format='%H %s' "$STABLE_300_COMMIT" | tee "$AUDIT_DIR/06-stable-300.txt"
+          git -C "$STABLE_DIR" show -s --format='%H %s' "$STABLE_301_COMMIT" | tee "$AUDIT_DIR/06-stable-301.txt"
+          grep -Fxq "$STABLE_300_COMMIT Linux 5.4.300" "$AUDIT_DIR/06-stable-300.txt"
+          grep -Fxq "$STABLE_301_COMMIT Linux 5.4.301" "$AUDIT_DIR/06-stable-301.txt"
+
+      - name: Incrementally port official 5.4.300 to 5.4.301 with O40-proven conflict closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          delta="$AUDIT_DIR/06-300-to-301-name-status.tsv"
+          overlap="$AUDIT_DIR/06-vendor-overlap.txt"
+          conflicts="$AUDIT_DIR/06-merge-conflicts.txt"
+          docs_skipped="$AUDIT_DIR/06-nonruntime-documentation-skipped.txt"
+          : > "$overlap"
+          : > "$conflicts"
+          : > "$docs_skipped"
+
+          git -C "$STABLE_DIR" diff --name-status --no-renames \
+            "$STABLE_300_COMMIT" "$STABLE_301_COMMIT" | tee "$delta"
+          test -s "$delta"
+          awk -F '\t' '$1 != "M" { print "unsupported delta status: "$0 > "/dev/stderr"; bad=1 } END { exit bad }' "$delta"
+          test "$(wc -l < "$delta")" -eq 216
+
+          tmp="$RUNNER_TEMP/o46v2-merge"
+          rm -rf "$tmp"
+          mkdir -p "$tmp"
+          while IFS=$'\t' read -r status path; do
+            test "$status" = M
+            test -f "$TARGET_DIR/$path"
+            case "$path" in
+              Documentation/*)
+                echo "$path" >> "$docs_skipped"
+                continue
+                ;;
+            esac
+
+            safe="$(printf '%s' "$path" | sha256sum | awk '{print $1}')"
+            base="$tmp/$safe.base"
+            theirs="$tmp/$safe.theirs"
+            merged="$tmp/$safe.merged"
+            git -C "$STABLE_DIR" show "$STABLE_300_COMMIT:$path" > "$base"
+            git -C "$STABLE_DIR" show "$STABLE_301_COMMIT:$path" > "$theirs"
+
+            if cmp -s "$TARGET_DIR/$path" "$base"; then
+              cp "$theirs" "$TARGET_DIR/$path"
+              continue
+            fi
+
+            echo "$path" >> "$overlap"
+            set +e
+            git merge-file -p --marker-size=15 "$TARGET_DIR/$path" "$base" "$theirs" > "$merged"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              mv "$merged" "$TARGET_DIR/$path"
+            elif [ "$rc" -gt 0 ] && [ "$rc" -lt 128 ]; then
+              echo "$path" >> "$conflicts"
+              rm -f "$merged"
+            else
+              echo "git merge-file hard failure for $path rc=$rc" >&2
+              exit "$rc"
+            fi
+          done < "$delta"
+
+          LC_ALL=C sort -u -o "$overlap" "$overlap"
+          LC_ALL=C sort -u -o "$conflicts" "$conflicts"
+          LC_ALL=C sort -u -o "$docs_skipped" "$docs_skipped"
+
+          cat > "$AUDIT_DIR/06-nonruntime-documentation-expected.txt" <<'EOF'
+          Documentation/admin-guide/kernel-parameters.txt
+          Documentation/arm64/silicon-errata.rst
+          EOF
+          diff -u "$AUDIT_DIR/06-nonruntime-documentation-expected.txt" "$docs_skipped"
+
+          cat > "$AUDIT_DIR/06-conflicts-expected.txt" <<'EOF'
+          drivers/base/regmap/regmap.c
+          drivers/media/pci/ivtv/ivtv-streams.c
+          drivers/soc/qcom/rpmh-rsc.c
+          EOF
+          diff -u "$AUDIT_DIR/06-conflicts-expected.txt" "$conflicts"
+          test "$(wc -l < "$overlap")" -eq 40
+          test "$(wc -l < "$conflicts")" -eq 3
+          test "$(wc -l < "$docs_skipped")" -eq 2
+
+          # Conflict 1: regmap.c. O40 proved that P13 removed the bulk callback
+          # branch touched by the 300->301 stable change. Preserve the already
+          # integrated 5.4.300/P13 union instead of inventing a missing anchor.
+          regmap="$TARGET_DIR/drivers/base/regmap/regmap.c"
+          test "$(sha256sum "$regmap" | awk '{print $1}')" = "$EXPECTED_REGMAP_301_SHA256"
+          ! grep -Fq 'if (config && config->read && config->write)' "$regmap"
+          ! grep -Fq 'if (config->read && config->write)' "$regmap"
+          grep -Fq 'else if (!bus->read || !bus->write)' "$regmap"
+          {
+            echo 'PATH=drivers/base/regmap/regmap.c'
+            echo 'CLASSIFICATION=REGMAP_P13_REMOVED_BULK_CALLBACK_BRANCH_PRESERVE_SEMANTIC_RESOLUTION'
+            echo 'P13_REMOVED_BULK_CALLBACK_BRANCH=PRESERVED'
+            echo 'STABLE_REDUNDANT_NULLCHECK_CHANGE=INAPPLICABLE'
+            echo "CANDIDATE_SHA256=$EXPECTED_REGMAP_301_SHA256"
+            echo 'SOURCE_RESOLUTION=PASS'
+          } > "$AUDIT_DIR/06-regmap-o40-resolution.txt"
+
+          # Conflict 2: exact O40 IVTV P13 video-type + stable DMA API union.
+          ivtv="$TARGET_DIR/drivers/media/pci/ivtv/ivtv-streams.c"
+          test "$(sha256sum "$ivtv" | awk '{print $1}')" = "$EXPECTED_IVTV_300_SHA256"
+          ivtv_patch="$tmp/o40-ivtv-301.patch"
+          cat > "$ivtv_patch" <<'PATCH'
+          diff --git a/drivers/media/pci/ivtv/ivtv-streams.c b/drivers/media/pci/ivtv/ivtv-streams.c
+          --- a/drivers/media/pci/ivtv/ivtv-streams.c
+          +++ b/drivers/media/pci/ivtv/ivtv-streams.c
+          @@ -100,7 +100,7 @@
+           	{	/* IVTV_ENC_STREAM_TYPE_MPG */
+           		"encoder MPG",
+           		VFL_TYPE_GRABBER, 0,
+          -		PCI_DMA_FROMDEVICE, 0,
+          +		DMA_FROM_DEVICE, 0,
+           		V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_TUNER |
+           			V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_enc_fops
+          @@ -108,7 +108,7 @@
+           	{	/* IVTV_ENC_STREAM_TYPE_YUV */
+           		"encoder YUV",
+           		VFL_TYPE_GRABBER, IVTV_V4L2_ENC_YUV_OFFSET,
+          -		PCI_DMA_FROMDEVICE, 0,
+          +		DMA_FROM_DEVICE, 0,
+           		V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_TUNER |
+           			V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_enc_fops
+          @@ -116,7 +116,7 @@
+           	{	/* IVTV_ENC_STREAM_TYPE_VBI */
+           		"encoder VBI",
+           		VFL_TYPE_VBI, 0,
+          -		PCI_DMA_FROMDEVICE, 0,
+          +		DMA_FROM_DEVICE, 0,
+           		V4L2_CAP_VBI_CAPTURE | V4L2_CAP_SLICED_VBI_CAPTURE | V4L2_CAP_TUNER |
+           			V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_enc_fops
+          @@ -124,42 +124,42 @@
+           	{	/* IVTV_ENC_STREAM_TYPE_PCM */
+           		"encoder PCM",
+           		VFL_TYPE_GRABBER, IVTV_V4L2_ENC_PCM_OFFSET,
+          -		PCI_DMA_FROMDEVICE, 0,
+          +		DMA_FROM_DEVICE, 0,
+           		V4L2_CAP_TUNER | V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_enc_fops
+           	},
+           	{	/* IVTV_ENC_STREAM_TYPE_RAD */
+           		"encoder radio",
+           		VFL_TYPE_RADIO, 0,
+          -		PCI_DMA_NONE, 1,
+          +		DMA_NONE, 1,
+           		V4L2_CAP_RADIO | V4L2_CAP_TUNER,
+           		&ivtv_v4l2_radio_fops
+           	},
+           	{	/* IVTV_DEC_STREAM_TYPE_MPG */
+           		"decoder MPG",
+           		VFL_TYPE_GRABBER, IVTV_V4L2_DEC_MPG_OFFSET,
+          -		PCI_DMA_TODEVICE, 0,
+          +		DMA_TO_DEVICE, 0,
+           		V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_dec_fops
+           	},
+           	{	/* IVTV_DEC_STREAM_TYPE_VBI */
+           		"decoder VBI",
+           		VFL_TYPE_VBI, IVTV_V4L2_DEC_VBI_OFFSET,
+          -		PCI_DMA_NONE, 1,
+          +		DMA_NONE, 1,
+           		V4L2_CAP_SLICED_VBI_CAPTURE | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_enc_fops
+           	},
+           	{	/* IVTV_DEC_STREAM_TYPE_VOUT */
+           		"decoder VOUT",
+           		VFL_TYPE_VBI, IVTV_V4L2_DEC_VOUT_OFFSET,
+          -		PCI_DMA_NONE, 1,
+          +		DMA_NONE, 1,
+           		V4L2_CAP_SLICED_VBI_OUTPUT | V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_dec_fops
+           	},
+           	{	/* IVTV_DEC_STREAM_TYPE_YUV */
+           		"decoder YUV",
+           		VFL_TYPE_GRABBER, IVTV_V4L2_DEC_YUV_OFFSET,
+          -		PCI_DMA_TODEVICE, 0,
+          +		DMA_TO_DEVICE, 0,
+           		V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_AUDIO | V4L2_CAP_READWRITE,
+           		&ivtv_v4l2_dec_fops
+           	}
+          @@ -179,7 +179,7 @@
+           	s->vdev.device_caps = ivtv_stream_info[type].v4l2_caps;
+           
+           	if (ivtv_stream_info[type].pio)
+          -		s->dma = PCI_DMA_NONE;
+          +		s->dma = DMA_NONE;
+           	else
+           		s->dma = ivtv_stream_info[type].dma;
+           	s->buf_size = itv->stream_buf_size[type];
+          @@ -217,7 +217,7 @@
+           
+           	/* User explicitly selected 0 buffers for these streams, so don't
+           	   create them. */
+          -	if (ivtv_stream_info[type].dma != PCI_DMA_NONE &&
+          +	if (ivtv_stream_info[type].dma != DMA_NONE &&
+           	    itv->options.kilobytes[type] == 0) {
+           		IVTV_INFO("Disabled %s device\n", ivtv_stream_info[type].name);
+           		return 0;
+          PATCH
+          # Patch bytes are frozen to the O40 evidence.
+          test "$(sha256sum "$ivtv_patch" | awk '{print $1}')" = "$EXPECTED_IVTV_O40_PATCH_SHA256"
+          git -C "$TARGET_DIR" apply --check --whitespace=error "$ivtv_patch"
+          git -C "$TARGET_DIR" apply --whitespace=error "$ivtv_patch"
+          test "$(sha256sum "$ivtv" | awk '{print $1}')" = "$EXPECTED_IVTV_301_SHA256"
+
+          # Conflict 3: exact O40 RPMH unconditional-trigger + vendor IRQ union.
+          rpmh="$TARGET_DIR/drivers/soc/qcom/rpmh-rsc.c"
+          test "$(sha256sum "$rpmh" | awk '{print $1}')" = "$EXPECTED_RPMH_300_SHA256"
+          rpmh_patch="$tmp/o40-rpmh-301.patch"
+          cat > "$rpmh_patch" <<'PATCH'
+          diff --git a/drivers/soc/qcom/rpmh-rsc.c b/drivers/soc/qcom/rpmh-rsc.c
+          --- a/drivers/soc/qcom/rpmh-rsc.c
+          +++ b/drivers/soc/qcom/rpmh-rsc.c
+          @@ -294,13 +294,11 @@
+           		ipc_log_string(drv->ipc_log_ctx,
+           			       "IRQ response: m=%d err=%d", i, err);
+           
+          -		/*
+          -		 * if wake tcs was re-purposed for sending active
+          -		 * votes, clear AMC trigger & enable modes and
+          +		/* Clear AMC trigger & enable modes and
+           		 * disable interrupt for this TCS
+           		 */
+          +		__tcs_trigger(drv, i, false);
+           		if (!drv->tcs[ACTIVE_TCS].num_tcs) {
+          -			__tcs_trigger(drv, i, false);
+           			/*
+           			 * Disable interrupt for this TCS to avoid being
+           			 * spammed with interrupts coming when the solver
+          PATCH
+          test "$(sha256sum "$rpmh_patch" | awk '{print $1}')" = "$EXPECTED_RPMH_O40_PATCH_SHA256"
+          git -C "$TARGET_DIR" apply --check --whitespace=error "$rpmh_patch"
+          git -C "$TARGET_DIR" apply --whitespace=error "$rpmh_patch"
+          test "$(sha256sum "$rpmh" | awk '{print $1}')" = "$EXPECTED_RPMH_301_SHA256"
+
+          ! grep -RFn --include='*.c' --include='*.h' --include='Makefile' \
+            -e '<<<<<<<' -e '=======' -e '>>>>>>>' "$TARGET_DIR"
+          test "$(make -s -C "$TARGET_DIR" kernelversion)" = '5.4.301'
+          grep -Fq '#define ARM_CPU_PART_NEOVERSE_V3AE' "$TARGET_DIR/arch/arm64/include/asm/cputype.h"
+          grep -Fq '#define MIDR_NEOVERSE_V3AE' "$TARGET_DIR/arch/arm64/include/asm/cputype.h"
+          grep -Fq 'target_list && list_empty(&node->work.entry)' "$TARGET_DIR/drivers/android/binder.c"
+          ! grep -Fq 'PCI_DMA_FROMDEVICE' "$ivtv"
+          ! grep -Fq 'PCI_DMA_TODEVICE' "$ivtv"
+          ! grep -Fq 'PCI_DMA_NONE' "$ivtv"
+          grep -Fq '__tcs_trigger(drv, i, false);' "$rpmh"
+          grep -Fq 'USB_DEVICE(0x12d1, 0x15c1)' "$TARGET_DIR/drivers/usb/core/quirks.c"
+          grep -Fq 'ksu_handle_post_execve' "$TARGET_DIR/fs/exec.c"
+          ! grep -RFn 'module_load_filter' "$TARGET_DIR/KernelSU/kernel" "$TARGET_DIR/KernelSU/uapi"
+
+          {
+            echo 'OFFICIAL_300_TO_301_DELTA=PASS'
+            echo 'O40_CONFLICT_RESOLUTION_REUSE=PASS'
+            echo "DELTA_PATHS=$(wc -l < "$delta")"
+            echo "VENDOR_OVERLAP_PATHS=$(wc -l < "$overlap")"
+            echo "SEMANTIC_CONFLICTS=$(wc -l < "$conflicts")"
+            echo "NONRUNTIME_DOCUMENTATION_SKIPPED=$(wc -l < "$docs_skipped")"
+            echo "REGMAP_SHA256=$(sha256sum "$regmap" | awk '{print $1}')"
+            echo "IVTV_SHA256=$(sha256sum "$ivtv" | awk '{print $1}')"
+            echo "RPMH_SHA256=$(sha256sum "$rpmh" | awk '{print $1}')"
+            echo 'TARGET_5.4.301_SOURCE=PASS'
+          } | tee "$AUDIT_DIR/06-port-301-result.txt"
+
+      - name: Install exact proven Android clang-r416183b
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_PREBUILT_COMMIT}/clang-r416183b.tar.gz"
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/clang-r416183b.tar.gz"
+          tar -xzf "$RUNNER_TEMP/clang-r416183b.tar.gz" -C "$TOOLCHAIN_DIR"
+          for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+            test -x "$TOOLCHAIN_DIR/bin/$tool"
+          done
+          "$TOOLCHAIN_DIR/bin/clang" --version | tee "$AUDIT_DIR/07-clang.txt"
+
+      - name: Compile and regression-audit 5.4.301
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$TOOLCHAIN_DIR/bin:$PATH"
+          export KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP KBUILD_BUILD_VERSION SOURCE_DATE_EPOCH
+          rm -rf "$OUT301"
+          make -C "$TARGET_DIR" O="$OUT301" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            veux_defconfig 2>&1 | tee "$AUDIT_DIR/08-config.log"
+          for q in \
+            'CONFIG_KSU=y' \
+            'CONFIG_KSU_SUSFS=y' \
+            '# CONFIG_KSU_MANUAL_HOOK is not set' \
+            'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
+            'CONFIG_LOCALVERSION="-qgki"'; do
+            grep -Fxq "$q" "$OUT301/.config"
+          done
+          config_sha="$(sha256sum "$OUT301/.config" | awk '{print $1}')"
+          test "$config_sha" = "$EXPECTED_CONFIG_301_SHA256"
+
+          make -C "$TARGET_DIR" -j"$(nproc)" O="$OUT301" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            KCFLAGS="$EFFECTIVE_KCFLAGS" Image dtbs 2>&1 | tee "$AUDIT_DIR/08-build.log"
+
+          image="$OUT301/arch/arm64/boot/Image"
+          dtb="$OUT301/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+          test -s "$image"; test -s "$dtb"
+          test "$(stat -c '%s' "$image")" -gt 20000000
+          release="$(make -s -C "$TARGET_DIR" O="$OUT301" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 kernelrelease)"
+          test "$release" = "$EXPECTED_RELEASE_301"
+          test "$(sha256sum "$dtb" | awk '{print $1}')" = "$EXPECTED_DTB_SHA256"
+
+          strings -a "$image" > "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq "Linux version $EXPECTED_RELEASE_301 ($KBUILD_BUILD_USER@$KBUILD_BUILD_HOST)" "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq "$RESUKISU_IMAGE_IDENTITY" "$AUDIT_DIR/08-image-strings.txt"
+          grep -Fq 'susfs' "$AUDIT_DIR/08-image-strings.txt"
+
+          python3 - "$AUDIT_DIR/08-build.log" <<'PY'
+          from pathlib import Path
+          import re, sys
+          lines=Path(sys.argv[1]).read_text(errors='replace').splitlines()
+          got=[]
+          for line in lines:
+              if 'warning:' not in line.lower(): continue
+              m=re.search(r'((?:drivers|fs|net)/[^:]+:\d+:\d+: warning: .*)$', line)
+              got.append(m.group(1) if m else line.strip())
+          expected=[
+          "drivers/clk/qcom/clk-rpmh.c:283:14: warning: comparison of distinct pointer types ('typeof (cmd_state) *' (aka 'unsigned int *') and 'typeof (16383) *' (aka 'int *')) [-Wcompare-distinct-pointer-types]",
+          "fs/namei.c:3320:12: warning: unused function 'atomic_open' [-Wunused-function]",
+          "drivers/cpufreq/qcom-cpufreq-hw.c:551:23: warning: unused variable 'c' [-Wunused-variable]",
+          "net/ipv4/tcp_output.c:2028:14: warning: comparison of distinct pointer types ('typeof (srtt_in_ns >> 1) *' (aka 'unsigned long long *') and 'typeof (1000000L) *' (aka 'long *')) [-Wcompare-distinct-pointer-types]",
+          ]
+          if sorted(got) != sorted(expected):
+              raise SystemExit('warning fingerprint changed\nGOT:\n'+'\n'.join(sorted(got))+'\nEXPECTED:\n'+'\n'.join(sorted(expected)))
+          print('WARNING_REGRESSION_GATE=PASS')
+          PY
+          ! grep -Ei '(^|[^A-Za-z])(error:|fatal error:|undefined reference|ld\.lld: error:)' "$AUDIT_DIR/08-build.log"
+
+          image_sha="$(sha256sum "$image" | awk '{print $1}')"
+          test "$image_sha" != "$REFERENCE_IMAGE_300_SHA256"
+          test "$image_sha" != "$REFERENCE_IMAGE_302_SHA256"
+          mkdir -p "$DIST_DIR/5.4.301"
+          cp "$image" "$DIST_DIR/5.4.301/Image"
+          cp "$dtb" "$DIST_DIR/5.4.301/veux.dtb"
+          cp "$OUT301/.config" "$DIST_DIR/5.4.301/config"
+          (cd "$DIST_DIR/5.4.301" && sha256sum Image veux.dtb config > SHA256SUMS.txt)
+          {
+            echo "KERNEL_RELEASE=$release"
+            echo "RESUKISU_VERSION=$EXPECTED_KSU_VERSION"
+            echo "RESUKISU_COMMIT=$RESUKISU_TARGET"
+            echo "UAPI=$EXPECTED_KSU_UAPI"
+            echo 'SUSFS=2.3.0'
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+            echo 'P14R1_KEYRING_MATRIX=PASS'
+            echo 'P13_POST_EXEC=PASS'
+            echo 'WARNING_REGRESSION_GATE=PASS'
+            echo "IMAGE_BYTES=$(stat -c '%s' "$image")"
+            echo "IMAGE_SHA256=$image_sha"
+            echo "CONFIG_SHA256=$config_sha"
+            echo "DTB_SHA256=$(sha256sum "$dtb" | awk '{print $1}')"
+            echo 'SOURCE_PORT_PASS=PASS'
+            echo 'COMPILE_GREEN_CANDIDATE=PASS'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } | tee "$AUDIT_DIR/09-result.txt"
+          echo 'O45_BUILD_PASS=1' >> "$GITHUB_ENV"
+
+      - name: Freeze verified 5.4.301 source lineage support kit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          trap 'rc=$?; { echo "LINEAGE_FREEZE_PASS=FAIL"; echo "EXIT_CODE=$rc"; echo "FAILED_LINE=${BASH_LINENO[0]:-unknown}"; printf "FAILED_COMMAND=%q\n" "$BASH_COMMAND"; } > "$AUDIT_DIR/10-lineage-freeze-failure.txt"; exit "$rc"' ERR
+          grep -Fxq 'SOURCE_PORT_PASS=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'COMPILE_GREEN_CANDIDATE=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fqx "IMAGE_SHA256=$O45V2_IMAGE_SHA256" "$AUDIT_DIR/09-result.txt"
+
+          support="$RUNNER_TEMP/$SUPPORT301_NAME"
+          predep="$RUNNER_TEMP/o46v2-predep-301"
+          verify="$RUNNER_TEMP/o46v2-support-replay"
+          rm -rf "$support" "$predep" "$verify"
+          mkdir -p "$support/source" "$support/deps" "$DIST_DIR/lineage"
+
+          delta="$AUDIT_DIR/06-300-to-301-name-status.tsv"
+          test -s "$delta"
+          test "$(wc -l < "$delta")" -eq 216
+
+          # The PM and timer/sizeadd closure patches are intentionally frozen as
+          # separate dependencies. Prove that none of their target paths is part
+          # of the official 5.4.300 -> 5.4.301 stable delta before constructing
+          # the pre-dependency 5.4.301 tree.
+          for dep_patch in "$PM_PATCH" "$DEP_PATCH"; do
+            while IFS= read -r dep_path; do
+              test -n "$dep_path"
+              if awk -F '\t' -v p="$dep_path" '$2 == p { found=1 } END { exit !found }' "$delta"; then
+                echo "dependency path unexpectedly overlaps stable delta: $dep_path" >&2
+                exit 1
+              fi
+            done < <(git apply --numstat "$dep_patch" | awk -F '\t' '{print $3}' | LC_ALL=C sort -u)
+          done
+
+          # Build an independent pre-dependency 5.4.301 source tree. This avoids
+          # reverse-applying 5.4.300 dependency patches to an already ported
+          # 5.4.301 working tree, which was the brittle O46-v1 freeze operation.
+          git -C "$BASE_DIR" worktree add -q --detach "$predep" "$BASE_COMMIT"
+          git -C "$predep" apply --check --whitespace=error --binary "$P300_PATCH"
+          git -C "$predep" apply --index --whitespace=error --binary "$P300_PATCH"
+          git -C "$predep" diff --cached --check
+          test "$(make -s -C "$predep" kernelversion)" = '5.4.300'
+          test "$(git -C "$predep" write-tree)" = "$EXPECTED_300_PRE_DEP_TREE"
+
+          copied=0
+          docs=0
+          while IFS=$'\t' read -r status path; do
+            test "$status" = M
+            case "$path" in
+              Documentation/*)
+                docs=$((docs + 1))
+                continue
+                ;;
+            esac
+            test -f "$TARGET_DIR/$path"
+            test -f "$predep/$path"
+            cp -a "$TARGET_DIR/$path" "$predep/$path"
+            copied=$((copied + 1))
+          done < "$delta"
+          test "$docs" -eq 2
+          test "$copied" -eq 214
+          test "$(make -s -C "$predep" kernelversion)" = '5.4.301'
+
+          # Re-check all three O40-proven semantic conflict closures in the
+          # independent pre-dependency tree.
+          test "$(sha256sum "$predep/drivers/base/regmap/regmap.c" | awk '{print $1}')" = "$EXPECTED_REGMAP_301_SHA256"
+          test "$(sha256sum "$predep/drivers/media/pci/ivtv/ivtv-streams.c" | awk '{print $1}')" = "$EXPECTED_IVTV_301_SHA256"
+          test "$(sha256sum "$predep/drivers/soc/qcom/rpmh-rsc.c" | awk '{print $1}')" = "$EXPECTED_RPMH_301_SHA256"
+          ! grep -Fq 'PCI_DMA_FROMDEVICE' "$predep/drivers/media/pci/ivtv/ivtv-streams.c"
+          grep -Fq '__tcs_trigger(drv, i, false);' "$predep/drivers/soc/qcom/rpmh-rsc.c"
+          grep -Fq 'ksu_handle_post_execve' "$predep/fs/exec.c"
+          ! grep -RFn 'module_load_filter' "$TARGET_DIR/KernelSU/kernel" "$TARGET_DIR/KernelSU/uapi"
+
+          # The separate dependency patches must be applicable to this frozen
+          # pre-dependency source exactly as forward patches.
+          git -C "$predep" apply --check --whitespace=error "$PM_PATCH"
+          git -C "$predep" apply --check --whitespace=error "$DEP_PATCH"
+
+          git -C "$predep" add -A -- . ':!KernelSU'
+          predep_tree="$(git -C "$predep" write-tree)"
+          p301="$support/source/P13-to-5.4.301-AUTO-MERGED-PARTIAL.patch"
+          git -C "$predep" diff --binary HEAD -- . ':!KernelSU' > "$p301"
+          test -s "$p301"
+          git -C "$predep" diff --check HEAD -- . ':!KernelSU'
+
+          # Record the exact compile-green outer tree without mutating its files.
+          git -C "$TARGET_DIR" add -A -- . ':!KernelSU'
+          git -C "$TARGET_DIR" diff --cached --check
+          final_tree="$(git -C "$TARGET_DIR" write-tree)"
+
+          # Apply the separately frozen build dependencies to the independent
+          # pre-dependency tree and prove that it becomes the compile-green tree.
+          git -C "$predep" apply --index --whitespace=error "$PM_PATCH"
+          git -C "$predep" apply --index --whitespace=error "$DEP_PATCH"
+          git -C "$predep" diff --cached --check
+          test "$(git -C "$predep" write-tree)" = "$final_tree"
+          grep -Fq 'needs_force_resume:1;' "$predep/include/linux/pm.h"
+          grep -Eq 'static[[:space:]]+inline[[:space:]]+size_t[[:space:]]+smci_size_add[[:space:]]*\(' "$predep/drivers/soc/qcom/smcinvoke.c"
+
+          cp "$P13_PATCH" "$support/source/07-P13-post-exec.patch"
+          cp "$PM_PATCH" "$support/deps/06-pm-runtime-needs-force-resume-5.4.301.patch"
+          cp "$DEP_PATCH" "$support/deps/08-timer-sizeadd-dependency-5.4.301.patch"
+          cp "$AUDIT_DIR/06-port-301-result.txt" "$support/PORT_RESULT.txt"
+          cp "$AUDIT_DIR/09-result.txt" "$support/COMPILE_RESULT.txt"
+
+          cat > "$support/PROVENANCE.txt" <<EOF
+          repo=$GITHUB_REPOSITORY
+          freeze_workflow=U5-O46-V2
+          freeze_run=$GITHUB_RUN_ID
+          freeze_head_sha=$GITHUB_SHA
+          source_green_run=$O45V2_RUN_ID
+          source_green_head_sha=$O45V2_HEAD_SHA
+          source_green_artifact_sha256=$O45V2_ARTIFACT_SHA256
+          source_green_image_sha256=$O45V2_IMAGE_SHA256
+          stable_300_commit=$STABLE_300_COMMIT
+          stable_301_commit=$STABLE_301_COMMIT
+          resukisu_target=$RESUKISU_TARGET
+          ksu_version=$EXPECTED_KSU_VERSION
+          uapi=$EXPECTED_KSU_UAPI
+          susfs=2.3.0
+          module_load_filter=EXCLUDED
+          p13_base_commit=$BASE_COMMIT
+          p13_outer_tree=$P13_OUTER_TREE
+          source_301_pre_dependency_tree=$predep_tree
+          source_301_final_tree=$final_tree
+          EOF
+
+          # Independent replay from a second fresh P13 worktree. This proves the
+          # generated support kit, not merely the scratch tree used to create it.
+          git -C "$BASE_DIR" worktree add -q --detach "$verify" "$BASE_COMMIT"
+          git -C "$verify" apply --check --whitespace=error --binary "$p301"
+          git -C "$verify" apply --index --whitespace=error --binary "$p301"
+          git -C "$verify" diff --cached --check
+          test "$(make -s -C "$verify" kernelversion)" = '5.4.301'
+          test "$(git -C "$verify" write-tree)" = "$predep_tree"
+          git -C "$verify" apply --check --whitespace=error "$support/deps/06-pm-runtime-needs-force-resume-5.4.301.patch"
+          git -C "$verify" apply --index --whitespace=error "$support/deps/06-pm-runtime-needs-force-resume-5.4.301.patch"
+          git -C "$verify" apply --check --whitespace=error "$support/deps/08-timer-sizeadd-dependency-5.4.301.patch"
+          git -C "$verify" apply --index --whitespace=error "$support/deps/08-timer-sizeadd-dependency-5.4.301.patch"
+          git -C "$verify" diff --cached --check
+          test "$(git -C "$verify" write-tree)" = "$final_tree"
+          grep -Fq 'ksu_handle_post_execve' "$verify/fs/exec.c"
+          grep -Fq '#define ARM_CPU_PART_NEOVERSE_V3AE' "$verify/arch/arm64/include/asm/cputype.h"
+          ! grep -Fq 'PCI_DMA_FROMDEVICE' "$verify/drivers/media/pci/ivtv/ivtv-streams.c"
+          grep -Fq '__tcs_trigger(drv, i, false);' "$verify/drivers/soc/qcom/rpmh-rsc.c"
+          grep -Fq 'needs_force_resume:1;' "$verify/include/linux/pm.h"
+          grep -Eq 'static[[:space:]]+inline[[:space:]]+size_t[[:space:]]+smci_size_add[[:space:]]*\(' "$verify/drivers/soc/qcom/smcinvoke.c"
+
+          (
+            cd "$support"
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          ) | tee "$AUDIT_DIR/10-support-internal-sha256.txt"
+
+          support_zip="$DIST_DIR/lineage/${SUPPORT301_NAME}.zip"
+          (
+            cd "$RUNNER_TEMP"
+            zip -X -q -r "$support_zip" "$SUPPORT301_NAME"
+          )
+          unzip -t "$support_zip" >/dev/null
+          support_sha="$(sha256sum "$support_zip" | awk '{print $1}')"
+          support_size="$(stat -c '%s' "$support_zip")"
+          {
+            echo 'LINEAGE_FREEZE_PASS=PASS'
+            echo 'FREEZE_METHOD=FRESH_PREDEP_SCRATCH_PLUS_INDEPENDENT_REPLAY'
+            echo "SUPPORT_NAME=$SUPPORT301_NAME"
+            echo "SUPPORT_SHA256=$support_sha"
+            echo "SUPPORT_BYTES=$support_size"
+            echo "SOURCE_301_PRE_DEPENDENCY_TREE=$predep_tree"
+            echo "SOURCE_301_FINAL_TREE=$final_tree"
+            echo "P301_PATCH_SHA256=$(sha256sum "$p301" | awk '{print $1}')"
+            echo "P13_PATCH_SHA256=$(sha256sum "$support/source/07-P13-post-exec.patch" | awk '{print $1}')"
+            echo "PM301_PATCH_SHA256=$(sha256sum "$support/deps/06-pm-runtime-needs-force-resume-5.4.301.patch" | awk '{print $1}')"
+            echo "TIMER_SIZEADD301_PATCH_SHA256=$(sha256sum "$support/deps/08-timer-sizeadd-dependency-5.4.301.patch" | awk '{print $1}')"
+          } | tee "$AUDIT_DIR/10-lineage-freeze-result.txt"
+          rm -f "$AUDIT_DIR/10-lineage-freeze-failure.txt"
+          trap - ERR
+          echo 'O46_LINEAGE_FREEZE_PASS=1' >> "$GITHUB_ENV"
+
+      - name: Prepare immutable evidence manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR" "$DIST_DIR"
+          {
+            echo 'WORKFLOW=U5-O46-V2-5.4.301-LINEAGE-FREEZE'
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+            echo "SUPPORT_KIT_SHA256=$SUPPORT_KIT_SHA256"
+            echo "RESTORE_KIT_SHA256=$RESTORE_KIT_SHA256"
+            echo "STABLE_300_COMMIT=$STABLE_300_COMMIT"
+            echo "STABLE_301_COMMIT=$STABLE_301_COMMIT"
+            echo "RESUKISU_TARGET=$RESUKISU_TARGET"
+            echo "O45V2_RUN_ID=$O45V2_RUN_ID"
+            echo "O45V2_ARTIFACT_SHA256=$O45V2_ARTIFACT_SHA256"
+            echo 'DEVICE_PASS=NO'
+          } > "$AUDIT_DIR/98-manifest.txt"
+          (
+            cd "$GITHUB_WORKSPACE"
+            find u5-o46-audit u5-o46-dist -type f ! -name '99-SHA256SUMS.txt' -print0 | \
+              sort -z | xargs -0 -r sha256sum
+          ) > "$AUDIT_DIR/99-SHA256SUMS.txt"
+
+      - name: Upload O46 lineage-freeze evidence, Image and support kit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-5.4.301-ReSukiSU-35157-P14R1-O46V2-LINEAGE-${{ github.run_id }}
+          path: |
+            u5-o46-audit
+            u5-o46-dist
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Final real GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${O45_BUILD_PASS:-0}" = '1'
+          test "${O46_LINEAGE_FREEZE_PASS:-0}" = '1'
+          grep -Fxq 'TARGET_5.4.301_SOURCE=PASS' "$AUDIT_DIR/06-port-301-result.txt"
+          grep -Fxq 'O40_CONFLICT_RESOLUTION_REUSE=PASS' "$AUDIT_DIR/06-port-301-result.txt"
+          grep -Fxq 'SOURCE_PORT_PASS=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'COMPILE_GREEN_CANDIDATE=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'P14R1_KEYRING_MATRIX=PASS' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'PACKAGE_PASS=NO' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'DEVICE_PASS=NO' "$AUDIT_DIR/09-result.txt"
+          grep -Fxq 'LINEAGE_FREEZE_PASS=PASS' "$AUDIT_DIR/10-lineage-freeze-result.txt"
+          test -s "$DIST_DIR/lineage/${SUPPORT301_NAME}.zip"
+          unzip -t "$DIST_DIR/lineage/${SUPPORT301_NAME}.zip" >/dev/null
+          echo 'O46V2_FINAL=REAL_SOURCE_COMPILE_AND_LINEAGE_FREEZE_GREEN_CANDIDATE' 
