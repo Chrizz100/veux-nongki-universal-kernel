@@ -1,0 +1,725 @@
+name: VEUX U6-O53 v1 All Six ReSukiSU 35158 Static Boot Audit
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u6-o53-v1-static-boot-35158-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  O52_RUN_ID: '35497490635'
+  O52_HEAD_SHA: f569708ff1ad8c53aaf6cefd5a3ca763ceac37ff
+  O52_ARTIFACT_ID: '10601347053'
+  O52_ARTIFACT_NAME: VEUX-U6-O52V1-ReSukiSU-35158-ALL-SIX-AK3-35497490635
+  O52_ARTIFACT_SHA256: 0c1244aec5a60f42c232611df0e05d32b95898afdca50a9baea81dae0e72590b
+
+  RESUKISU_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_SHORT: 6d18926a
+  RESUKISU_VERSION: '35158'
+  RESUKISU_UAPI: '4'
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+
+  IMAGE_SHA_274: 4959838b9cc49f693080e60b917cc839b5bd873e4f38b20c8d39d72973b8a85d
+  IMAGE_SHA_292: cebdc135d154e88f8f8c08b3e44181470c56a45f054537e96a5d1b6dbcca952a
+  IMAGE_SHA_293: 7d3b0f6200a1cecb0d6675318fc35f21e8bc8657b67437c1382a3ef4d735919d
+  IMAGE_SHA_300: 09bf533d83c3c140b8c7837883ced6291615e5bfc42efa51c4dc298a982394e0
+  IMAGE_SHA_301: 4de18f2ef3ca32a59e06380309bbef8f061b7729543dac53304c4f985ff5e394
+  IMAGE_SHA_302: faf2bac3e43e1e05f4703cef69158f9c18961a572d8e8789999bd0e0cb073761
+
+  IMAGE_BYTES_274: '29843968'
+  IMAGE_BYTES_292: '33925632'
+  IMAGE_BYTES_293: '33925632'
+  IMAGE_BYTES_300: '29911552'
+  IMAGE_BYTES_301: '29911552'
+  IMAGE_BYTES_302: '29911552'
+
+  AK3_SHA_274: 3e5851bfc63bc817d9b10ee81c154eb51f83bad0f0d9fb767018019c772f6f93
+  AK3_SHA_292: 9df5b4533b9b933825fc4e318861ff575fdc793086c4c65e7696a5ae35099fe7
+  AK3_SHA_293: 404f55333f2397398967414bc354d9dd439f5c8ecc61ded601f7d804ac74d777
+  AK3_SHA_300: 8340c3798b613d64fddb2c7e601bab843438932c305e05272a5b252d163f9069
+  AK3_SHA_301: a55369a58050252fa43990e5e9202c228d066f4e109dae4a7d005c2696667366
+  AK3_SHA_302: a0b3edc93d7c5d04f5a08a9d889eda92b1c01a68651b413a5158b84d0e48312d
+
+  BASE_BOOT_URL: https://github.com/Chrizz100/veux-nongki-universal-kernel/releases/download/v1.0.0-beta1/VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img
+  BASE_BOOT_SHA256: b79d121003e9abb12962eaf44ff56aa4c66588d2245ed09d8325e3c39fe67e65
+  BASE_KERNEL_SHA256: 67807748edd57e9fa714d444a39fccf54d88b95c92d54de029b4c12bc868345a
+  BASE_KERNEL_BYTES: '29911552'
+  RAW_STOCK_RAMDISK_SHA256: 0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a
+  DECODED_STOCK_RAMDISK_SHA256: d3c0e26ce76ab272a9c7bfd53ad3b0f57754e8eb9a30085abfbacf180c2638e5
+  BOOT_PARTITION_SIZE: '134217728'
+  EXPECTED_HEADER_VERSION: '3'
+  BOOT_PAGE_SIZE: '4096'
+
+  MAGISK_APK_URL: https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
+  MAGISK_APK_SHA256: e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5
+
+  AVB_REPO: https://android.googlesource.com/platform/external/avb
+  AVB_COMMIT: de53827b226bccef7407e4c253b0152e8d9f8e04
+
+jobs:
+  static-boot:
+    name: Static boot all six ReSukiSU 35158 AK3 packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Repository identity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout current project read-only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install static-boot dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl file git jq python3 unzip zip
+
+      - name: Initialize O53 workspace and helper scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$GITHUB_WORKSPACE/o53-aggregate" "$RUNNER_TEMP/o53-work" "$RUNNER_TEMP/o52-source"
+          rm -f "$RUNNER_TEMP/o52-source.zip"
+          mkdir -p \
+            "$GITHUB_WORKSPACE/o53-aggregate/boots" \
+            "$GITHUB_WORKSPACE/o53-aggregate/audit" \
+            "$RUNNER_TEMP/o53-work" \
+            "$RUNNER_TEMP/o52-source"
+
+          cat > "$GITHUB_WORKSPACE/o53-aggregate/audit/00-PLAN.txt" <<'EOF'
+          VEUX U6-O53 v1
+          Source authority: exact O52 GREEN package aggregate.
+          Boot layout authority: proven 5.4.302 Android 13 boot-v3 BOOTTEST image.
+          Kernel payload only is replaced.
+          Raw and decoded stock ramdisk identity must remain exact.
+          Header-v3 bytes must remain identical except kernel_size when image size changes.
+          AVB hash footer is regenerated with preserved salt and properties.
+          PACKAGE_PASS=YES_FROM_O52
+          STATIC_BOOT_PATH_PASS=PASS only after all static gates.
+          DEVICE_PASS=NO until real-device test.
+          EOF
+
+          cat > "$RUNNER_TEMP/o53-expected-size.py" <<'PY'
+          import sys
+          kernel, ramdisk, page = map(int, sys.argv[1:])
+          align = lambda n: ((n + page - 1) // page) * page
+          print(page + align(kernel) + align(ramdisk))
+          PY
+
+          cat > "$RUNNER_TEMP/o53-base-header.py" <<'PY'
+          import struct, sys
+          path = sys.argv[1]
+          expected_ver = int(sys.argv[2])
+          expected_kernel = int(sys.argv[3])
+          page = int(sys.argv[4])
+          b = open(path, 'rb').read(page)
+          if len(b) != page or b[:8] != b'ANDROID!':
+              raise SystemExit('invalid Android boot header page')
+          kernel_size = struct.unpack_from('<I', b, 8)[0]
+          ramdisk_size = struct.unpack_from('<I', b, 12)[0]
+          header_size = struct.unpack_from('<I', b, 20)[0]
+          header_version = struct.unpack_from('<I', b, 40)[0]
+          if header_version != expected_ver:
+              raise SystemExit('header version mismatch')
+          if kernel_size != expected_kernel:
+              raise SystemExit('base kernel size mismatch')
+          if ramdisk_size <= 0 or header_size <= 0:
+              raise SystemExit('invalid boot component sizes')
+          print('BOOT_MAGIC=PASS')
+          print(f'HEADER_VERSION={header_version}')
+          print(f'HEADER_SIZE={header_size}')
+          print(f'KERNEL_SIZE={kernel_size}')
+          print(f'RAMDISK_SIZE={ramdisk_size}')
+          PY
+
+          cat > "$RUNNER_TEMP/o53-avb-props.py" <<'PY'
+          import re, sys
+          src, dst = sys.argv[1:3]
+          props = []
+          for line in open(src, encoding='utf-8'):
+              m = re.match(r"\s*Prop:\s+(.+?)\s+->\s+'(.*)'\s*$", line.rstrip('\n'))
+              if m:
+                  props.append((m.group(1), m.group(2)))
+          if not props:
+              raise SystemExit('AVB properties missing')
+          with open(dst, 'w', encoding='utf-8') as f:
+              for key, value in sorted(props):
+                  f.write(f'{key}\t{value}\n')
+          PY
+
+          cat > "$RUNNER_TEMP/o53-header-check.py" <<'PY'
+          import struct, sys
+          base_path, final_path = sys.argv[1], sys.argv[2]
+          expected_ver = int(sys.argv[3])
+          expected_kernel = int(sys.argv[4])
+          expected_ramdisk = int(sys.argv[5])
+          page = int(sys.argv[6])
+          base_kernel = int(sys.argv[7])
+          base = bytearray(open(base_path, 'rb').read(page))
+          final = bytearray(open(final_path, 'rb').read(page))
+          if len(base) != page or len(final) != page:
+              raise SystemExit('short header page')
+          if base[:8] != b'ANDROID!' or final[:8] != b'ANDROID!':
+              raise SystemExit('boot magic mismatch')
+          final_kernel = struct.unpack_from('<I', final, 8)[0]
+          final_ramdisk = struct.unpack_from('<I', final, 12)[0]
+          final_header_size = struct.unpack_from('<I', final, 20)[0]
+          final_version = struct.unpack_from('<I', final, 40)[0]
+          if final_kernel != expected_kernel:
+              raise SystemExit('kernel size mismatch')
+          if final_ramdisk != expected_ramdisk:
+              raise SystemExit('ramdisk size mismatch')
+          if final_version != expected_ver or final_header_size <= 0:
+              raise SystemExit('header v3 contract failed')
+          base_masked = bytearray(base)
+          final_masked = bytearray(final)
+          base_masked[8:12] = b'\0' * 4
+          final_masked[8:12] = b'\0' * 4
+          if base_masked != final_masked:
+              diffs = [i for i, (a, b) in enumerate(zip(base_masked, final_masked)) if a != b]
+              raise SystemExit(f'unexpected header byte changes: {diffs[:32]}')
+          if expected_kernel == base_kernel and base != final:
+              raise SystemExit('same-size kernel changed header page')
+          print('BOOT_MAGIC=PASS')
+          print(f'HEADER_VERSION={final_version}')
+          print(f'HEADER_SIZE={final_header_size}')
+          print(f'KERNEL_SIZE={final_kernel}')
+          print(f'RAMDISK_SIZE={final_ramdisk}')
+          print('HEADER_BYTES_EXCEPT_KERNEL_SIZE=IDENTICAL')
+          if expected_kernel == base_kernel:
+              print('FULL_HEADER_PAGE_IDENTITY=PASS')
+          else:
+              print('ONLY_KERNEL_SIZE_HEADER_FIELD_CHANGE=PASS')
+          PY
+
+          python3 -m py_compile \
+            "$RUNNER_TEMP/o53-expected-size.py" \
+            "$RUNNER_TEMP/o53-base-header.py" \
+            "$RUNNER_TEMP/o53-avb-props.py" \
+            "$RUNNER_TEMP/o53-header-check.py"
+
+      - name: Authenticate exact O52 GREEN run and package aggregate
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_zip="$RUNNER_TEMP/o52-source.zip"
+          source_dir="$RUNNER_TEMP/o52-source"
+          run_json="$RUNNER_TEMP/o53-work/o52-run.json"
+          artifact_json="$RUNNER_TEMP/o53-work/o52-artifact.json"
+
+          api_get() {
+            local url="$1" output="$2"
+            curl --fail --location --silent --show-error \
+              --retry 3 --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_READ_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$url" -o "$output"
+          }
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$O52_RUN_ID" "$run_json"
+          jq -e --arg head "$O52_HEAD_SHA" \
+            '.status == "completed" and .conclusion == "success" and .head_sha == $head' \
+            "$run_json" >/dev/null
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$O52_ARTIFACT_ID" "$artifact_json"
+          jq -e \
+            --arg name "$O52_ARTIFACT_NAME" \
+            --arg digest "sha256:$O52_ARTIFACT_SHA256" \
+            --argjson run "$O52_RUN_ID" \
+            '.expired == false and .name == $name and .digest == $digest and .workflow_run.id == $run' \
+            "$artifact_json" >/dev/null
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$O52_ARTIFACT_ID/zip" \
+            "$source_zip"
+          test -s "$source_zip"
+          test "$(sha256sum "$source_zip" | awk '{print $1}')" = "$O52_ARTIFACT_SHA256"
+          unzip -q "$source_zip" -d "$source_dir"
+
+          (
+            cd "$source_dir"
+            sha256sum -c SHA256SUMS.txt
+          ) > "$GITHUB_WORKSPACE/o53-aggregate/audit/01-O52-SHA256-CHECK.txt"
+
+          grep -Fxq 'VEUX_U6_O52_ALL_SIX_AK3_PACKAGE_AUDIT=PASS' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'ALL_SIX_PACKAGE_PASS=YES' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES_FROM_O51' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'DEVICE_PASS=NO' "$source_dir/FINAL-RESULT.txt"
+
+          grep -Fxq "GITHUB_RUN_ID=$O52_RUN_ID" "$source_dir/audit/RUN-METADATA.txt"
+          grep -Fxq "GITHUB_SHA=$O52_HEAD_SHA" "$source_dir/audit/RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$source_dir/audit/RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$source_dir/audit/RUN-METADATA.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$source_dir/audit/RUN-METADATA.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$source_dir/audit/RUN-METADATA.txt"
+
+          echo "O52_GREEN_RUN_AUTH=PASS"
+          echo "O52_ARTIFACT_OUTER_SHA256=PASS"
+          echo "O52_ARTIFACT_INTERNAL_SHA256=PASS"
+
+      - name: Install pinned MagiskBoot and AOSP avbtool
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/o53-work"
+          audit="$GITHUB_WORKSPACE/o53-aggregate/audit"
+
+          apk="$work/Magisk-v30.7.apk"
+          curl --fail --location --retry 3 "$MAGISK_APK_URL" -o "$apk"
+          test "$(sha256sum "$apk" | awk '{print $1}')" = "$MAGISK_APK_SHA256"
+          mapfile -t mb_candidates < <(
+            zipinfo -1 "$apk" | grep -E '^lib/x86_64/(lib)?magiskboot(\.so)?$'
+          )
+          test "${#mb_candidates[@]}" -eq 1
+          unzip -p "$apk" "${mb_candidates[0]}" > "$work/magiskboot"
+          chmod 0755 "$work/magiskboot"
+          file "$work/magiskboot" > "$audit/02-MAGISKBOOT-FILE.txt"
+          grep -Eq 'ELF 64-bit.*x86-64|ELF 64-bit.*x86_64' "$audit/02-MAGISKBOOT-FILE.txt"
+          "$work/magiskboot" 2>&1 | head -80 > "$audit/02-MAGISKBOOT-HELP.txt" || true
+          grep -Fq 'MagiskBoot' "$audit/02-MAGISKBOOT-HELP.txt"
+
+          avb="$work/avb"
+          git init -q "$avb"
+          git -C "$avb" remote add origin "$AVB_REPO"
+          git -C "$avb" fetch -q --depth=1 origin "$AVB_COMMIT"
+          git -C "$avb" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$avb" rev-parse HEAD)" = "$AVB_COMMIT"
+          test -s "$avb/avbtool.py"
+          python3 "$avb/avbtool.py" version > "$audit/02-AVBTOOL-VERSION.txt"
+
+          {
+            echo "MAGISKBOOT_PIN=PASS"
+            echo "AOSP_AVBTOOL_PIN=PASS"
+          } > "$audit/02-TOOLS.txt"
+
+      - name: Authenticate and unpack proven boot-v3 reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/o53-work"
+          audit="$GITHUB_WORKSPACE/o53-aggregate/audit"
+          base="$work/base-5.4.302-35157-BOOTTEST.img"
+          mb="$work/magiskboot"
+          avb="$work/avb/avbtool.py"
+
+          curl --fail --location --retry 3 "$BASE_BOOT_URL" -o "$base"
+          test "$(stat -c '%s' "$base")" = "$BOOT_PARTITION_SIZE"
+          test "$(sha256sum "$base" | awk '{print $1}')" = "$BASE_BOOT_SHA256"
+
+          python3 "$RUNNER_TEMP/o53-base-header.py" \
+            "$base" "$EXPECTED_HEADER_VERSION" "$BASE_KERNEL_BYTES" "$BOOT_PAGE_SIZE" \
+            > "$audit/03-BASE-HEADER.txt"
+
+          base_ramdisk_bytes="$(sed -n 's/^RAMDISK_SIZE=//p' "$audit/03-BASE-HEADER.txt")"
+          test -n "$base_ramdisk_bytes"
+          [[ "$base_ramdisk_bytes" =~ ^[0-9]+$ ]]
+
+          python3 "$avb" info_image --image "$base" > "$audit/03-BASE-AVB.txt"
+          grep -Eq '^Algorithm:[[:space:]]+NONE$' "$audit/03-BASE-AVB.txt"
+          grep -Eq '^[[:space:]]*Partition Name:[[:space:]]+boot$' "$audit/03-BASE-AVB.txt"
+          grep -Eq '^[[:space:]]*Hash Algorithm:[[:space:]]+sha256$' "$audit/03-BASE-AVB.txt"
+
+          salt="$(sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' "$audit/03-BASE-AVB.txt" | head -1 | tr 'A-F' 'a-f')"
+          original_size="$(sed -n 's/^Original image size:[[:space:]]*\([0-9][0-9]*\) bytes$/\1/p' "$audit/03-BASE-AVB.txt" | head -1)"
+          test -n "$salt"
+          [[ "$salt" =~ ^[0-9a-f]+$ ]]
+          test -n "$original_size"
+
+          expected_base_original="$(
+            python3 "$RUNNER_TEMP/o53-expected-size.py" \
+              "$BASE_KERNEL_BYTES" "$base_ramdisk_bytes" "$BOOT_PAGE_SIZE"
+          )"
+          test "$original_size" = "$expected_base_original"
+
+          python3 "$RUNNER_TEMP/o53-avb-props.py" \
+            "$audit/03-BASE-AVB.txt" "$audit/03-BASE-AVB-PROPS.txt"
+
+          raw="$work/base-raw"
+          decoded="$work/base-decoded"
+          mkdir -p "$raw" "$decoded"
+
+          (
+            cd "$raw"
+            "$mb" unpack -n -h "$base" > "$audit/03-BASE-RAW-UNPACK.txt" 2>&1
+          )
+          test "$(stat -c '%s' "$raw/kernel")" = "$BASE_KERNEL_BYTES"
+          test "$(sha256sum "$raw/kernel" | awk '{print $1}')" = "$BASE_KERNEL_SHA256"
+          test "$(sha256sum "$raw/ramdisk.cpio" | awk '{print $1}')" = "$RAW_STOCK_RAMDISK_SHA256"
+
+          (
+            cd "$decoded"
+            "$mb" unpack -h "$base" > "$audit/03-BASE-DECODED-UNPACK.txt" 2>&1
+          )
+          test "$(sha256sum "$decoded/kernel" | awk '{print $1}')" = "$BASE_KERNEL_SHA256"
+          test "$(sha256sum "$decoded/ramdisk.cpio" | awk '{print $1}')" = "$DECODED_STOCK_RAMDISK_SHA256"
+
+          echo "AVB_SALT=$salt" >> "$GITHUB_ENV"
+          echo "BASE_ORIGINAL_IMAGE_SIZE=$original_size" >> "$GITHUB_ENV"
+          echo "BASE_RAMDISK_BYTES=$base_ramdisk_bytes" >> "$GITHUB_ENV"
+
+          {
+            echo "BOOT_V3_REFERENCE_AUTH=PASS"
+            echo "BASE_BOOT_SHA256=$BASE_BOOT_SHA256"
+            echo "RAW_STOCK_RAMDISK_SHA256=$RAW_STOCK_RAMDISK_SHA256"
+            echo "DECODED_STOCK_RAMDISK_SHA256=$DECODED_STOCK_RAMDISK_SHA256"
+          } > "$audit/03-BASE-RESULT.txt"
+
+      - name: Build and independently validate all six static boot images
+        id: static_boot
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/o52-source"
+          work="$RUNNER_TEMP/o53-work"
+          aggregate="$GITHUB_WORKSPACE/o53-aggregate"
+          audit_root="$aggregate/audit"
+          boots_root="$aggregate/boots"
+          base="$work/base-5.4.302-35157-BOOTTEST.img"
+          mb="$work/magiskboot"
+          avb="$work/avb/avbtool.py"
+
+          declare -A image_sha image_bytes ak3_sha
+          image_sha["5.4.274"]="$IMAGE_SHA_274"
+          image_sha["5.4.292"]="$IMAGE_SHA_292"
+          image_sha["5.4.293"]="$IMAGE_SHA_293"
+          image_sha["5.4.300"]="$IMAGE_SHA_300"
+          image_sha["5.4.301"]="$IMAGE_SHA_301"
+          image_sha["5.4.302"]="$IMAGE_SHA_302"
+          image_bytes["5.4.274"]="$IMAGE_BYTES_274"
+          image_bytes["5.4.292"]="$IMAGE_BYTES_292"
+          image_bytes["5.4.293"]="$IMAGE_BYTES_293"
+          image_bytes["5.4.300"]="$IMAGE_BYTES_300"
+          image_bytes["5.4.301"]="$IMAGE_BYTES_301"
+          image_bytes["5.4.302"]="$IMAGE_BYTES_302"
+          ak3_sha["5.4.274"]="$AK3_SHA_274"
+          ak3_sha["5.4.292"]="$AK3_SHA_292"
+          ak3_sha["5.4.293"]="$AK3_SHA_293"
+          ak3_sha["5.4.300"]="$AK3_SHA_300"
+          ak3_sha["5.4.301"]="$AK3_SHA_301"
+          ak3_sha["5.4.302"]="$AK3_SHA_302"
+
+          kernels=(5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302)
+          failures=0
+
+          for kernel in "${kernels[@]}"; do
+            expected_image_sha="${image_sha[$kernel]}"
+            expected_image_bytes="${image_bytes[$kernel]}"
+            expected_ak3_sha="${ak3_sha[$kernel]}"
+            package="$source_dir/packages/$kernel/VEUX-${kernel}-ReSukiSU-35158-UAPI4-SUSFS-2.3.0-AK3.zip"
+            package_status="$source_dir/audit/${kernel}-PACKAGE-STATUS.txt"
+            kernel_work="$work/kernel-$kernel"
+            kernel_audit="$audit_root/$kernel"
+            boot_dir="$boots_root/$kernel"
+            final="$boot_dir/VEUX-${kernel}-ReSukiSU-35158-UAPI4-SUSFS-2.3.0-BOOTTEST.img"
+
+            rm -rf "$kernel_work" "$kernel_audit" "$boot_dir"
+            mkdir -p "$kernel_work" "$kernel_audit" "$boot_dir"
+            echo "===== O53 STATIC START $kernel ====="
+
+            if (
+              set -euo pipefail
+              test "$(sha256sum "$package" | awk '{print $1}')" = "$expected_ak3_sha"
+              grep -Fxq "AK3_SHA256=$expected_ak3_sha" "$package_status"
+              grep -Fxq "IMAGE_SHA256=$expected_image_sha" "$package_status"
+              grep -Fxq 'PACKAGE_PASS=YES' "$package_status"
+
+              unzip -tq "$package"
+              unzip -p "$package" Image > "$kernel_work/Image"
+              unzip -p "$package" anykernel.sh > "$kernel_work/anykernel.sh"
+              test "$(stat -c '%s' "$kernel_work/Image")" = "$expected_image_bytes"
+              test "$(sha256sum "$kernel_work/Image" | awk '{print $1}')" = "$expected_image_sha"
+
+              bash -n "$kernel_work/anykernel.sh"
+              grep -Fqx "kernel.string=VEUX Linux $kernel ReSukiSU $RESUKISU_SHORT UAPI4 + SUSFS 2.3.0" "$kernel_work/anykernel.sh"
+              grep -Fqx 'device.name1=veux' "$kernel_work/anykernel.sh"
+              grep -Fqx 'supported.versions=13' "$kernel_work/anykernel.sh"
+              grep -Fqx 'BLOCK=boot;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'IS_SLOT_DEVICE=1;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'SLOT_SELECT=active;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'dump_boot;' "$kernel_work/anykernel.sh"
+              grep -Fqx 'write_boot;' "$kernel_work/anykernel.sh"
+
+              build="$kernel_work/repack"
+              cp -a "$work/base-raw" "$build"
+              cp "$kernel_work/Image" "$build/kernel"
+              (
+                cd "$build"
+                "$mb" repack -n "$base" "$kernel_work/pre-avb.img" > "$kernel_audit/01-REPACK.txt" 2>&1
+              )
+              python3 "$avb" erase_footer --image "$kernel_work/pre-avb.img"
+
+              expected_original_size="$(
+                python3 "$RUNNER_TEMP/o53-expected-size.py" \
+                  "$expected_image_bytes" "$BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE"
+              )"
+              test "$(stat -c '%s' "$kernel_work/pre-avb.img")" = "$expected_original_size"
+
+              prop_args=()
+              while IFS=$'\t' read -r key value; do
+                test -n "$key"
+                prop_args+=(--prop "$key:$value")
+              done < "$audit_root/03-BASE-AVB-PROPS.txt"
+
+              python3 "$avb" add_hash_footer \
+                --image "$kernel_work/pre-avb.img" \
+                --partition_name boot \
+                --partition_size "$BOOT_PARTITION_SIZE" \
+                --hash_algorithm sha256 \
+                --algorithm NONE \
+                --salt "$AVB_SALT" \
+                "${prop_args[@]}"
+
+              mv "$kernel_work/pre-avb.img" "$final"
+              test "$(stat -c '%s' "$final")" = "$BOOT_PARTITION_SIZE"
+
+              python3 "$avb" info_image --image "$final" > "$kernel_audit/02-FINAL-AVB.txt"
+              python3 "$avb" verify_image --image "$final" > "$kernel_audit/02-FINAL-AVB-VERIFY.txt"
+              grep -Eq '^Algorithm:[[:space:]]+NONE$' "$kernel_audit/02-FINAL-AVB.txt"
+              grep -Eq '^[[:space:]]*Partition Name:[[:space:]]+boot$' "$kernel_audit/02-FINAL-AVB.txt"
+              grep -Eq '^[[:space:]]*Hash Algorithm:[[:space:]]+sha256$' "$kernel_audit/02-FINAL-AVB.txt"
+
+              final_salt="$(sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' "$kernel_audit/02-FINAL-AVB.txt" | head -1 | tr 'A-F' 'a-f')"
+              final_original_size="$(sed -n 's/^Original image size:[[:space:]]*\([0-9][0-9]*\) bytes$/\1/p' "$kernel_audit/02-FINAL-AVB.txt" | head -1)"
+              test "$final_salt" = "$AVB_SALT"
+              test "$final_original_size" = "$expected_original_size"
+
+              python3 "$RUNNER_TEMP/o53-avb-props.py" \
+                "$kernel_audit/02-FINAL-AVB.txt" "$kernel_audit/02-FINAL-AVB-PROPS.txt"
+              cmp -s "$audit_root/03-BASE-AVB-PROPS.txt" "$kernel_audit/02-FINAL-AVB-PROPS.txt"
+              python3 "$avb" calculate_vbmeta_digest --image "$final" --hash_algorithm sha256 > "$kernel_audit/02-VBMETA-DIGEST.txt"
+
+              mkdir -p "$kernel_work/final-raw" "$kernel_work/final-decoded"
+              (
+                cd "$kernel_work/final-raw"
+                "$mb" unpack -n -h "$final" > "$kernel_audit/03-FINAL-RAW-UNPACK.txt" 2>&1
+              )
+              test "$(stat -c '%s' "$kernel_work/final-raw/kernel")" = "$expected_image_bytes"
+              test "$(sha256sum "$kernel_work/final-raw/kernel" | awk '{print $1}')" = "$expected_image_sha"
+              test "$(sha256sum "$kernel_work/final-raw/ramdisk.cpio" | awk '{print $1}')" = "$RAW_STOCK_RAMDISK_SHA256"
+              cmp -s "$work/base-raw/ramdisk.cpio" "$kernel_work/final-raw/ramdisk.cpio"
+
+              (
+                cd "$kernel_work/final-decoded"
+                "$mb" unpack -h "$final" > "$kernel_audit/03-FINAL-DECODED-UNPACK.txt" 2>&1
+              )
+              test "$(sha256sum "$kernel_work/final-decoded/kernel" | awk '{print $1}')" = "$expected_image_sha"
+              test "$(sha256sum "$kernel_work/final-decoded/ramdisk.cpio" | awk '{print $1}')" = "$DECODED_STOCK_RAMDISK_SHA256"
+              cmp -s "$work/base-decoded/ramdisk.cpio" "$kernel_work/final-decoded/ramdisk.cpio"
+
+              python3 "$RUNNER_TEMP/o53-header-check.py" \
+                "$base" "$final" "$EXPECTED_HEADER_VERSION" "$expected_image_bytes" \
+                "$BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE" "$BASE_KERNEL_BYTES" \
+                > "$kernel_audit/04-HEADER-CONTRACT.txt"
+
+              grep -aFq "Linux version $kernel" "$kernel_work/final-raw/kernel"
+              grep -aFq "v4.2.0-rc2-$RESUKISU_SHORT" "$kernel_work/final-raw/kernel"
+              grep -aFq '@ReSukiSU' "$kernel_work/final-raw/kernel"
+
+              boot_sha="$(sha256sum "$final" | awk '{print $1}')"
+              vbmeta_digest="$(tr -d '\r\n' < "$kernel_audit/02-VBMETA-DIGEST.txt")"
+
+              {
+                echo "KERNEL=$kernel"
+                echo "AK3_SHA256=$expected_ak3_sha"
+                echo "IMAGE_SHA256=$expected_image_sha"
+                echo "IMAGE_BYTES=$expected_image_bytes"
+                echo "BOOT_BYTES=$BOOT_PARTITION_SIZE"
+                echo "BOOT_SHA256=$boot_sha"
+                echo "AVB_ORIGINAL_IMAGE_SIZE=$expected_original_size"
+                echo "AVB_VBMETA_DIGEST_SHA256=$vbmeta_digest"
+                echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+                echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+                echo "UAPI=$RESUKISU_UAPI"
+                echo "SUSFS_VERSION=$SUSFS_VERSION"
+                echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+                echo "MODULE_LOAD_FILTER=EXCLUDED"
+                echo "AK3_TO_BOOT_KERNEL_BINDING=PASS"
+                echo "RAW_RAMDISK_BYTE_IDENTITY=PASS"
+                echo "DECODED_RAMDISK_BYTE_IDENTITY=PASS"
+                echo "BOOT_HEADER_V3=PASS"
+                echo "BOOT_HEADER_MUTATION_SCOPE=PASS"
+                echo "AVB_VERIFY_IMAGE=PASS"
+                echo "AVB_PROPERTIES_PRESERVED=PASS"
+                echo "KERNEL_IDENTITY_STRINGS=PASS"
+                echo "PACKAGE_PASS=YES_FROM_O52"
+                echo "STATIC_BOOT_PATH_PASS=PASS"
+                echo "DEVICE_PASS=NO"
+              } > "$kernel_audit/FINAL-RESULT.txt"
+
+              echo "===== O53 STATIC PASS $kernel ====="
+            ); then
+              :
+            else
+              rc=$?
+              failures=$((failures + 1))
+              {
+                echo "KERNEL=$kernel"
+                echo "STATIC_BOOT_PATH_PASS=NO"
+                echo "DEVICE_PASS=NO"
+                echo "FAILURE_RC=$rc"
+              } > "$kernel_audit/FAILURE.txt"
+              echo "===== O53 STATIC FAIL $kernel rc=$rc ====="
+            fi
+          done
+
+          echo "O53_FAILURE_COUNT=$failures" | tee "$audit_root/05-STATIC-LOOP-RESULT.txt"
+          test "$failures" = 0
+
+      - name: Finalize compact O53 aggregate
+        if: always()
+        shell: bash
+        env:
+          STATIC_BOOT_OUTCOME: ${{ steps.static_boot.outcome }}
+        run: |
+          set -euo pipefail
+          aggregate="$GITHUB_WORKSPACE/o53-aggregate"
+          audit="$aggregate/audit"
+
+          {
+            echo "STATIC_BOOT_STEP_OUTCOME=$STATIC_BOOT_OUTCOME"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "O52_RUN_ID=$O52_RUN_ID"
+            echo "O52_HEAD_SHA=$O52_HEAD_SHA"
+            echo "O52_ARTIFACT_ID=$O52_ARTIFACT_ID"
+            echo "O52_ARTIFACT_SHA256=$O52_ARTIFACT_SHA256"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+            echo "UAPI=$RESUKISU_UAPI"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "BASE_BOOT_SHA256=$BASE_BOOT_SHA256"
+            echo "BOOT_PARTITION_SIZE=$BOOT_PARTITION_SIZE"
+            echo "MAGISK_APK_SHA256=$MAGISK_APK_SHA256"
+            echo "AVB_COMMIT=$AVB_COMMIT"
+          } > "$audit/RUN-METADATA.txt"
+
+          all_pass=1
+          : > "$audit/STATIC-BOOT-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            result="$audit/$kernel/FINAL-RESULT.txt"
+            boot_dir="$aggregate/boots/$kernel"
+
+            if [ ! -s "$result" ]; then
+              echo "$kernel=STATIC_BOOT_FAIL" >> "$audit/STATIC-BOOT-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            boot_file="$(find "$boot_dir" -maxdepth 1 -type f -name '*BOOTTEST.img' -print -quit)"
+            if [ -z "$boot_file" ] || [ ! -s "$boot_file" ]; then
+              echo "$kernel=BOOT_MISSING" >> "$audit/STATIC-BOOT-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=PASS' "$result" || all_pass=0
+            actual_sha="$(sha256sum "$boot_file" | awk '{print $1}')"
+            result_sha="$(sed -n 's/^BOOT_SHA256=//p' "$result")"
+            test "$actual_sha" = "$result_sha"
+            test "$(stat -c '%s' "$boot_file")" = "$BOOT_PARTITION_SIZE"
+            echo "$kernel=STATIC_BOOT_PASS BOOT_SHA256=$actual_sha" >> "$audit/STATIC-BOOT-MATRIX.txt"
+          done
+
+          if [ "$STATIC_BOOT_OUTCOME" != success ]; then
+            all_pass=0
+          fi
+
+          {
+            if [ "$all_pass" = 1 ]; then
+              echo 'VEUX_U6_O53_ALL_SIX_STATIC_BOOT_AUDIT=PASS'
+              echo 'ALL_SIX_STATIC_BOOT_PATH_PASS=YES'
+            else
+              echo 'VEUX_U6_O53_ALL_SIX_STATIC_BOOT_AUDIT=FAIL'
+              echo 'ALL_SIX_STATIC_BOOT_PATH_PASS=NO'
+            fi
+            echo 'SOURCE_PORT_PASS=PASS_FROM_O51'
+            echo 'COMPILE_PASS=YES_FROM_O51'
+            echo 'PACKAGE_PASS=YES_FROM_O52'
+            echo 'DEVICE_PASS=NO'
+          } > "$aggregate/FINAL-RESULT.txt"
+
+          (
+            cd "$aggregate"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+          echo "O53_AGGREGATE_FINALIZED=PASS"
+
+      - name: Upload single O53 static boot aggregate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O53V1-ReSukiSU-35158-ALL-SIX-STATIC-BOOT-${{ github.run_id }}
+          path: o53-aggregate/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real O53 GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          aggregate="$GITHUB_WORKSPACE/o53-aggregate"
+          final="$aggregate/FINAL-RESULT.txt"
+
+          grep -Fxq 'VEUX_U6_O53_ALL_SIX_STATIC_BOOT_AUDIT=PASS' "$final"
+          grep -Fxq 'ALL_SIX_STATIC_BOOT_PATH_PASS=YES' "$final"
+          grep -Fxq 'SOURCE_PORT_PASS=PASS_FROM_O51' "$final"
+          grep -Fxq 'COMPILE_PASS=YES_FROM_O51' "$final"
+          grep -Fxq 'PACKAGE_PASS=YES_FROM_O52' "$final"
+          grep -Fxq 'DEVICE_PASS=NO' "$final"
+          test "$(find "$aggregate/boots" -type f -name '*BOOTTEST.img' | wc -l)" -eq 6
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            result="$aggregate/audit/$kernel/FINAL-RESULT.txt"
+            grep -Fxq 'AK3_TO_BOOT_KERNEL_BINDING=PASS' "$result"
+            grep -Fxq 'RAW_RAMDISK_BYTE_IDENTITY=PASS' "$result"
+            grep -Fxq 'DECODED_RAMDISK_BYTE_IDENTITY=PASS' "$result"
+            grep -Fxq 'BOOT_HEADER_V3=PASS' "$result"
+            grep -Fxq 'BOOT_HEADER_MUTATION_SCOPE=PASS' "$result"
+            grep -Fxq 'AVB_VERIFY_IMAGE=PASS' "$result"
+            grep -Fxq 'AVB_PROPERTIES_PRESERVED=PASS' "$result"
+            grep -Fxq 'KERNEL_IDENTITY_STRINGS=PASS' "$result"
+            grep -Fxq 'PACKAGE_PASS=YES_FROM_O52' "$result"
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=PASS' "$result"
+            grep -Fxq 'DEVICE_PASS=NO' "$result"
+          done
+
+          (
+            cd "$aggregate"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo "O53V1_REAL_GREEN_GATE=PASS"
