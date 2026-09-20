@@ -1,0 +1,1110 @@
+name: VEUX U6-O51 v3 ReSukiSU 35158 Repair 5.4.274 + 5.4.293 Complete All Six
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u6-o51-v3-repair-35158-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_OLD: 3d1185d878a856ea6435799b436b3d3ec510da76
+  RESUKISU_OLD_SHORT: 3d1185d8
+  RESUKISU_NEW: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_NEW_SHORT: 6d18926a
+  RESUKISU_OLD_VERSION: '35157'
+  RESUKISU_NEW_VERSION: '35158'
+  RESUKISU_UAPI: '4'
+
+  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_MIRROR: https://github.com/ShirkNeko/susfs4ksu.git
+  SUSFS_BRANCH: gki-android13-5.10
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+
+  INTEGRATOR_293: lineages/5.4.293/SUSFS_INTEGRATE_R1.py
+  INTEGRATOR_293_SHA256: 9e106bd5f6d69253134f4d2e4d79edfe3603cce729f6a4497d95518ccb5087f7
+
+  O51V2_RUN_ID: '35474699541'
+  O51V2_HEAD_SHA: c7f732c181708bcf924e71f75bfb6cc1e43544e0
+  O51V2_ARTIFACT_ID: '10594504130'
+  O51V2_ARTIFACT_SHA256: 76d744ef6010678ebd551ffe0393dd8e154e01a44b2955d43bdd85939cad50ec
+  O51V2_IMAGE_292_SHA256: cebdc135d154e88f8f8c08b3e44181470c56a45f054537e96a5d1b6dbcca952a
+  O51V2_IMAGE_300_SHA256: 09bf533d83c3c140b8c7837883ced6291615e5bfc42efa51c4dc298a982394e0
+  O51V2_IMAGE_301_SHA256: 4de18f2ef3ca32a59e06380309bbef8f061b7729543dac53304c4f985ff5e394
+  O51V2_IMAGE_302_SHA256: faf2bac3e43e1e05f4703cef69158f9c18961a572d8e8789999bd0e0cb073761
+
+jobs:
+  mass-rebuild:
+    name: Six-kernel ReSukiSU 35158 compile rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Repository identity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout exact O51 project state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install O51 controller dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq python3 python3-yaml rsync unzip zip
+          python3 - <<'PY'
+          import yaml
+          print("PYYAML_IMPORT=PASS")
+          PY
+
+      - name: Verify O50 upstream contract again
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/o51-resukisu" "$RUNNER_TEMP/o51-susfs"
+          mkdir -p "$RUNNER_TEMP/o51-resukisu" "$RUNNER_TEMP/o51-susfs"
+
+          git -C "$RUNNER_TEMP/o51-resukisu" init -q
+          git -C "$RUNNER_TEMP/o51-resukisu" remote add origin "$RESUKISU_REPO"
+          git -C "$RUNNER_TEMP/o51-resukisu" fetch -q --tags origin "$RESUKISU_NEW"
+          git -C "$RUNNER_TEMP/o51-resukisu" cat-file -e "$RESUKISU_OLD^{commit}"
+          git -C "$RUNNER_TEMP/o51-resukisu" checkout -q --detach "$RESUKISU_NEW"
+          test "$(git -C "$RUNNER_TEMP/o51-resukisu" rev-parse HEAD)" = "$RESUKISU_NEW"
+          git -C "$RUNNER_TEMP/o51-resukisu" merge-base --is-ancestor "$RESUKISU_OLD" "$RESUKISU_NEW"
+
+          delta="$(git -C "$RUNNER_TEMP/o51-resukisu" rev-list --count "$RESUKISU_OLD..$RESUKISU_NEW")"
+          test "$delta" = 1
+
+          git -C "$RUNNER_TEMP/o51-resukisu" diff --name-only "$RESUKISU_OLD" "$RESUKISU_NEW" \
+            | LC_ALL=C sort > "$RUNNER_TEMP/o51-resukisu/all-delta.txt"
+          printf '%s\n' \
+            'manager/app/src/main/java/com/resukisu/resukisu/data/settings/SettingsPlatformRepository.kt' \
+            > "$RUNNER_TEMP/o51-resukisu/expected-delta.txt"
+          diff -u \
+            "$RUNNER_TEMP/o51-resukisu/expected-delta.txt" \
+            "$RUNNER_TEMP/o51-resukisu/all-delta.txt"
+
+          git -C "$RUNNER_TEMP/o51-resukisu" diff --name-only \
+            "$RESUKISU_OLD" "$RESUKISU_NEW" -- kernel uapi userspace \
+            > "$RUNNER_TEMP/o51-resukisu/kernel-uapi-userspace.txt"
+          test ! -s "$RUNNER_TEMP/o51-resukisu/kernel-uapi-userspace.txt"
+
+          ksu_count="$(git -C "$RUNNER_TEMP/o51-resukisu" rev-list --count "$RESUKISU_NEW")"
+          calculated="$((30000 + ksu_count + 700))"
+          test "$calculated" = "$RESUKISU_NEW_VERSION"
+
+          primary_head="$(git ls-remote "$SUSFS_REPO" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}')"
+          mirror_head="$(git ls-remote "$SUSFS_MIRROR" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}')"
+          test "$primary_head" = "$SUSFS_COMMIT"
+          test "$mirror_head" = "$SUSFS_COMMIT"
+
+          git -C "$RUNNER_TEMP/o51-susfs" init -q
+          git -C "$RUNNER_TEMP/o51-susfs" remote add origin "$SUSFS_MIRROR"
+          git -C "$RUNNER_TEMP/o51-susfs" fetch -q --depth=1 origin "$SUSFS_COMMIT"
+          git -C "$RUNNER_TEMP/o51-susfs" checkout -q --detach FETCH_HEAD
+          actual_susfs_version="$(
+            sed -n 's/^version=//p' \
+              "$RUNNER_TEMP/o51-susfs/ksu_module_susfs/module.prop" | head -n1
+          )"
+          test "$actual_susfs_version" = "$SUSFS_VERSION"
+
+          echo "O50_CONTRACT_RECHECK=PASS"
+          echo "RESUKISU_TARGET=$RESUKISU_NEW"
+          echo "RESUKISU_VERSION=$calculated"
+          echo "RESUKISU_KERNEL_UAPI_USERSPACE_DELTA=NONE"
+          echo "SUSFS_TARGET=$SUSFS_COMMIT"
+          echo "SUSFS_VERSION=$actual_susfs_version"
+
+      - name: Pin all six authority workflows and 5.4.293 integrator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_blob() {
+            local path="$1" expected="$2"
+            test -f "$path"
+            actual="$(git hash-object "$path")"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::Authority workflow drift: $path expected=$expected actual=$actual"
+              exit 1
+            fi
+            printf '%s  %s\n' "$actual" "$path"
+          }
+
+          check_blob \
+            '.github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml' \
+            '7599e13e10d5ea8ce9e1984076d23a40d7f438ab'
+          check_blob \
+            '.github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml' \
+            '724b1e19556bacc7b3ad4c8dfe3b1900082ec127'
+          check_blob \
+            '.github/workflows/13-veux-5.4.293-resukisu-35157-susfs-update-r1.yml' \
+            '25a7a1c3d51194e26cfd929f85a81045dbdfac7b'
+          check_blob \
+            '.github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml' \
+            '06cee54d544cb69db2f334b3d3ef99f37a6eaf19'
+          check_blob \
+            '.github/workflows/veux-gen1-u5-o45-v2-5.4.301-resukisu-35157-incremental.yml' \
+            '0943d45b4872f950ede3af03c4fb758a2f1897bf'
+          check_blob \
+            '.github/workflows/veux-gen1-u5-o44-v1-5.4.302-resukisu-35157-selfcontained.yml' \
+            '724e67bd50fdd276b47f8ed8a553566cba4108a7'
+
+          test -f "$INTEGRATOR_293"
+          actual293="$(sha256sum "$INTEGRATOR_293" | awk '{print $1}')"
+          test "$actual293" = "$INTEGRATOR_293_SHA256"
+
+          echo "ALL_AUTHORITY_WORKFLOW_BLOBS=PASS"
+          echo "INTEGRATOR_293_SHA256_PIN=PASS"
+
+      - name: Authenticate O51 v2 four successful compile outputs
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior_zip="$RUNNER_TEMP/o51v2-partial.zip"
+          prior_dir="$RUNNER_TEMP/o51v2-partial"
+          rm -rf "$prior_dir"
+          rm -f "$prior_zip"
+          mkdir -p "$prior_dir"
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$O51V2_ARTIFACT_ID/zip" \
+            -o "$prior_zip"
+
+          test -s "$prior_zip"
+          actual_zip_sha="$(sha256sum "$prior_zip" | awk '{print $1}')"
+          test "$actual_zip_sha" = "$O51V2_ARTIFACT_SHA256"
+          unzip -q "$prior_zip" -d "$prior_dir"
+
+          grep -Fxq 'O51_FAILURE_COUNT=2' "$prior_dir/01-MASS-RESULT.txt"
+          grep -Fxq "GITHUB_RUN_ID=$O51V2_RUN_ID" "$prior_dir/02-RUN-METADATA.txt"
+          grep -Fxq "GITHUB_SHA=$O51V2_HEAD_SHA" "$prior_dir/02-RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_NEW" "$prior_dir/02-RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_NEW_VERSION" "$prior_dir/02-RUN-METADATA.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$prior_dir/02-RUN-METADATA.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$prior_dir/02-RUN-METADATA.txt"
+
+          verify_prior_kernel() {
+            local kernel="$1" expected_sha="$2"
+            local dir="$prior_dir/$kernel"
+            test -s "$dir/Image"
+            test -s "$dir/BUILD-STATUS.txt"
+            test "$(sha256sum "$dir/Image" | awk '{print $1}')" = "$expected_sha"
+            grep -Fxq "KERNEL=$kernel" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "RESUKISU_COMMIT=$RESUKISU_NEW" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "RESUKISU_VERSION=$RESUKISU_NEW_VERSION" "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'UAPI=4' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'SUSFS_VERSION=v2.3.0' "$dir/BUILD-STATUS.txt"
+            grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$dir/BUILD-STATUS.txt"
+            grep -Fxq "IMAGE_SHA256=$expected_sha" "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'COMPILE_PASS=YES' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'PACKAGE_PASS=NO' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'DEVICE_PASS=NO' "$dir/BUILD-STATUS.txt"
+          }
+
+          verify_prior_kernel 5.4.292 "$O51V2_IMAGE_292_SHA256"
+          verify_prior_kernel 5.4.300 "$O51V2_IMAGE_300_SHA256"
+          verify_prior_kernel 5.4.301 "$O51V2_IMAGE_301_SHA256"
+          verify_prior_kernel 5.4.302 "$O51V2_IMAGE_302_SHA256"
+
+          echo "O51V2_PARTIAL_ARTIFACT_AUTH=PASS"
+          echo "O51V2_REUSED_COMPILE_PASSES=4/4"
+
+      - name: Write and self-test fail-closed authority replayer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/o51_replay.py" <<'PY'
+          #!/usr/bin/env python3
+          from __future__ import annotations
+
+          import argparse
+          import glob
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import subprocess
+          import sys
+          import tempfile
+          from typing import Any
+
+          import yaml
+
+          OLD_COMMIT = "3d1185d878a856ea6435799b436b3d3ec510da76"
+          NEW_COMMIT = "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+          OLD_SHORT = "3d1185d8"
+          NEW_SHORT = "6d18926a"
+          OLD_VERSION = "35157"
+          NEW_VERSION = "35158"
+
+          AUTHORITY = {
+              "5.4.274": (
+                  ".github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml",
+                  "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+                  "kernel/out-p14r1/arch/arm64/boot/Image",
+              ),
+              "5.4.292": (
+                  ".github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml",
+                  "724b1e19556bacc7b3ad4c8dfe3b1900082ec127",
+                  ".work/5.4.292-update-r1/out/arch/arm64/boot/Image",
+              ),
+              "5.4.293": (
+                  ".github/workflows/13-veux-5.4.293-resukisu-35157-susfs-update-r1.yml",
+                  "25a7a1c3d51194e26cfd929f85a81045dbdfac7b",
+                  ".work/5.4.293-update-r1/out/arch/arm64/boot/Image",
+              ),
+              "5.4.300": (
+                  ".github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml",
+                  "06cee54d544cb69db2f334b3d3ef99f37a6eaf19",
+                  "out-5.4.300/arch/arm64/boot/Image",
+              ),
+              "5.4.301": (
+                  ".github/workflows/veux-gen1-u5-o45-v2-5.4.301-resukisu-35157-incremental.yml",
+                  "0943d45b4872f950ede3af03c4fb758a2f1897bf",
+                  "out-5.4.301/arch/arm64/boot/Image",
+              ),
+              "5.4.302": (
+                  ".github/workflows/veux-gen1-u5-o44-v1-5.4.302-resukisu-35157-selfcontained.yml",
+                  "724e67bd50fdd276b47f8ed8a553566cba4108a7",
+                  "out-5.4.302/arch/arm64/boot/Image",
+              ),
+          }
+
+          INTEGRATOR293_REL = "lineages/5.4.293/SUSFS_INTEGRATE_R1.py"
+          INTEGRATOR293_OLD_SHA256 = "9e106bd5f6d69253134f4d2e4d79edfe3603cce729f6a4497d95518ccb5087f7"
+
+          EXPR_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+
+          def die(msg: str, code: int = 2) -> None:
+              print(f"O51_REPLAYER_ERROR: {msg}", file=sys.stderr)
+              raise SystemExit(code)
+
+          def sha256(path: Path) -> str:
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          def git_blob(path: Path) -> str:
+              p = subprocess.run(
+                  ["git", "hash-object", str(path)],
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  check=False,
+              )
+              if p.returncode != 0:
+                  die(f"git hash-object failed for {path}: {p.stderr.strip()}")
+              return p.stdout.strip()
+
+          def transform_string(value: str) -> str:
+              return (
+                  value
+                  .replace(OLD_COMMIT, NEW_COMMIT)
+                  .replace(OLD_SHORT, NEW_SHORT)
+                  .replace(OLD_VERSION, NEW_VERSION)
+              )
+
+          def transform_tree(obj: Any) -> Any:
+              if isinstance(obj, str):
+                  return transform_string(obj)
+              if isinstance(obj, list):
+                  return [transform_tree(x) for x in obj]
+              if isinstance(obj, dict):
+                  out = {}
+                  for k, v in obj.items():
+                      nv = transform_tree(v)
+                      if str(k) == "RESUKISU_EXPECTED_DELTA_COMMITS":
+                          nv = "4"
+                      out[k] = nv
+                  return out
+              return obj
+
+          def strip_expr_wrapper(expr: str) -> str:
+              e = expr.strip()
+              expr_open = "$" + "{{"
+              expr_close = "}" + "}"
+              if e.startswith(expr_open) and e.endswith(expr_close):
+                  return e[len(expr_open):-len(expr_close)].strip()
+              return e
+
+          def condition_should_run(raw: Any, failed: bool) -> bool:
+              if raw is None:
+                  return not failed
+              e = strip_expr_wrapper(str(raw)).replace(" ", "")
+              if e in {"always()", "success()||failure()", "!cancelled()"}:
+                  return True
+              if e == "success()":
+                  return not failed
+              if e in {"failure()", "failure()||cancelled()"}:
+                  return failed
+              if e in {"true", "true()"}:
+                  return True
+              if e in {"false", "false()"}:
+                  return False
+              die(f"unsupported authority step if-condition: {raw!r}")
+
+          def parse_env_file(path: Path) -> dict[str, str]:
+              if not path.exists():
+                  return {}
+              lines = path.read_text(encoding="utf-8", errors="strict").splitlines()
+              out: dict[str, str] = {}
+              i = 0
+              while i < len(lines):
+                  line = lines[i]
+                  if "<<" in line:
+                      key, marker = line.split("<<", 1)
+                      key = key.strip()
+                      marker = marker.strip()
+                      i += 1
+                      buf = []
+                      while i < len(lines) and lines[i] != marker:
+                          buf.append(lines[i])
+                          i += 1
+                      if i >= len(lines):
+                          die(f"unterminated GITHUB_ENV heredoc for {key}")
+                      out[key] = "\n".join(buf)
+                  elif "=" in line:
+                      key, val = line.split("=", 1)
+                      out[key] = val
+                  elif line.strip():
+                      die(f"unsupported GITHUB_ENV line: {line!r}")
+                  i += 1
+              return out
+
+          def resolve_expr(value: str, env: dict[str, str], contexts: dict[str, str],
+                           outputs: dict[str, dict[str, str]]) -> str:
+              def repl(match: re.Match[str]) -> str:
+                  expr = match.group(1).strip()
+                  if expr in contexts:
+                      return contexts[expr]
+                  if expr.startswith("env."):
+                      key = expr[4:]
+                      if key not in env:
+                          die(f"unknown env expression {expr}")
+                      return env[key]
+                  m = re.fullmatch(r"steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)", expr)
+                  if m:
+                      sid, key = m.groups()
+                      if sid not in outputs or key not in outputs[sid]:
+                          die(f"unknown step output expression {expr}")
+                      return outputs[sid][key]
+                  die(f"unsupported GitHub expression: {expr}")
+
+              previous = None
+              result = value
+              for _ in range(8):
+                  if result == previous:
+                      break
+                  previous = result
+                  result = EXPR_RE.sub(repl, result)
+              expr_open = "$" + "{{"
+              if expr_open in result:
+                  die(f"unresolved expression remains: {result!r}")
+              return result
+
+          def resolve_mapping(mapping: dict[str, Any], base_env: dict[str, str],
+                              contexts: dict[str, str],
+                              outputs: dict[str, dict[str, str]]) -> dict[str, str]:
+              env = dict(base_env)
+              pending = {str(k): str(v) for k, v in (mapping or {}).items()}
+              for _ in range(10):
+                  progress = False
+                  for key, val in list(pending.items()):
+                      try:
+                          env[key] = resolve_expr(val, env, contexts, outputs)
+                      except SystemExit:
+                          continue
+                      del pending[key]
+                      progress = True
+                  if not pending:
+                      return env
+                  if not progress:
+                      break
+              if pending:
+                  die(f"could not resolve env mapping keys: {sorted(pending)}")
+              return env
+
+          def clone_current_project(project_root: Path, dest: Path, sha: str) -> None:
+              if dest.exists():
+                  if dest == dest.parent:
+                      die("invalid checkout destination")
+                  if any(dest.iterdir()):
+                      for child in list(dest.iterdir()):
+                          if child.is_dir() and not child.is_symlink():
+                              shutil.rmtree(child)
+                          else:
+                              child.unlink()
+              else:
+                  dest.mkdir(parents=True, exist_ok=True)
+              p = subprocess.run(
+                  ["git", "clone", "-q", "--no-hardlinks", str(project_root), str(dest)],
+                  check=False,
+              )
+              if p.returncode != 0:
+                  die(f"current-project checkout clone failed into {dest}")
+              subprocess.run(["git", "-C", str(dest), "checkout", "-q", "--detach", sha], check=True)
+
+          def clone_external(repo: str, ref: str | None, dest: Path) -> None:
+              if dest.exists():
+                  shutil.rmtree(dest)
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              url = repo if "://" in repo else f"https://github.com/{repo}.git"
+              subprocess.run(["git", "clone", "-q", url, str(dest)], check=True)
+              if ref:
+                  subprocess.run(["git", "-C", str(dest), "checkout", "-q", "--detach", ref], check=True)
+
+          def replace_string_in_place(obj: Any, old: str, new: str) -> int:
+              count = 0
+              if isinstance(obj, dict):
+                  for key in list(obj.keys()):
+                      val = obj[key]
+                      if isinstance(val, str):
+                          hits = val.count(old)
+                          if hits:
+                              obj[key] = val.replace(old, new)
+                              count += hits
+                      elif isinstance(val, (dict, list)):
+                          count += replace_string_in_place(val, old, new)
+              elif isinstance(obj, list):
+                  for idx, val in enumerate(obj):
+                      if isinstance(val, str):
+                          hits = val.count(old)
+                          if hits:
+                              obj[idx] = val.replace(old, new)
+                              count += hits
+                      elif isinstance(val, (dict, list)):
+                          count += replace_string_in_place(val, old, new)
+              return count
+
+          def adapt_274_manager_only_target(job: dict[str, Any]) -> None:
+              # ReSukiSU 35158's new commit is manager-app-only. The final
+              # kernel/uapi-changing commit remains the 35157 target commit.
+              old = 'test "${kernel_commits[0]}" = "$RESUKISU_TARGET"'
+              new = 'test "${kernel_commits[0]}" = "' + OLD_COMMIT + '"'
+              count = replace_string_in_place(job, old, new)
+              if count != 1:
+                  die(f"5.4.274 manager-only target adaptation count mismatch: {count}")
+
+          def patch_293_integrator(workspace: Path, doc: dict[str, Any]) -> str:
+              path = workspace / INTEGRATOR293_REL
+              if not path.is_file():
+                  die(f"5.4.293 integrator missing after checkout: {path}")
+              actual = sha256(path)
+              if actual != INTEGRATOR293_OLD_SHA256:
+                  die(f"5.4.293 integrator old SHA mismatch: {actual}")
+
+              text = path.read_text(encoding="utf-8")
+              replacements = [
+                  (
+                      f'RESUKISU_COMMIT = "{OLD_COMMIT}"',
+                      f'RESUKISU_COMMIT = "{NEW_COMMIT}"',
+                  ),
+                  (
+                      "EXPECTED_KSU_VERSION = 35157",
+                      "EXPECTED_KSU_VERSION = 35158",
+                  ),
+                  (
+                      "if EXPECTED_KSU_VERSION != 35157 or EXPECTED_KSU_UAPI != 4:",
+                      "if EXPECTED_KSU_VERSION != 35158 or EXPECTED_KSU_UAPI != 4:",
+                  ),
+              ]
+              for old, new in replacements:
+                  count = text.count(old)
+                  if count != 1:
+                      die(f"5.4.293 integrator transform preimage mismatch {old!r}: {count}")
+                  text = text.replace(old, new, 1)
+
+              if OLD_COMMIT in text or "EXPECTED_KSU_VERSION = 35157" in text:
+                  die("5.4.293 integrator old ReSukiSU identity remains")
+
+              compile(text, str(path), "exec")
+              path.write_text(text, encoding="utf-8")
+              new_sha = sha256(path)
+
+              old_sha = INTEGRATOR293_OLD_SHA256
+              sha_replacements = replace_string_in_place(doc, old_sha, new_sha)
+              if sha_replacements != 1:
+                  die(f"5.4.293 authority SHA adaptation count mismatch: {sha_replacements}")
+              return new_sha
+
+          def validate_upload_paths(step: dict[str, Any], workspace: Path,
+                                    env: dict[str, str], contexts: dict[str, str],
+                                    outputs: dict[str, dict[str, str]],
+                                    record: Path) -> None:
+              with_map = step.get("with") or {}
+              raw_path = str(with_map.get("path", ""))
+              resolved = resolve_expr(raw_path, env, contexts, outputs)
+              mode = str(with_map.get("if-no-files-found", "warn")).strip()
+              found_any = False
+              with record.open("a", encoding="utf-8") as f:
+                  f.write(f"UPLOAD_STEP={step.get('name','')}\n")
+                  for raw in resolved.splitlines():
+                      item = raw.strip()
+                      if not item:
+                          continue
+                      pattern = item if os.path.isabs(item) else str(workspace / item)
+                      matches = glob.glob(pattern, recursive=True)
+                      existing = [Path(x) for x in matches if Path(x).exists()]
+                      if existing:
+                          found_any = True
+                      f.write(f"INTENDED_PATH={item}\n")
+                      f.write(f"EXISTING_MATCHES={len(existing)}\n")
+              if not found_any and mode == "error":
+                  die(f"authority upload would have failed: {step.get('name','')}")
+
+          def run_authority(kernel: str, project_root: Path, aggregate: Path,
+                            state_root: Path, original_sha: str) -> None:
+              if kernel not in AUTHORITY:
+                  die(f"unknown kernel {kernel}")
+              rel, expected_blob, image_rel = AUTHORITY[kernel]
+              authority_path = project_root / rel
+              if not authority_path.is_file():
+                  die(f"authority workflow missing: {authority_path}")
+              actual_blob = git_blob(authority_path)
+              if actual_blob != expected_blob:
+                  die(f"authority workflow blob drift for {kernel}: {actual_blob}")
+
+              doc = yaml.safe_load(authority_path.read_text(encoding="utf-8"))
+              doc = transform_tree(doc)
+              jobs = doc.get("jobs") or {}
+              if len(jobs) != 1:
+                  die(f"{kernel}: authority must contain exactly one job, got {len(jobs)}")
+              _, job = next(iter(jobs.items()))
+              if kernel == "5.4.274":
+                  adapt_274_manager_only_target(job)
+
+              workspace = state_root / f"workspace-{kernel}"
+              runner_temp = state_root / f"runner-temp-{kernel}"
+              if workspace.exists():
+                  shutil.rmtree(workspace)
+              if runner_temp.exists():
+                  shutil.rmtree(runner_temp)
+              workspace.mkdir(parents=True)
+              runner_temp.mkdir(parents=True)
+
+              outdir = aggregate / kernel
+              outdir.mkdir(parents=True, exist_ok=True)
+              replay_log = outdir / "REPLAY.log"
+              uploads_record = outdir / "AUTHORITY-UPLOAD-PATHS.txt"
+              status_file = outdir / "BUILD-STATUS.txt"
+
+              contexts = {
+                  "github.workspace": str(workspace),
+                  "github.run_id": os.environ["GITHUB_RUN_ID"],
+                  "github.run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+                  "github.sha": original_sha,
+                  "github.repository": os.environ["GITHUB_REPOSITORY"],
+                  "github.ref": os.environ.get("GITHUB_REF", ""),
+                  "runner.temp": str(runner_temp),
+              }
+              outputs: dict[str, dict[str, str]] = {}
+
+              base = dict(os.environ)
+              base.update({
+                  "GITHUB_WORKSPACE": str(workspace),
+                  "RUNNER_TEMP": str(runner_temp),
+                  "GITHUB_SHA": original_sha,
+                  "GITHUB_REPOSITORY": os.environ["GITHUB_REPOSITORY"],
+                  "GITHUB_RUN_ID": os.environ["GITHUB_RUN_ID"],
+                  "GITHUB_RUN_ATTEMPT": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+                  "GITHUB_REF": os.environ.get("GITHUB_REF", ""),
+                  "GITHUB_ACTIONS": "true",
+                  "CI": "true",
+              })
+              base = resolve_mapping(doc.get("env") or {}, base, contexts, outputs)
+              env = resolve_mapping(job.get("env") or {}, base, contexts, outputs)
+
+              failed = False
+              step_index = 0
+              patched_293 = False
+
+              with replay_log.open("w", encoding="utf-8") as log:
+                  log.write(f"KERNEL={kernel}\n")
+                  log.write(f"AUTHORITY={rel}\n")
+                  log.write(f"AUTHORITY_BLOB={actual_blob}\n")
+                  log.write(f"RESUKISU_TARGET={NEW_COMMIT}\n")
+                  log.write(f"RESUKISU_VERSION={NEW_VERSION}\n")
+
+              for step in job.get("steps") or []:
+                  step_index += 1
+                  name = str(step.get("name", f"step-{step_index}"))
+                  should = condition_should_run(step.get("if"), failed)
+                  with replay_log.open("a", encoding="utf-8") as log:
+                      log.write(f"\nSTEP={step_index}:{name}\n")
+                      log.write(f"SHOULD_RUN={should}\n")
+                  if not should:
+                      continue
+
+                  step_env = resolve_mapping(step.get("env") or {}, env, contexts, outputs)
+
+                  if "uses" in step:
+                      use = str(step["uses"])
+                      if use.startswith("actions/checkout@"):
+                          w = step.get("with") or {}
+                          repo = resolve_expr(
+                              str(w.get("repository", os.environ["GITHUB_REPOSITORY"])),
+                              step_env, contexts, outputs,
+                          )
+                          ref = resolve_expr(str(w.get("ref", "")), step_env, contexts, outputs) or None
+                          path_value = resolve_expr(str(w.get("path", "")), step_env, contexts, outputs)
+                          dest = workspace / path_value if path_value else workspace
+                          if repo == os.environ["GITHUB_REPOSITORY"]:
+                              clone_current_project(project_root, dest, original_sha)
+                          else:
+                              clone_external(repo, ref, dest)
+
+                          if kernel == "5.4.293" and repo == os.environ["GITHUB_REPOSITORY"]:
+                              new_sha = patch_293_integrator(workspace, job)
+                              patched_293 = True
+                              with replay_log.open("a", encoding="utf-8") as log:
+                                  log.write(f"INTEGRATOR_293_TRANSFORMED_SHA256={new_sha}\n")
+                          continue
+
+                      if use.startswith("actions/upload-artifact@"):
+                          validate_upload_paths(
+                              step, workspace, step_env, contexts, outputs, uploads_record
+                          )
+                          continue
+
+                      die(f"{kernel}: unsupported authority action {use}")
+
+                  if "run" not in step:
+                      die(f"{kernel}: unsupported authority step without run/uses: {name}")
+
+                  shell = str(step.get("shell", "bash"))
+                  if not shell.startswith("bash"):
+                      die(f"{kernel}: unsupported shell {shell!r} in {name}")
+
+                  script = resolve_expr(str(step["run"]), step_env, contexts, outputs)
+                  expr_open = "$" + "{{"
+                  if expr_open in script:
+                      die(f"{kernel}: unresolved expression in {name}")
+
+                  env_file = runner_temp / f"github-env-{step_index}.txt"
+                  output_file = runner_temp / f"github-output-{step_index}.txt"
+                  path_file = runner_temp / f"github-path-{step_index}.txt"
+                  summary_file = runner_temp / f"github-summary-{step_index}.md"
+                  for f in (env_file, output_file, path_file, summary_file):
+                      if f.exists():
+                          f.unlink()
+
+                  run_env = dict(step_env)
+                  run_env.update({
+                      "GITHUB_ENV": str(env_file),
+                      "GITHUB_OUTPUT": str(output_file),
+                      "GITHUB_PATH": str(path_file),
+                      "GITHUB_STEP_SUMMARY": str(summary_file),
+                  })
+
+                  script_file = runner_temp / f"step-{step_index}.sh"
+                  script_file.write_text(script, encoding="utf-8")
+                  syntax = subprocess.run(
+                      ["bash", "-n", str(script_file)],
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      check=False,
+                  )
+                  if syntax.returncode != 0:
+                      die(f"{kernel}: generated authority shell syntax failed in {name}: {syntax.stderr}")
+
+                  defaults_run = ((job.get("defaults") or {}).get("run") or {})
+                  raw_workdir = step.get("working-directory", defaults_run.get("working-directory", ""))
+                  if raw_workdir:
+                      resolved_workdir = resolve_expr(
+                          str(raw_workdir), run_env, contexts, outputs
+                      )
+                      run_cwd = Path(resolved_workdir)
+                      if not run_cwd.is_absolute():
+                          run_cwd = workspace / run_cwd
+                      if not run_cwd.is_dir():
+                          die(f"{kernel}: working-directory missing for {name}: {run_cwd}")
+                  else:
+                      run_cwd = workspace
+
+                  with replay_log.open("a", encoding="utf-8") as log:
+                      proc = subprocess.run(
+                          ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(script_file)],
+                          cwd=run_cwd,
+                          env=run_env,
+                          stdout=log,
+                          stderr=subprocess.STDOUT,
+                          check=False,
+                      )
+
+                  new_env = parse_env_file(env_file)
+                  env.update(new_env)
+
+                  if path_file.exists():
+                      additions = [
+                          line for line in path_file.read_text(encoding="utf-8").splitlines()
+                          if line.strip()
+                      ]
+                      if additions:
+                          env["PATH"] = os.pathsep.join(additions + [env.get("PATH", "")])
+
+                  if step.get("id") and output_file.exists():
+                      outputs[str(step["id"])] = parse_env_file(output_file)
+
+                  if proc.returncode != 0:
+                      if bool(step.get("continue-on-error", False)):
+                          with replay_log.open("a", encoding="utf-8") as log:
+                              log.write(f"STEP_CONTINUE_ON_ERROR_RC={proc.returncode}\n")
+                      else:
+                          failed = True
+                          with replay_log.open("a", encoding="utf-8") as log:
+                              log.write(f"STEP_FAILED_RC={proc.returncode}\n")
+
+              if kernel == "5.4.293" and not patched_293:
+                  die("5.4.293 integrator transform hook did not execute")
+
+              image = workspace / image_rel
+              if not failed and not image.is_file():
+                  failed = True
+                  with replay_log.open("a", encoding="utf-8") as log:
+                      log.write(f"IMAGE_MISSING={image_rel}\n")
+
+              if image.is_file():
+                  final_image = outdir / "Image"
+                  shutil.copy2(image, final_image)
+                  image_sha = sha256(final_image)
+                  image_bytes = final_image.stat().st_size
+              else:
+                  image_sha = "MISSING"
+                  image_bytes = 0
+
+              with status_file.open("w", encoding="utf-8") as f:
+                  f.write(f"KERNEL={kernel}\n")
+                  f.write(f"AUTHORITY_WORKFLOW={rel}\n")
+                  f.write(f"AUTHORITY_BLOB={actual_blob}\n")
+                  f.write(f"RESUKISU_COMMIT={NEW_COMMIT}\n")
+                  f.write(f"RESUKISU_VERSION={NEW_VERSION}\n")
+                  f.write("UAPI=4\n")
+                  f.write("SUSFS_VERSION=v2.3.0\n")
+                  f.write("SUSFS_COMMIT=04a9d713106191ba98be680bd7ad9547ab1de964\n")
+                  f.write("MODULE_LOAD_FILTER=EXCLUDED\n")
+                  f.write(f"IMAGE_BYTES={image_bytes}\n")
+                  f.write(f"IMAGE_SHA256={image_sha}\n")
+                  f.write(f"COMPILE_PASS={'NO' if failed else 'YES'}\n")
+                  f.write("PACKAGE_PASS=NO\n")
+                  f.write("STATIC_BOOT_PATH_PASS=NO\n")
+                  f.write("DEVICE_PASS=NO\n")
+
+              # Copy small text evidence only; keep the aggregate compact.
+              evidence = outdir / "evidence"
+              evidence.mkdir(exist_ok=True)
+              for root_name in (
+                  ".audit",
+                  "u5-o43-audit",
+                  "u5-o45-audit",
+                  "u5-o44-audit",
+                  "clean-gen1-p14r1-audit",
+              ):
+                  root = workspace / root_name
+                  if not root.exists():
+                      continue
+                  root_alias = "audit" if root_name == ".audit" else root_name
+                  for src in root.rglob("*"):
+                      if not src.is_file() or src.stat().st_size > 2 * 1024 * 1024:
+                          continue
+                      try:
+                          src.read_text(encoding="utf-8")
+                      except (UnicodeDecodeError, OSError):
+                          continue
+                      relp = src.relative_to(root)
+                      dst = evidence / root_alias / relp
+                      dst.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(src, dst)
+
+              if failed:
+                  die(f"{kernel}: authority replay/build failed; inspect {replay_log}", 10)
+
+          def selftest() -> None:
+              sample = {
+                  "env": {
+                      "RESUKISU_TARGET": OLD_COMMIT,
+                      "EXPECTED_KSU_VERSION": OLD_VERSION,
+                      "RESUKISU_EXPECTED_DELTA_COMMITS": "3",
+                  },
+                  "s": f"{OLD_SHORT}-{OLD_VERSION}",
+              }
+              got = transform_tree(sample)
+              assert got["env"]["RESUKISU_TARGET"] == NEW_COMMIT
+              assert got["env"]["EXPECTED_KSU_VERSION"] == NEW_VERSION
+              assert got["env"]["RESUKISU_EXPECTED_DELTA_COMMITS"] == "4"
+              assert got["s"] == f"{NEW_SHORT}-{NEW_VERSION}"
+
+              dummy_steps = [
+                  {"run": 'test "${kernel_commits[0]}" = "$RESUKISU_TARGET"'},
+                  {"run": f'EXPECTED_SHA256="{INTEGRATOR293_OLD_SHA256}"'},
+              ]
+              dummy_job = {"steps": dummy_steps}
+              original_steps_id = id(dummy_steps)
+              adapt_274_manager_only_target(dummy_job)
+              assert id(dummy_job["steps"]) == original_steps_id
+              assert OLD_COMMIT in dummy_job["steps"][0]["run"]
+              assert "$RESUKISU_TARGET" not in dummy_job["steps"][0]["run"]
+
+              fake_new_sha = "a" * 64
+              replaced = replace_string_in_place(
+                  dummy_job, INTEGRATOR293_OLD_SHA256, fake_new_sha
+              )
+              assert replaced == 1
+              assert id(dummy_job["steps"]) == original_steps_id
+              assert fake_new_sha in dummy_job["steps"][1]["run"]
+
+              assert condition_should_run("always()", True)
+              assert condition_should_run("failure()", True)
+              assert not condition_should_run("success()", True)
+              assert condition_should_run(None, False)
+
+              with tempfile.TemporaryDirectory() as td:
+                  p = Path(td) / "env"
+                  p.write_text("A=1\nB<<EOF\nx\ny\nEOF\n", encoding="utf-8")
+                  parsed = parse_env_file(p)
+                  assert parsed == {"A": "1", "B": "x\ny"}
+
+              print("O51_REPLAYER_SELFTEST=PASS")
+
+          def main() -> None:
+              ap = argparse.ArgumentParser()
+              ap.add_argument("--selftest", action="store_true")
+              ap.add_argument("--kernel")
+              ap.add_argument("--project-root")
+              ap.add_argument("--aggregate")
+              ap.add_argument("--state-root")
+              ap.add_argument("--sha")
+              args = ap.parse_args()
+
+              if args.selftest:
+                  selftest()
+                  return
+
+              required = [args.kernel, args.project_root, args.aggregate, args.state_root, args.sha]
+              if any(x is None for x in required):
+                  die("missing replay arguments")
+
+              run_authority(
+                  args.kernel,
+                  Path(args.project_root).resolve(),
+                  Path(args.aggregate).resolve(),
+                  Path(args.state_root).resolve(),
+                  args.sha,
+              )
+
+          if __name__ == "__main__":
+              main()
+          PY
+
+          python3 -m py_compile "$RUNNER_TEMP/o51_replay.py"
+          python3 "$RUNNER_TEMP/o51_replay.py" --selftest
+          echo "O51_REPLAYER_COMPILE=PASS"
+
+      - name: Rebuild all six kernels with ReSukiSU 35158
+        id: mass_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          AGG="$GITHUB_WORKSPACE/o51-aggregate"
+          STATE="$RUNNER_TEMP/o51-state"
+          rm -rf "$AGG" "$STATE"
+          mkdir -p "$AGG" "$STATE"
+
+          cat > "$AGG/00-O51-PLAN.txt" <<EOF
+          VEUX U6-O51 v3
+          ReSukiSU target: $RESUKISU_NEW
+          ReSukiSU version: $RESUKISU_NEW_VERSION
+          UAPI: $RESUKISU_UAPI
+          SUSFS: $SUSFS_VERSION
+          SUSFS commit: $SUSFS_COMMIT
+          Module-load-filter: EXCLUDED
+
+          Scope:
+          SOURCE/PORT + COMPILE rebuild only.
+          Four exact O51-v2 compile-pass Images are authenticated and reused.
+          Only failed 5.4.274 and 5.4.293 are rebuilt.
+          Final aggregate contains one exact Image for all six kernels.
+          PACKAGE_PASS=NO
+          STATIC_BOOT_PATH_PASS=NO
+          DEVICE_PASS=NO
+
+          Kernels:
+          5.4.274
+          5.4.292
+          5.4.293
+          5.4.300
+          5.4.301
+          5.4.302
+          EOF
+
+          prior="$RUNNER_TEMP/o51v2-partial"
+          test -d "$prior"
+
+          for kernel in 5.4.292 5.4.300 5.4.301 5.4.302; do
+            test -s "$prior/$kernel/Image"
+            test -s "$prior/$kernel/BUILD-STATUS.txt"
+            cp -a "$prior/$kernel" "$AGG/$kernel"
+          done
+
+          {
+            echo "O51V2_REUSED_RUN_ID=$O51V2_RUN_ID"
+            echo "O51V2_REUSED_ARTIFACT_ID=$O51V2_ARTIFACT_ID"
+            echo "O51V2_REUSED_ARTIFACT_SHA256=$O51V2_ARTIFACT_SHA256"
+            echo "REUSED_KERNELS=5.4.292,5.4.300,5.4.301,5.4.302"
+            echo "REPAIR_KERNELS=5.4.274,5.4.293"
+          } > "$AGG/00-O51V2-PARTIAL-REUSE.txt"
+
+          failures=0
+          for kernel in 5.4.274 5.4.293; do
+            echo "===== O51 V3 REPAIR START $kernel ====="
+            if python3 "$RUNNER_TEMP/o51_replay.py" \
+                --kernel "$kernel" \
+                --project-root "$GITHUB_WORKSPACE" \
+                --aggregate "$AGG" \
+                --state-root "$STATE" \
+                --sha "$GITHUB_SHA"; then
+              echo "===== O51 V3 REPAIR PASS $kernel ====="
+            else
+              rc=$?
+              echo "===== O51 V3 REPAIR FAIL $kernel rc=$rc ====="
+              failures=$((failures + 1))
+            fi
+            rm -rf "$STATE/workspace-$kernel" "$STATE/runner-temp-$kernel"
+          done
+
+          echo "O51_REPAIR_FAILURE_COUNT=$failures" | tee "$AGG/01-MASS-RESULT.txt"
+          test "$failures" = 0
+
+      - name: Finalize one compact O51 aggregate
+        if: always()
+        shell: bash
+        env:
+          MASS_BUILD_OUTCOME: ${{ steps.mass_build.outcome }}
+        run: |
+          set -euo pipefail
+          AGG="$GITHUB_WORKSPACE/o51-aggregate"
+          mkdir -p "$AGG"
+
+          {
+            echo "MASS_BUILD_OUTCOME=$MASS_BUILD_OUTCOME"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "RESUKISU_COMMIT=$RESUKISU_NEW"
+            echo "RESUKISU_VERSION=$RESUKISU_NEW_VERSION"
+            echo "UAPI=$RESUKISU_UAPI"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "O51V2_REUSED_RUN_ID=$O51V2_RUN_ID"
+            echo "O51V2_REUSED_ARTIFACT_ID=$O51V2_ARTIFACT_ID"
+            echo "O51V2_REUSED_ARTIFACT_SHA256=$O51V2_ARTIFACT_SHA256"
+          } > "$AGG/02-RUN-METADATA.txt"
+
+          all_pass=1
+          : > "$AGG/03-KERNEL-MATRIX.txt"
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$AGG/$kernel/BUILD-STATUS.txt"
+            image="$AGG/$kernel/Image"
+            if [ ! -s "$status" ] || [ ! -s "$image" ]; then
+              echo "$kernel=MISSING" >> "$AGG/03-KERNEL-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+            if ! grep -Fxq 'COMPILE_PASS=YES' "$status"; then
+              echo "$kernel=COMPILE_FAIL" >> "$AGG/03-KERNEL-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            image_sha="$(sha256sum "$image" | awk '{print $1}')"
+            status_sha="$(sed -n 's/^IMAGE_SHA256=//p' "$status")"
+            test "$image_sha" = "$status_sha"
+            echo "$kernel=COMPILE_PASS IMAGE_SHA256=$image_sha" >> "$AGG/03-KERNEL-MATRIX.txt"
+          done
+
+          if [ "$MASS_BUILD_OUTCOME" != success ]; then
+            all_pass=0
+          fi
+
+          {
+            if [ "$all_pass" = 1 ]; then
+              echo 'VEUX_U6_O51_MASS_COMPILE_REBUILD=PASS'
+              echo 'ALL_SIX_COMPILE_PASS=YES'
+            else
+              echo 'VEUX_U6_O51_MASS_COMPILE_REBUILD=FAIL'
+              echo 'ALL_SIX_COMPILE_PASS=NO'
+            fi
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$AGG/FINAL-RESULT.txt"
+
+          (
+            cd "$AGG"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+          echo "O51_AGGREGATE_FINALIZED=PASS"
+
+      - name: Upload single O51 aggregate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O51V3-ReSukiSU-35158-ALL-SIX-COMPILE-${{ github.run_id }}
+          path: o51-aggregate/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real O51 GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          final="$GITHUB_WORKSPACE/o51-aggregate/FINAL-RESULT.txt"
+          test -s "$final"
+          grep -Fxq 'VEUX_U6_O51_MASS_COMPILE_REBUILD=PASS' "$final"
+          grep -Fxq 'ALL_SIX_COMPILE_PASS=YES' "$final"
+          grep -Fxq 'PACKAGE_PASS=NO' "$final"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$final"
+          grep -Fxq 'DEVICE_PASS=NO' "$final"
+
+          (
+            cd "$GITHUB_WORKSPACE/o51-aggregate"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo "O51V3_REAL_GREEN_GATE=PASS"
