@@ -1,0 +1,512 @@
+name: VEUX U6-O52 v1 All Six ReSukiSU 35158 AK3 Package Audit
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u6-o52-v1-package-35158-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  O51_RUN_ID: '35492617425'
+  O51_HEAD_SHA: 4356eafdcae0674cba7af719bcc0ca70009d3ba6
+  O51_ARTIFACT_ID: '10599713224'
+  O51_ARTIFACT_NAME: VEUX-U6-O51V3-ReSukiSU-35158-ALL-SIX-COMPILE-35492617425
+  O51_ARTIFACT_SHA256: 2d056bc1f8f33009889fa198c973c2aa15df0aa8f88c4a9e822986adbeec8784
+
+  RESUKISU_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_SHORT: 6d18926a
+  RESUKISU_VERSION: '35158'
+  RESUKISU_UAPI: '4'
+
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+
+  IMAGE_SHA_274: 4959838b9cc49f693080e60b917cc839b5bd873e4f38b20c8d39d72973b8a85d
+  IMAGE_SHA_292: cebdc135d154e88f8f8c08b3e44181470c56a45f054537e96a5d1b6dbcca952a
+  IMAGE_SHA_293: 7d3b0f6200a1cecb0d6675318fc35f21e8bc8657b67437c1382a3ef4d735919d
+  IMAGE_SHA_300: 09bf533d83c3c140b8c7837883ced6291615e5bfc42efa51c4dc298a982394e0
+  IMAGE_SHA_301: 4de18f2ef3ca32a59e06380309bbef8f061b7729543dac53304c4f985ff5e394
+  IMAGE_SHA_302: faf2bac3e43e1e05f4703cef69158f9c18961a572d8e8789999bd0e0cb073761
+
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_TREE: c6af9eb7018bce852819ab1585de426a426e6806
+
+jobs:
+  package-audit:
+    name: Package all six ReSukiSU 35158 Images in frozen AnyKernel3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Repository identity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout current project read-only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install package-audit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl file git jq unzip zip
+
+      - name: Authenticate exact O51 GREEN run and aggregate
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          source_zip="$RUNNER_TEMP/o51-source.zip"
+          source_dir="$RUNNER_TEMP/o51-source"
+          run_json="$RUNNER_TEMP/o51-run.json"
+          artifact_json="$RUNNER_TEMP/o51-artifact.json"
+          rm -rf "$source_dir"
+          rm -f "$source_zip" "$run_json" "$artifact_json"
+          mkdir -p "$source_dir"
+
+          api_get() {
+            local url="$1" output="$2"
+            curl --fail --location --silent --show-error \
+              --retry 3 --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_READ_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$url" -o "$output"
+          }
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$O51_RUN_ID" \
+            "$run_json"
+
+          jq -e \
+            --arg head "$O51_HEAD_SHA" \
+            '.status == "completed" and .conclusion == "success" and .head_sha == $head' \
+            "$run_json" >/dev/null
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$O51_ARTIFACT_ID" \
+            "$artifact_json"
+
+          jq -e \
+            --arg name "$O51_ARTIFACT_NAME" \
+            --arg digest "sha256:$O51_ARTIFACT_SHA256" \
+            --argjson run "$O51_RUN_ID" \
+            '.expired == false
+             and .name == $name
+             and .digest == $digest
+             and .workflow_run.id == $run' \
+            "$artifact_json" >/dev/null
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$O51_ARTIFACT_ID/zip" \
+            "$source_zip"
+
+          test -s "$source_zip"
+          test "$(sha256sum "$source_zip" | awk '{print $1}')" = "$O51_ARTIFACT_SHA256"
+          unzip -q "$source_zip" -d "$source_dir"
+
+          test -s "$source_dir/SHA256SUMS.txt"
+          (
+            cd "$source_dir"
+            sha256sum -c SHA256SUMS.txt
+          ) > "$RUNNER_TEMP/o51-source-sha256-check.txt"
+
+          grep -Fxq 'VEUX_U6_O51_MASS_COMPILE_REBUILD=PASS' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'ALL_SIX_COMPILE_PASS=YES' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'PACKAGE_PASS=NO' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'DEVICE_PASS=NO' "$source_dir/FINAL-RESULT.txt"
+
+          grep -Fxq "GITHUB_RUN_ID=$O51_RUN_ID" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "GITHUB_SHA=$O51_HEAD_SHA" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "UAPI=$RESUKISU_UAPI" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "SUSFS_VERSION=$SUSFS_VERSION" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$source_dir/02-RUN-METADATA.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$source_dir/02-RUN-METADATA.txt"
+
+          verify_source_kernel() {
+            local kernel="$1" expected_sha="$2"
+            local dir="$source_dir/$kernel"
+            test -s "$dir/Image"
+            test -s "$dir/BUILD-STATUS.txt"
+            test "$(sha256sum "$dir/Image" | awk '{print $1}')" = "$expected_sha"
+            grep -Fxq "KERNEL=$kernel" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "UAPI=$RESUKISU_UAPI" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "SUSFS_VERSION=$SUSFS_VERSION" "$dir/BUILD-STATUS.txt"
+            grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$dir/BUILD-STATUS.txt"
+            grep -Fxq "IMAGE_SHA256=$expected_sha" "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'COMPILE_PASS=YES' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'PACKAGE_PASS=NO' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$dir/BUILD-STATUS.txt"
+            grep -Fxq 'DEVICE_PASS=NO' "$dir/BUILD-STATUS.txt"
+          }
+
+          verify_source_kernel 5.4.274 "$IMAGE_SHA_274"
+          verify_source_kernel 5.4.292 "$IMAGE_SHA_292"
+          verify_source_kernel 5.4.293 "$IMAGE_SHA_293"
+          verify_source_kernel 5.4.300 "$IMAGE_SHA_300"
+          verify_source_kernel 5.4.301 "$IMAGE_SHA_301"
+          verify_source_kernel 5.4.302 "$IMAGE_SHA_302"
+
+          echo "O51_GREEN_RUN_AUTH=PASS"
+          echo "O51_ARTIFACT_OUTER_SHA256=PASS"
+          echo "O51_ARTIFACT_INTERNAL_SHA256=PASS"
+          echo "O51_ALL_SIX_IMAGE_AUTH=PASS"
+
+      - name: Authenticate frozen AnyKernel3 template
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          template="$RUNNER_TEMP/AnyKernel3-template"
+          rm -rf "$template"
+          git clone -q "$AK3_REPO" "$template"
+          git -C "$template" checkout -q --detach "$AK3_COMMIT"
+
+          test "$(git -C "$template" rev-parse HEAD)" = "$AK3_COMMIT"
+          test "$(git -C "$template" rev-parse 'HEAD^{tree}')" = "$AK3_TREE"
+          test -f "$template/anykernel.sh"
+          test -f "$template/tools/ak3-core.sh"
+          test -f "$template/META-INF/com/google/android/update-binary"
+          test -f "$template/META-INF/com/google/android/updater-script"
+          test -f "$template/LICENSE"
+
+          echo "AK3_PIN_AUTH=PASS"
+          echo "AK3_COMMIT=$AK3_COMMIT"
+          echo "AK3_TREE=$AK3_TREE"
+
+      - name: Package and audit all six exact Images
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_dir="$RUNNER_TEMP/o51-source"
+          template="$RUNNER_TEMP/AnyKernel3-template"
+          aggregate="$GITHUB_WORKSPACE/o52-aggregate"
+          work_root="$RUNNER_TEMP/o52-work"
+          rm -rf "$aggregate" "$work_root"
+          mkdir -p "$aggregate/packages" "$aggregate/audit" "$work_root"
+
+          declare -A image_sha
+          image_sha["5.4.274"]="$IMAGE_SHA_274"
+          image_sha["5.4.292"]="$IMAGE_SHA_292"
+          image_sha["5.4.293"]="$IMAGE_SHA_293"
+          image_sha["5.4.300"]="$IMAGE_SHA_300"
+          image_sha["5.4.301"]="$IMAGE_SHA_301"
+          image_sha["5.4.302"]="$IMAGE_SHA_302"
+
+          kernels=(5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302)
+
+          for kernel in "${kernels[@]}"; do
+            expected_sha="${image_sha[$kernel]}"
+            source_image="$source_dir/$kernel/Image"
+            work="$work_root/ak3-$kernel"
+            package_dir="$aggregate/packages/$kernel"
+            zip_name="VEUX-${kernel}-ReSukiSU-35158-UAPI4-SUSFS-2.3.0-AK3.zip"
+            zip_path="$package_dir/$zip_name"
+            audit="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+
+            test -s "$source_image"
+            test "$(sha256sum "$source_image" | awk '{print $1}')" = "$expected_sha"
+
+            rm -rf "$work"
+            cp -a "$template" "$work"
+            mkdir -p "$package_dir"
+
+            rm -rf "$work/.git" "$work/.github"
+            rm -f "$work/README.md"
+            rm -f "$work/Image" "$work/Image.gz" "$work/Image.gz-dtb" \
+                  "$work/dtb" "$work/dtbo.img" "$work/boot.img"
+            find "$work" -type f -name '*placeholder' -delete
+            find "$work" -maxdepth 1 -type f -name '*.txt' -delete
+            find "$work" -maxdepth 1 -type f -name '.*' -delete
+
+            cp "$source_image" "$work/Image"
+
+            cat > "$work/anykernel.sh" <<EOF
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=VEUX Linux $kernel ReSukiSU $RESUKISU_SHORT UAPI4 + SUSFS 2.3.0
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+            chmod 0755 "$work/anykernel.sh"
+
+            (
+              cd "$work"
+              zip -r9 -q "$zip_path" . \
+                -x '.git/*' '.github/*' 'README.md' '*placeholder' '*.txt'
+            )
+            test -s "$zip_path"
+
+            unzip -tq "$zip_path"
+
+            entries="$work_root/${kernel}-entries.txt"
+            unzip -Z1 "$zip_path" > "$entries"
+
+            for required in \
+              anykernel.sh \
+              tools/ak3-core.sh \
+              Image \
+              META-INF/com/google/android/update-binary \
+              META-INF/com/google/android/updater-script \
+              LICENSE
+            do
+              grep -Fxq "$required" "$entries"
+            done
+
+            test "$(grep -Fxc 'Image' "$entries")" -eq 1
+            ! grep -Eq '(^/|(^|/)\.\.(/|$))' "$entries"
+            ! sort "$entries" | uniq -d | grep -q .
+            ! grep -Eq '(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$' "$entries"
+            ! grep -Ei '(^|/)(audit|build-info|final-result|sha256sums)([^/]*)$' "$entries"
+            ! grep -E '(^|/)\.git(/|$)|(^|/)\.github(/|$)|(^|/)README\.md$' "$entries"
+            ! grep -Ei '(^|/)(chatgpt|openai|claude|gemini|copilot|ai-generated)([^/]*)$' "$entries"
+
+            extract="$work_root/extract-$kernel"
+            rm -rf "$extract"
+            mkdir -p "$extract"
+            unzip -q "$zip_path" -d "$extract"
+
+            cmp -s "$source_image" "$extract/Image"
+            test "$(sha256sum "$extract/Image" | awk '{print $1}')" = "$expected_sha"
+
+            bash -n "$extract/anykernel.sh"
+            grep -Fqx "kernel.string=VEUX Linux $kernel ReSukiSU $RESUKISU_SHORT UAPI4 + SUSFS 2.3.0" "$extract/anykernel.sh"
+            grep -Fqx 'do.devicecheck=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.modules=0' "$extract/anykernel.sh"
+            grep -Fqx 'do.systemless=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.cleanup=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.cleanuponabort=0' "$extract/anykernel.sh"
+            grep -Fqx 'device.name1=veux' "$extract/anykernel.sh"
+            grep -Fqx 'supported.versions=13' "$extract/anykernel.sh"
+            grep -Fqx 'BLOCK=boot;' "$extract/anykernel.sh"
+            grep -Fqx 'IS_SLOT_DEVICE=1;' "$extract/anykernel.sh"
+            grep -Fqx 'SLOT_SELECT=active;' "$extract/anykernel.sh"
+            grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$extract/anykernel.sh"
+            grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$extract/anykernel.sh"
+            grep -Fqx '. tools/ak3-core.sh;' "$extract/anykernel.sh"
+            grep -Fqx 'dump_boot;' "$extract/anykernel.sh"
+            grep -Fqx 'write_boot;' "$extract/anykernel.sh"
+            ! grep -Eq '^(block|is_slot_device|slot_select|ramdisk_compression|patch_vbmeta_flag)=' "$extract/anykernel.sh"
+
+            if grep -RIlE 'ChatGPT|OpenAI|Claude|Gemini|Copilot|AI-generated' "$extract" \
+                --exclude='Image' 2>/dev/null | grep -q .; then
+              echo "::error::Unexpected assistant/generator marker in $zip_name"
+              exit 1
+            fi
+
+            ak3_sha="$(sha256sum "$zip_path" | awk '{print $1}')"
+            ak3_bytes="$(stat -c '%s' "$zip_path")"
+
+            {
+              echo "KERNEL=$kernel"
+              echo "SOURCE=O51_RUN_$O51_RUN_ID"
+              echo "SOURCE_ARTIFACT_ID=$O51_ARTIFACT_ID"
+              echo "SOURCE_ARTIFACT_SHA256=$O51_ARTIFACT_SHA256"
+              echo "IMAGE_SHA256=$expected_sha"
+              echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+              echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+              echo "UAPI=$RESUKISU_UAPI"
+              echo "SUSFS_VERSION=$SUSFS_VERSION"
+              echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+              echo "MODULE_LOAD_FILTER=EXCLUDED"
+              echo "AK3_COMMIT=$AK3_COMMIT"
+              echo "AK3_TREE=$AK3_TREE"
+              echo "AK3_FILE=$zip_name"
+              echo "AK3_SHA256=$ak3_sha"
+              echo "AK3_BYTES=$ak3_bytes"
+              echo "IMAGE_PARITY=PASS"
+              echo "AK3_REQUIRED_FILES=PASS"
+              echo "AK3_FLASH_CONTRACT=PASS"
+              echo "AK3_CLEAN_PUBLIC_PAYLOAD=PASS"
+              echo "SOURCE_PORT_PASS=PASS_FROM_O51"
+              echo "COMPILE_PASS=YES_FROM_O51"
+              echo "PACKAGE_PASS=YES"
+              echo "STATIC_BOOT_PATH_PASS=NO"
+              echo "DEVICE_PASS=NO"
+            } | tee "$audit"
+
+            rm -rf "$extract"
+          done
+
+          echo "O52_ALL_SIX_PACKAGING_LOOP=PASS"
+
+      - name: Finalize compact O52 aggregate
+        if: always()
+        shell: bash
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          aggregate="$GITHUB_WORKSPACE/o52-aggregate"
+          mkdir -p "$aggregate/audit"
+
+          {
+            echo "PACKAGE_STEP_OUTCOME=$PACKAGE_OUTCOME"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "O51_RUN_ID=$O51_RUN_ID"
+            echo "O51_HEAD_SHA=$O51_HEAD_SHA"
+            echo "O51_ARTIFACT_ID=$O51_ARTIFACT_ID"
+            echo "O51_ARTIFACT_SHA256=$O51_ARTIFACT_SHA256"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+            echo "UAPI=$RESUKISU_UAPI"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "MODULE_LOAD_FILTER=EXCLUDED"
+            echo "AK3_COMMIT=$AK3_COMMIT"
+            echo "AK3_TREE=$AK3_TREE"
+          } > "$aggregate/audit/RUN-METADATA.txt"
+
+          all_pass=1
+          : > "$aggregate/audit/PACKAGE-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+            package_dir="$aggregate/packages/$kernel"
+
+            if [ ! -s "$status" ]; then
+              echo "$kernel=STATUS_MISSING" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            if ! grep -Fxq 'PACKAGE_PASS=YES' "$status"; then
+              echo "$kernel=PACKAGE_FAIL" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            zip_file="$(find "$package_dir" -maxdepth 1 -type f -name '*.zip' -print -quit)"
+            if [ -z "$zip_file" ] || [ ! -s "$zip_file" ]; then
+              echo "$kernel=ZIP_MISSING" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            actual_sha="$(sha256sum "$zip_file" | awk '{print $1}')"
+            status_sha="$(sed -n 's/^AK3_SHA256=//p' "$status")"
+            test "$actual_sha" = "$status_sha"
+            echo "$kernel=PACKAGE_PASS AK3_SHA256=$actual_sha" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+          done
+
+          if [ "$PACKAGE_OUTCOME" != success ]; then
+            all_pass=0
+          fi
+
+          {
+            if [ "$all_pass" = 1 ]; then
+              echo 'VEUX_U6_O52_ALL_SIX_AK3_PACKAGE_AUDIT=PASS'
+              echo 'ALL_SIX_PACKAGE_PASS=YES'
+            else
+              echo 'VEUX_U6_O52_ALL_SIX_AK3_PACKAGE_AUDIT=FAIL'
+              echo 'ALL_SIX_PACKAGE_PASS=NO'
+            fi
+            echo 'SOURCE_PORT_PASS=PASS_FROM_O51'
+            echo 'COMPILE_PASS=YES_FROM_O51'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$aggregate/FINAL-RESULT.txt"
+
+          (
+            cd "$aggregate"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+          echo "O52_AGGREGATE_FINALIZED=PASS"
+
+      - name: Upload single O52 package aggregate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U6-O52V1-ReSukiSU-35158-ALL-SIX-AK3-${{ github.run_id }}
+          path: o52-aggregate/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real O52 GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aggregate="$GITHUB_WORKSPACE/o52-aggregate"
+          final="$aggregate/FINAL-RESULT.txt"
+
+          test -s "$final"
+          grep -Fxq 'VEUX_U6_O52_ALL_SIX_AK3_PACKAGE_AUDIT=PASS' "$final"
+          grep -Fxq 'ALL_SIX_PACKAGE_PASS=YES' "$final"
+          grep -Fxq 'SOURCE_PORT_PASS=PASS_FROM_O51' "$final"
+          grep -Fxq 'COMPILE_PASS=YES_FROM_O51' "$final"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$final"
+          grep -Fxq 'DEVICE_PASS=NO' "$final"
+
+          test "$(find "$aggregate/packages" -type f -name '*.zip' | wc -l)" -eq 6
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+            grep -Fxq 'IMAGE_PARITY=PASS' "$status"
+            grep -Fxq 'AK3_REQUIRED_FILES=PASS' "$status"
+            grep -Fxq 'AK3_FLASH_CONTRACT=PASS' "$status"
+            grep -Fxq 'AK3_CLEAN_PUBLIC_PAYLOAD=PASS' "$status"
+            grep -Fxq 'PACKAGE_PASS=YES' "$status"
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$status"
+            grep -Fxq 'DEVICE_PASS=NO' "$status"
+          done
+
+          (
+            cd "$aggregate"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo "O52V1_REAL_GREEN_GATE=PASS"
