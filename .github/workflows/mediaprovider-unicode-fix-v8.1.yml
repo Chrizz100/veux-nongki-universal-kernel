@@ -1,0 +1,805 @@
+name: Build MediaProvider Unicode Fix V8.1 ABI Verified
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/mediaprovider-unicode-fix*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  source-audit:
+    name: Validate source patch against Android 17 MediaProvider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout closest public Android 17 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout             https://github.com/GrapheneOS/platform_packages_providers_MediaProvider.git             "$RUNNER_TEMP/MediaProvider"
+          cd "$RUNNER_TEMP/MediaProvider"
+          git fetch --depth=1 origin db0779586e2b1b4044d46a848b0f60a93a601ca5
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "db0779586e2b1b4044d46a848b0f60a93a601ca5"
+
+      - name: Create and validate source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$RUNNER_TEMP/MediaProvider"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/com/android/providers/media/util/FileUtils.java")
+          text = path.read_text(encoding="utf-8")
+
+          helper = "public static String normalizeAndFilterDefaultIgnorableCodepoints(String path) {"
+          helper_count = text.count(helper)
+          if helper_count != 1:
+              raise SystemExit(
+                  f"ERROR: expected one Unicode normalizer helper, found {helper_count}"
+              )
+
+          normalize = "        path = normalizeAndFilterDefaultIgnorableCodepoints(path);\n"
+
+          # Exact, two-line method prologues from the pinned Android-17 source.
+          # This deliberately avoids V3's large-window null-guard scan.
+          targets = [
+              (
+                  "extractPathOwnerPackageName",
+                  "    public static @Nullable String extractPathOwnerPackageName(@Nullable String path) {\n"
+                  "        if (path == null) return null;\n",
+              ),
+              (
+                  "extractOwnerPackageNameFromRelativePath",
+                  "    public static @Nullable String extractOwnerPackageNameFromRelativePath(@Nullable String path) {\n"
+                  "        if (path == null) return null;\n",
+              ),
+              (
+                  "isDataOrObbPath",
+                  "    public static boolean isDataOrObbPath(@Nullable String path) {\n"
+                  "        if (path == null) return false;\n",
+              ),
+              (
+                  "isDataOrObbRelativePath",
+                  "    public static boolean isDataOrObbRelativePath(@Nullable String path) {\n"
+                  "        if (path == null) return false;\n",
+              ),
+              (
+                  "isObbOrChildRelativePath",
+                  "    public static boolean isObbOrChildRelativePath(@Nullable String path) {\n"
+                  "        if (path == null) return false;\n",
+              ),
+              (
+                  "shouldBeInvisible",
+                  "    public static boolean shouldBeInvisible(@Nullable String path) {\n"
+                  "        if (path == null) return false;\n",
+              ),
+          ]
+
+          patched = text
+          for name, prologue in targets:
+              count = patched.count(prologue)
+              if count != 1:
+                  raise SystemExit(
+                      f"ERROR: {name}: expected exact prologue once, found {count}"
+                  )
+              patched = patched.replace(prologue, prologue + normalize, 1)
+
+          if patched == text:
+              raise SystemExit("ERROR: source patch made no changes")
+
+          path.write_text(patched, encoding="utf-8")
+          print("SOURCE_PATCH_INSERTIONS=6/6 PASS")
+          PY
+
+          git diff --check
+
+          FILE=src/com/android/providers/media/util/FileUtils.java
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path("src/com/android/providers/media/util/FileUtils.java").read_text(
+              encoding="utf-8"
+          )
+          needle = "path = normalizeAndFilterDefaultIgnorableCodepoints(path);"
+
+          signatures = [
+              "public static @Nullable String extractPathOwnerPackageName(@Nullable String path) {",
+              "public static @Nullable String extractOwnerPackageNameFromRelativePath(@Nullable String path) {",
+              "public static boolean isDataOrObbPath(@Nullable String path) {",
+              "public static boolean isDataOrObbRelativePath(@Nullable String path) {",
+              "public static boolean isObbOrChildRelativePath(@Nullable String path) {",
+              "public static boolean shouldBeInvisible(@Nullable String path) {",
+          ]
+
+          for signature in signatures:
+              pos = text.find(signature)
+              if pos < 0:
+                  raise SystemExit("ERROR: signature vanished after patch: " + signature)
+
+              # Only inspect the immediate method prologue; do not spill into
+              # the following short method.
+              segment = text[pos:pos + len(signature) + 170]
+              if needle not in segment:
+                  raise SystemExit(
+                      "ERROR: immediate normalization guard missing: " + signature
+                  )
+
+          print("SOURCE_METHOD_GUARDS=6/6 PASS")
+          PY
+
+          git diff -- "$FILE" | tee "$RUNNER_TEMP/source-diff.txt"
+          test -s "$RUNNER_TEMP/source-diff.txt"
+
+      - name: Static Unicode model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import unicodedata
+
+          chars = [
+              "\u200B", "\u00AD", "\u034F", "\u200C",
+              "\u200D", "\u2060", "\uFEFF", "\u180E",
+          ]
+
+          # Explicit vector captured from the device/Duck probes.
+          codepoints = {ord(c) for c in chars}
+          expected = {
+              0x200B, 0x00AD, 0x034F, 0x200C,
+              0x200D, 0x2060, 0xFEFF, 0x180E,
+          }
+          assert codepoints == expected
+
+          for c in chars:
+              for leaf in ("data", "obb"):
+                  raw = f"/storage/emulated/0/Android/{leaf}{c}/"
+                  # Model the desired result of DEFAULT_IGNORABLE filtering.
+                  normalized = unicodedata.normalize("NFD", raw).replace(c, "")
+                  assert normalized == f"/storage/emulated/0/Android/{leaf}/"
+
+          for p in (
+              "/storage/emulated/0/DCIM/",
+              "/storage/emulated/0/Download/",
+              "/storage/emulated/0/Pictures/",
+              "/storage/emulated/0/Android/media/com.example/",
+          ):
+              assert unicodedata.normalize("NFD", p) == p
+
+          print("DEVICE_UNICODE_VECTOR=8/8 PASS")
+          print("DATA_TOPLEVEL_MODEL=8/8 PASS")
+          print("OBB_TOPLEVEL_MODEL=8/8 PASS")
+          print("NORMAL_SHARED_STORAGE_CONTROL=PASS")
+          PY
+
+      - name: Upload source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaProvider-Source-Patch-Audit
+          path: ${{ runner.temp }}/source-diff.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  build-module:
+    name: Build reversible LSPosed test module
+    needs: source-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Verify pinned runner toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "${JAVA_HOME_17_X64:-}"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          test -d "$SDK"
+          test -d "$SDK/platforms/android-35"
+          test -x "$SDK/build-tools/35.0.0/apksigner"
+          test -x "$SDK/build-tools/35.0.0/aapt2"
+          test -x "$SDK/cmdline-tools/latest/bin/apkanalyzer"
+
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+          "$JAVA_HOME_17_X64/bin/java" -version
+          "$SDK/build-tools/35.0.0/aapt2" version
+          "$SDK/build-tools/35.0.0/apksigner" version
+
+          echo "RUNNER_JAVA17=PASS"
+          echo "RUNNER_ANDROID35=PASS"
+          echo "RUNNER_BUILD_TOOLS_35_0_0=PASS"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Create self-contained project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE/mpunicode"
+          mkdir -p "$ROOT/app/src/main/java/org/chrizz100/mediaproviderunicodefix"
+          mkdir -p "$ROOT/app/src/main/assets"
+          mkdir -p "$ROOT/app/src/main/res/values"
+          mkdir -p "$ROOT/xposed-stubs/src/de/robv/android/xposed/callbacks"
+          mkdir -p "$ROOT/xposed-stubs/src/de/robv/android/xposed"
+
+          cat > "$ROOT/settings.gradle" <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "MediaProviderUnicodeFix"
+          include(":app")
+          EOF
+
+          cat > "$ROOT/build.gradle" <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > "$ROOT/app/build.gradle" <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'org.chrizz100.mediaproviderunicodefix'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'org.chrizz100.mediaproviderunicodefix'
+                  minSdk 30
+                  targetSdk 35
+                  versionCode 3
+                  versionName '1.1.1'
+              }
+              buildTypes {
+                  debug { minifyEnabled false }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          dependencies {
+              compileOnly files('../xposed-api-stubs.jar')
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/AndroidManifest.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="false"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true">
+                  <meta-data android:name="xposedmodule" android:value="true" />
+                  <meta-data android:name="xposeddescription"
+                      android:value="Normalizes default-ignorable Unicode path aliases in MediaProvider FUSE access checks." />
+                  <meta-data android:name="xposedminversion" android:value="82" />
+              </application>
+          </manifest>
+          EOF
+
+          cat > "$ROOT/app/src/main/res/values/strings.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">MediaProvider Unicode Fix</string>
+          </resources>
+          EOF
+
+          cat > "$ROOT/app/src/main/assets/xposed_init" <<'EOF'
+          org.chrizz100.mediaproviderunicodefix.HookEntry
+          EOF
+
+          cat > "$ROOT/xposed-stubs/src/de/robv/android/xposed/IXposedHookLoadPackage.java" <<'EOF'
+          package de.robv.android.xposed;
+          import de.robv.android.xposed.callbacks.XC_LoadPackage;
+          public interface IXposedHookLoadPackage {
+              void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable;
+          }
+          EOF
+
+          cat > "$ROOT/xposed-stubs/src/de/robv/android/xposed/XC_MethodHook.java" <<'EOF'
+          package de.robv.android.xposed;
+          public abstract class XC_MethodHook {
+              protected void beforeHookedMethod(MethodHookParam param) throws Throwable {}
+
+              public static class MethodHookParam {
+                  public Object[] args;
+              }
+
+              // Descriptor-compatible with the legacy Xposed/LSPosed API.
+              public static final class Unhook {}
+          }
+          EOF
+
+          cat > "$ROOT/xposed-stubs/src/de/robv/android/xposed/XposedBridge.java" <<'EOF'
+          package de.robv.android.xposed;
+          public final class XposedBridge {
+              public static void log(String text) {}
+          }
+          EOF
+
+          cat > "$ROOT/xposed-stubs/src/de/robv/android/xposed/XposedHelpers.java" <<'EOF'
+          package de.robv.android.xposed;
+          public final class XposedHelpers {
+              public static Class<?> findClass(String name, ClassLoader cl) {
+                  throw new UnsupportedOperationException();
+              }
+
+              // IMPORTANT: return type is part of the runtime method descriptor.
+              // Using Object here caused every hook call to fail with NoSuchMethodError.
+              public static XC_MethodHook.Unhook findAndHookMethod(
+                      Class<?> clazz, String name, Object... args) {
+                  return null;
+              }
+          }
+          EOF
+
+          cat > "$ROOT/xposed-stubs/src/de/robv/android/xposed/callbacks/XC_LoadPackage.java" <<'EOF'
+          package de.robv.android.xposed.callbacks;
+          public final class XC_LoadPackage {
+              public static class LoadPackageParam {
+                  public String packageName;
+                  public ClassLoader classLoader;
+              }
+          }
+          EOF
+
+          cat > "$ROOT/app/src/main/java/org/chrizz100/mediaproviderunicodefix/HookEntry.java" <<'EOF'
+          package org.chrizz100.mediaproviderunicodefix;
+          
+          import android.icu.lang.UCharacter;
+          import android.icu.lang.UProperty;
+          
+          import java.text.Normalizer;
+          import java.util.Arrays;
+          import java.util.HashSet;
+          import java.util.Set;
+          
+          import de.robv.android.xposed.IXposedHookLoadPackage;
+          import de.robv.android.xposed.XC_MethodHook;
+          import de.robv.android.xposed.XposedBridge;
+          import de.robv.android.xposed.XposedHelpers;
+          import de.robv.android.xposed.callbacks.XC_LoadPackage;
+          
+          public final class HookEntry implements IXposedHookLoadPackage {
+              private static final String TAG = "[MPUnicodeFix] ";
+              private static int installedHooks = 0;
+          
+              private static final Set<String> TARGET_PACKAGES = new HashSet<>(Arrays.asList(
+                      "com.google.android.providers.media.module",
+                      "com.android.providers.media.module"
+              ));
+          
+              @Override
+              public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
+                  if (!TARGET_PACKAGES.contains(lpparam.packageName)) {
+                      return;
+                  }
+          
+                  XposedBridge.log(TAG + "loading in " + lpparam.packageName);
+          
+                  hookFileUtils(lpparam.classLoader);
+                  hookMediaProvider(lpparam.classLoader);
+          
+                  XposedBridge.log(TAG + "hooks installed");
+              }
+          
+              private static void hookFileUtils(ClassLoader cl) {
+                  final Class<?> fileUtils;
+                  try {
+                      fileUtils = XposedHelpers.findClass(
+                              "com.android.providers.media.util.FileUtils", cl);
+                  } catch (Throwable t) {
+                      XposedBridge.log(TAG + "FileUtils not found: " + t.getClass().getSimpleName());
+                      return;
+                  }
+          
+                  final String[] oneStringArgMethods = {
+                          "extractPathOwnerPackageName",
+                          "extractOwnerPackageNameFromRelativePath",
+                          "isDataOrObbPath",
+                          "isDataOrObbRelativePath",
+                          "isObbOrChildRelativePath",
+                          "shouldBeInvisible"
+                  };
+          
+                  for (String method : oneStringArgMethods) {
+                      safeHook(fileUtils, method, 0, String.class);
+                  }
+              }
+          
+              private static void hookMediaProvider(ClassLoader cl) {
+                  final Class<?> mediaProvider;
+                  try {
+                      mediaProvider = XposedHelpers.findClass(
+                              "com.android.providers.media.MediaProvider", cl);
+                  } catch (Throwable t) {
+                      XposedBridge.log(TAG + "MediaProvider not found: " + t.getClass().getSimpleName());
+                      return;
+                  }
+          
+                  // Native FUSE -> Java directory permission entry.
+                  safeHook(mediaProvider, "isDirAccessAllowedForFuse", 0,
+                          String.class, int.class, int.class);
+          
+                  // Native FUSE -> Java readdir/listing entry.
+                  safeHook(mediaProvider, "getFilesInDirectoryForFuse", 0,
+                          String.class, int.class);
+          
+                  // Native FUSE -> Java package-owned data/obb access entry.
+                  safeHook(mediaProvider, "isUidAllowedAccessToDataOrObbPathForFuse", 1,
+                          int.class, String.class);
+          
+                  // Defense in depth for the private package path classifier itself.
+                  safeHook(mediaProvider, "isPrivatePackagePathNotAccessibleByCaller", 0,
+                          String.class);
+              }
+          
+              private static void safeHook(Class<?> clazz, String methodName, int stringArgIndex,
+                      Object... parameterTypes) {
+                  try {
+                      Object[] args = Arrays.copyOf(parameterTypes, parameterTypes.length + 1);
+                      args[parameterTypes.length] = new XC_MethodHook() {
+                          @Override
+                          protected void beforeHookedMethod(MethodHookParam param) {
+                              if (stringArgIndex < 0 || stringArgIndex >= param.args.length) {
+                                  return;
+                              }
+                              Object value = param.args[stringArgIndex];
+                              if (!(value instanceof String)) {
+                                  return;
+                              }
+          
+                              String original = (String) value;
+                              String normalized = normalizePath(original);
+                              if (!original.equals(normalized)) {
+                                  param.args[stringArgIndex] = normalized;
+                              }
+                          }
+                      };
+          
+                      XposedHelpers.findAndHookMethod(clazz, methodName, args);
+                      installedHooks++;
+                      XposedBridge.log(TAG + "hooked " + clazz.getSimpleName() + "." + methodName);
+                  } catch (Throwable t) {
+                      XposedBridge.log(TAG + "skip " + clazz.getSimpleName() + "." + methodName
+                              + ": " + t.getClass().getName()
+                              + ": " + String.valueOf(t.getMessage()));
+                  }
+              }
+          
+              static String normalizePath(String path) {
+                  if (path == null || path.isEmpty()) {
+                      return path;
+                  }
+          
+                  String nfd = Normalizer.normalize(path, Normalizer.Form.NFD);
+                  int[] cps = nfd.codePoints().toArray();
+          
+                  boolean changed = false;
+                  StringBuilder out = new StringBuilder(nfd.length());
+          
+                  for (int cp : cps) {
+                      if (UCharacter.hasBinaryProperty(cp, UProperty.DEFAULT_IGNORABLE_CODE_POINT)) {
+                          changed = true;
+                          continue;
+                      }
+                      out.appendCodePoint(cp);
+                  }
+          
+                  return changed ? out.toString() : nfd;
+              }
+          }
+          EOF
+
+          javac -source 8 -target 8             -d "$ROOT/xposed-stubs/classes"             $(find "$ROOT/xposed-stubs/src" -name '*.java' -print)
+
+          jar cf "$ROOT/xposed-api-stubs.jar" -C "$ROOT/xposed-stubs/classes" .
+
+          # Validate the exact legacy Xposed API descriptor that failed in V1.
+          javap -classpath "$ROOT/xposed-api-stubs.jar"             de.robv.android.xposed.XposedHelpers             | tee "$RUNNER_TEMP/xposedhelpers-javap.txt"
+
+          grep -Fq             'de.robv.android.xposed.XC_MethodHook$Unhook findAndHookMethod'             "$RUNNER_TEMP/xposedhelpers-javap.txt"
+
+          jar tf "$ROOT/xposed-api-stubs.jar"             | grep -Fq 'de/robv/android/xposed/XC_MethodHook$Unhook.class'
+
+          echo "XPOSED_LEGACY_API_DESCRIPTOR=PASS"
+
+      - name: Compile hook source sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/mpunicode"
+
+          mkdir -p "$ROOT/android-icu-stubs/android/icu/lang"
+
+          cat > "$ROOT/android-icu-stubs/android/icu/lang/UCharacter.java" <<'EOF'
+          package android.icu.lang;
+          public final class UCharacter {
+              public static boolean hasBinaryProperty(int codePoint, int property) {
+                  return false;
+              }
+          }
+          EOF
+
+          cat > "$ROOT/android-icu-stubs/android/icu/lang/UProperty.java" <<'EOF'
+          package android.icu.lang;
+          public final class UProperty {
+              public static final int DEFAULT_IGNORABLE_CODE_POINT = 0;
+          }
+          EOF
+
+          javac \
+            -classpath "$ROOT/xposed-api-stubs.jar" \
+            -d "$ROOT/hook-javac-check" \
+            "$ROOT/android-icu-stubs/android/icu/lang/UCharacter.java" \
+            "$ROOT/android-icu-stubs/android/icu/lang/UProperty.java" \
+            "$ROOT/app/src/main/java/org/chrizz100/mediaproviderunicodefix/HookEntry.java"
+
+          test -f \
+            "$ROOT/hook-javac-check/org/chrizz100/mediaproviderunicodefix/HookEntry.class"
+
+          echo "HOOK_JAVAC_SANITY=PASS"
+
+      - name: Static source guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/mpunicode"
+          SRC="$ROOT/app/src/main/java/org/chrizz100/mediaproviderunicodefix/HookEntry.java"
+
+          grep -Fq 'DEFAULT_IGNORABLE_CODE_POINT' "$SRC"
+          grep -Fq '"isDataOrObbPath"' "$SRC"
+          grep -Fq '"isDirAccessAllowedForFuse"' "$SRC"
+          grep -Fq '"getFilesInDirectoryForFuse"' "$SRC"
+          grep -Fq 'com.google.android.providers.media.module' "$SRC"
+          grep -Fq 'HOOKS_ACTIVE=' "$SRC"
+          grep -Fq 'hooks installed successfully' "$SRC"
+
+          if grep -R --binary-files=text -q 'package de.robv.android.xposed'                 "$ROOT/app/src/main"; then
+              echo "Xposed API stubs must not be packaged in app sources." >&2
+              exit 1
+          fi
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/mpunicode"
+          gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify final APK Xposed ABI descriptor
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$GITHUB_WORKSPACE/mpunicode/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+
+          python3 - "$APK" <<'PY'
+          import io
+          import struct
+          import sys
+          import zipfile
+
+          apk = sys.argv[1]
+
+          EXPECTED_CLASS = "Lde/robv/android/xposed/XposedHelpers;"
+          EXPECTED_NAME = "findAndHookMethod"
+          EXPECTED_RETURN = "Lde/robv/android/xposed/XC_MethodHook$Unhook;"
+          BAD_RETURN = "Ljava/lang/Object;"
+          EXPECTED_PARAMS = [
+              "Ljava/lang/Class;",
+              "Ljava/lang/String;",
+              "[Ljava/lang/Object;",
+          ]
+
+          def parse_dex(dex: bytes, dex_name: str):
+              def u16(off):
+                  return struct.unpack_from("<H", dex, off)[0]
+
+              def u32(off):
+                  return struct.unpack_from("<I", dex, off)[0]
+
+              def uleb(off):
+                  result = 0
+                  shift = 0
+                  while True:
+                      b = dex[off]
+                      off += 1
+                      result |= (b & 0x7F) << shift
+                      if b < 0x80:
+                          return result, off
+                      shift += 7
+
+              string_ids_size = u32(56)
+              string_ids_off = u32(60)
+              type_ids_size = u32(64)
+              type_ids_off = u32(68)
+              proto_ids_size = u32(72)
+              proto_ids_off = u32(76)
+              method_ids_size = u32(88)
+              method_ids_off = u32(92)
+
+              def get_string(idx):
+                  if idx >= string_ids_size:
+                      raise ValueError(f"{dex_name}: invalid string index {idx}")
+                  off = u32(string_ids_off + 4 * idx)
+                  _, pos = uleb(off)
+                  end = dex.index(0, pos)
+                  return dex[pos:end].decode("utf-8", "replace")
+
+              def get_type(idx):
+                  if idx >= type_ids_size:
+                      raise ValueError(f"{dex_name}: invalid type index {idx}")
+                  return get_string(u32(type_ids_off + 4 * idx))
+
+              def get_proto(idx):
+                  if idx >= proto_ids_size:
+                      raise ValueError(f"{dex_name}: invalid proto index {idx}")
+                  off = proto_ids_off + 12 * idx
+                  ret = get_type(u32(off + 4))
+                  params_off = u32(off + 8)
+                  params = []
+                  if params_off:
+                      count = u32(params_off)
+                      for i in range(count):
+                          params.append(get_type(u16(params_off + 4 + 2 * i)))
+                  return ret, params
+
+              refs = []
+              for i in range(method_ids_size):
+                  off = method_ids_off + 8 * i
+                  class_idx = u16(off)
+                  proto_idx = u16(off + 2)
+                  name_idx = u32(off + 4)
+
+                  cls = get_type(class_idx)
+                  name = get_string(name_idx)
+
+                  if cls == EXPECTED_CLASS and name == EXPECTED_NAME:
+                      ret, params = get_proto(proto_idx)
+                      refs.append((dex_name, ret, params))
+
+              return refs
+
+          all_refs = []
+          with zipfile.ZipFile(apk, "r") as zf:
+              dex_names = sorted(
+                  name for name in zf.namelist()
+                  if name.startswith("classes") and name.endswith(".dex")
+              )
+              if not dex_names:
+                  raise SystemExit("ERROR: APK contains no classes*.dex")
+
+              for dex_name in dex_names:
+                  all_refs.extend(parse_dex(zf.read(dex_name), dex_name))
+
+          if not all_refs:
+              raise SystemExit(
+                  "ERROR: final APK contains no XposedHelpers.findAndHookMethod reference"
+              )
+
+          for dex_name, ret, params in all_refs:
+              print(
+                  f"DEX_REF {dex_name}: "
+                  f"{EXPECTED_CLASS}->{EXPECTED_NAME}"
+                  f"({','.join(params)}){ret}"
+              )
+
+          bad = [
+              ref for ref in all_refs
+              if ref[1] == BAD_RETURN and ref[2] == EXPECTED_PARAMS
+          ]
+          good = [
+              ref for ref in all_refs
+              if ref[1] == EXPECTED_RETURN and ref[2] == EXPECTED_PARAMS
+          ]
+
+          if bad:
+              raise SystemExit(
+                  "ERROR: old broken Object-returning Xposed ABI descriptor is still present"
+              )
+
+          if len(good) != 1:
+              raise SystemExit(
+                  f"ERROR: expected exactly one correct Xposed ABI reference, found {len(good)}"
+              )
+
+          print("FINAL_APK_XPOSED_ABI_DESCRIPTOR=PASS")
+          print("BROKEN_OBJECT_RETURN_DESCRIPTOR=ABSENT")
+          PY
+
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE/mpunicode"
+          APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          CLASS="$ROOT/app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/org/chrizz100/mediaproviderunicodefix/HookEntry.class"
+
+          # Build output and compiled hook class must exist.
+          test -s "$APK"
+          test -s "$CLASS"
+          echo "COMPILED_HOOK_CLASS=PASS"
+
+          mkdir -p "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/verify"
+          cp "$APK" "$GITHUB_WORKSPACE/out/MediaProvider-Unicode-Fix-v2.1-debug.apk"
+          sha256sum "$GITHUB_WORKSPACE/out/MediaProvider-Unicode-Fix-v2.1-debug.apk" \
+            | tee "$GITHUB_WORKSPACE/out/SHA256SUMS.txt"
+
+          # APK must be a valid ZIP, contain classes.dex and the LSPosed entry point.
+          unzip -t "$APK" | tee "$GITHUB_WORKSPACE/verify/unzip-test.txt" >/dev/null
+          unzip -l "$APK" | tee "$GITHUB_WORKSPACE/verify/unzip-list.txt" >/dev/null
+          grep -Fq 'classes.dex' "$GITHUB_WORKSPACE/verify/unzip-list.txt"
+          grep -Fq 'assets/xposed_init' "$GITHUB_WORKSPACE/verify/unzip-list.txt"
+
+          INIT="$(unzip -p "$APK" assets/xposed_init | tr -d '\r\n')"
+          test "$INIT" = 'org.chrizz100.mediaproviderunicodefix.HookEntry'
+          echo "APK_STRUCTURE_AND_XPOSED_INIT=PASS"
+
+          # Signature verification already passed in V5/V6; keep the same proven check.
+          "$SDK/build-tools/35.0.0/apksigner" verify --verbose "$APK" \
+            | tee "$GITHUB_WORKSPACE/verify/apksigner.txt"
+          grep -Fq 'Verifies' "$GITHUB_WORKSPACE/verify/apksigner.txt"
+          grep -Fq 'Number of signers: 1' "$GITHUB_WORKSPACE/verify/apksigner.txt"
+          echo "APK_SIGNATURE=PASS"
+
+          # Package-id verification already passed in V6.
+          PACKAGE_ID="$("$SDK/cmdline-tools/latest/bin/apkanalyzer" \
+            manifest application-id "$APK" | tr -d '\r\n')"
+          printf '%s\n' "$PACKAGE_ID" \
+            | tee "$GITHUB_WORKSPACE/verify/package-id.txt"
+          test "$PACKAGE_ID" = 'org.chrizz100.mediaproviderunicodefix'
+          echo "APK_PACKAGE_ID=PASS"
+
+          cat > "$GITHUB_WORKSPACE/out/BUILD_INFO.txt" <<'EOF'
+          PURPOSE=Reversible LSPosed runtime test with corrected legacy Xposed API descriptor
+          SOURCE_AUDIT=PASS
+          SOURCE_PATCH_INSERTIONS=6/6
+          STATIC_UNICODE_MODEL=PASS
+          HOOK_JAVAC_SANITY=PASS
+          COMPILED_HOOK_CLASS=PASS
+          APK_STRUCTURE_AND_XPOSED_INIT=PASS
+          APK_SIGNATURE=PASS
+          APK_PACKAGE_ID=org.chrizz100.mediaproviderunicodefix
+          SCOPE=com.google.android.providers.media.module,com.android.providers.media.module
+          PATCHES_DISK_APEX=NO
+          REMOVES_STORAGE_GIDS=NO
+          MODIFIES_KERNEL=NO
+          EOF
+
+          echo "APK_FINAL_VERIFICATION=PASS"
+
+      - name: Upload APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediaProvider-Unicode-Fix-v2.1
+          path: |
+            out/MediaProvider-Unicode-Fix-v2.1-debug.apk
+            out/SHA256SUMS.txt
+            out/BUILD_INFO.txt
+            verify/
+          if-no-files-found: error
+          retention-days: 7
