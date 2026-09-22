@@ -1,0 +1,256 @@
+name: VEUX U7-N1 v1 5.4.274 ReSukiSU 35158 SUSFS 2.3 NoMount 2.0.0 Preflight
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u7-n1-v1-274-nomount-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  # Current authenticated VEUX authority.
+  O51_WORKFLOW: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_EXPECTED_RESUKISU_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  O51_EXPECTED_RESUKISU_VERSION: '35158'
+  O51_EXPECTED_UAPI: '4'
+  O51_EXPECTED_SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  O51_EXPECTED_SUSFS_VERSION: v2.3.0
+
+  # NoMount v2.0.0 immutable release pin.
+  NOMOUNT_REPO: https://github.com/maxsteeel/nomount.git
+  NOMOUNT_TAG: v2.0.0
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+jobs:
+  source-preflight:
+    name: 5.4.274 NoMount source compatibility preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Repository identity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+      - name: Checkout exact project state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install audit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates git python3 python3-yaml rsync
+
+      - name: Authenticate current 35158 / SUSFS 2.3 authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$O51_WORKFLOW"
+
+          python3 - "$O51_WORKFLOW" <<'PY'
+          import sys, yaml
+          path = sys.argv[1]
+          with open(path, encoding='utf-8') as f:
+              doc = yaml.safe_load(f)
+          env = doc.get('env', {})
+          expected = {
+              'RESUKISU_NEW': '6d18926ae6eeb571a04c1ce7552c324d606fa9d8',
+              'RESUKISU_NEW_VERSION': '35158',
+              'RESUKISU_UAPI': '4',
+              'SUSFS_COMMIT': '04a9d713106191ba98be680bd7ad9547ab1de964',
+              'SUSFS_VERSION': 'v2.3.0',
+          }
+          for key, value in expected.items():
+              actual = str(env.get(key, ''))
+              if actual != value:
+                  raise SystemExit(f'AUTHORITY_DRIFT: {key}: expected={value} actual={actual}')
+          print('O51_AUTHORITY_35158=PASS')
+          print('O51_SUSFS_2_3_0=PASS')
+          PY
+
+          grep -Fq '"5.4.274": (' "$O51_WORKFLOW"
+          grep -Fq '.github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml' "$O51_WORKFLOW"
+          grep -Fq 'MODULE_LOAD_FILTER=EXCLUDED' "$O51_WORKFLOW"
+          echo 'O51_274_AUTHORITY_PRESENT=PASS'
+          echo 'MODULE_LOAD_FILTER_POLICY=EXCLUDED'
+
+      - name: Fetch and authenticate NoMount v2.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          nm="$RUNNER_TEMP/nomount"
+          rm -rf "$nm"
+          git init -q "$nm"
+          git -C "$nm" remote add origin "$NOMOUNT_REPO"
+          git -C "$nm" fetch -q --depth=1 origin "$NOMOUNT_COMMIT"
+          git -C "$nm" checkout -q --detach FETCH_HEAD
+
+          test "$(git -C "$nm" rev-parse HEAD)" = "$NOMOUNT_COMMIT"
+          tag_commit="$(git ls-remote "$NOMOUNT_REPO" "refs/tags/$NOMOUNT_TAG^{}" | awk '{print $1}')"
+          if [ -z "$tag_commit" ]; then
+            tag_commit="$(git ls-remote "$NOMOUNT_REPO" "refs/tags/$NOMOUNT_TAG" | awk '{print $1}')"
+          fi
+          test "$tag_commit" = "$NOMOUNT_COMMIT"
+
+          test -d "$nm/kernel/src"
+          test -s "$nm/kernel/src/Kconfig"
+          test -s "$nm/kernel/src/Makefile"
+          grep -Eq 'config[[:space:]]+NOMOUNT' "$nm/kernel/src/Kconfig"
+
+          {
+            echo "NOMOUNT_TAG=$NOMOUNT_TAG"
+            echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+            echo 'NOMOUNT_PIN_AUTH=PASS'
+          } | tee nomount-pin.txt
+
+      - name: Audit NoMount 5.4 compatibility branches and integration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          nm="$RUNNER_TEMP/nomount"
+          audit="$GITHUB_WORKSPACE/n1-audit"
+          rm -rf "$audit"
+          mkdir -p "$audit"
+
+          # Official manual built-in contract: fs/nomount + fs/Kconfig + fs/Makefile + CONFIG_NOMOUNT.
+          grep -Eq 'config[[:space:]]+NOMOUNT' "$nm/kernel/src/Kconfig"
+          grep -Eq 'obj-\$\(CONFIG_NOMOUNT\)' "$nm/kernel/src/Makefile"
+
+          # NoMount v2 must use the keyring API on the kernel side.
+          grep -R -n -E 'register_key_type|struct[[:space:]]+key_type|add_key|key_payload|keyring' \
+            "$nm/kernel/src" > "$audit/01-keyring-evidence.txt"
+          test -s "$audit/01-keyring-evidence.txt"
+
+          # Fail closed if the pinned source no longer carries explicit legacy/version compatibility.
+          grep -R -n -E 'KERNEL_VERSION\(5,[[:space:]]*(2|4|12)' \
+            "$nm/kernel/src" > "$audit/02-kernel-version-evidence.txt" || true
+          grep -R -n -E 'LINUX_VERSION_CODE|KERNEL_VERSION' \
+            "$nm/kernel/src" > "$audit/03-version-guards.txt"
+          test -s "$audit/03-version-guards.txt"
+
+          # Produce the exact allowed native-integration manifest. No existing ReSukiSU/SUSFS hooks are edited.
+          {
+            echo 'ALLOWED_ADD_PREFIX=fs/nomount/'
+            echo 'ALLOWED_EDIT=fs/Kconfig'
+            echo 'ALLOWED_EDIT=fs/Makefile'
+            echo 'ALLOWED_EDIT=arch/arm64/configs/veux_defconfig'
+            echo 'FORBIDDEN_EDIT=fs/exec.c'
+            echo 'FORBIDDEN_EDIT=KernelSU/'
+            echo 'FORBIDDEN_EDIT=kernel/'
+            echo 'CONFIG_NOMOUNT=y'
+            echo 'CONFIG_KEYS=y must remain enabled'
+            echo 'CONFIG_KSU=y must remain enabled'
+            echo 'CONFIG_KSU_SUSFS=y must remain enabled'
+            echo 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y must remain enabled'
+          } > "$audit/04-integration-whitelist.txt"
+
+          echo 'NOMOUNT_SOURCE_PREFLIGHT=PASS' | tee "$audit/FINAL-RESULT.txt"
+          echo 'COMPILE_PASS=NO_NOT_RUN' >> "$audit/FINAL-RESULT.txt"
+          echo 'PACKAGE_PASS=NO' >> "$audit/FINAL-RESULT.txt"
+          echo 'STATIC_BOOT_PATH_PASS=NO' >> "$audit/FINAL-RESULT.txt"
+          echo 'DEVICE_PASS=NO' >> "$audit/FINAL-RESULT.txt"
+
+      - name: Generate deterministic N2 integration patch template
+        shell: bash
+        run: |
+          set -euo pipefail
+          nm="$RUNNER_TEMP/nomount"
+          out="$GITHUB_WORKSPACE/n1-audit/N2-INTEGRATION-TEMPLATE.sh"
+
+          cat > "$out" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${KERNEL_TREE:?set KERNEL_TREE}"
+          : "${NOMOUNT_TREE:?set NOMOUNT_TREE}"
+
+          test -d "$KERNEL_TREE/fs"
+          test -d "$KERNEL_TREE/arch/arm64/configs"
+          test -d "$NOMOUNT_TREE/kernel/src"
+          test ! -e "$KERNEL_TREE/fs/nomount"
+
+          mkdir -p "$KERNEL_TREE/fs/nomount"
+          cp -a "$NOMOUNT_TREE/kernel/src/." "$KERNEL_TREE/fs/nomount/"
+
+          grep -Fqx 'source "fs/nomount/Kconfig"' "$KERNEL_TREE/fs/Kconfig" || \
+            printf '\nsource "fs/nomount/Kconfig"\n' >> "$KERNEL_TREE/fs/Kconfig"
+
+          grep -Fqx 'obj-$(CONFIG_NOMOUNT) += nomount/' "$KERNEL_TREE/fs/Makefile" || \
+            printf '\nobj-$(CONFIG_NOMOUNT) += nomount/\n' >> "$KERNEL_TREE/fs/Makefile"
+
+          defconfig="$KERNEL_TREE/arch/arm64/configs/veux_defconfig"
+          test -s "$defconfig"
+          if grep -Eq '^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=' "$defconfig"; then
+            sed -i -E 's/^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=.*/CONFIG_NOMOUNT=y/' "$defconfig"
+          else
+            printf '\nCONFIG_NOMOUNT=y\n' >> "$defconfig"
+          fi
+
+          grep -Fxq 'CONFIG_NOMOUNT=y' "$defconfig"
+          SH
+          chmod 0755 "$out"
+          bash -n "$out"
+
+          # Template itself is audited here; it is deliberately NOT executed against the immutable authority.
+          echo 'N2_INTEGRATION_TEMPLATE_SYNTAX=PASS' >> "$GITHUB_WORKSPACE/n1-audit/FINAL-RESULT.txt"
+
+      - name: Finalize audit hashes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          audit="$GITHUB_WORKSPACE/n1-audit"
+          test -s "$audit/FINAL-RESULT.txt"
+          {
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "RESUKISU_COMMIT=$O51_EXPECTED_RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$O51_EXPECTED_RESUKISU_VERSION"
+            echo "UAPI=$O51_EXPECTED_UAPI"
+            echo "SUSFS_COMMIT=$O51_EXPECTED_SUSFS_COMMIT"
+            echo "SUSFS_VERSION=$O51_EXPECTED_SUSFS_VERSION"
+            echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+            echo "NOMOUNT_TAG=$NOMOUNT_TAG"
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+          } > "$audit/RUN-METADATA.txt"
+          (
+            cd "$audit"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload N1 source-preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U7-N1V1-5.4.274-ReSukiSU-35158-NoMount-2.0.0-PREFLIGHT-${{ github.run_id }}
+          path: n1-audit/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          final="$GITHUB_WORKSPACE/n1-audit/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_SOURCE_PREFLIGHT=PASS' "$final"
+          grep -Fxq 'N2_INTEGRATION_TEMPLATE_SYNTAX=PASS' "$final"
+          grep -Fxq 'COMPILE_PASS=NO_NOT_RUN' "$final"
+          grep -Fxq 'PACKAGE_PASS=NO' "$final"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$final"
+          grep -Fxq 'DEVICE_PASS=NO' "$final"
+          echo 'N1_REAL_GREEN_GATE=PASS'
