@@ -1,0 +1,486 @@
+name: VEUX U7-N3 v1 5.4.274 ReSukiSU 35158 + SUSFS 2.3 + NoMount 2.0.0 AK3 Package
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u7-n3-v1-274-nomount-ak3-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  N2_RUN_ID: '35715159519'
+  N2_HEAD_SHA: f3d9361c91498166ec61aa99f9685866191445d9
+  N2_ARTIFACT_ID: '10689342042'
+  N2_ARTIFACT_NAME: VEUX-U7-N2V7-5.4.274-ReSukiSU-35158-NoMount-2.0.0-COMPILE-35715159519
+  N2_ARTIFACT_SIZE: '12902418'
+  N2_ARTIFACT_SHA256: bc602cae72290442f60becb53ba078c7fe1dcc1fabd6fe5b4c83fe95f8adc3ed
+  N2_IMAGE_SHA256: 98fc95e13faf310d8124fab10ee887d48caa600c6523a9aaf8258548b5e492b5
+  N2_IMAGE_BYTES: '29846016'
+  N2_AUTHORITY_BLOB: 7599e13e10d5ea8ce9e1984076d23a40d7f438ab
+
+  RESUKISU_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_VERSION: '35158'
+  RESUKISU_UAPI: '4'
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_VERSION: 2.0.0
+
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_CORE_BLOB: d9692acdb3501a7ccb60576ecce435e7a30156dc
+  AK3_UPDATE_BINARY_BLOB: 8c7006e7e3f6ef10f8f4117b291d6df204ef285e
+  AK3_UPDATER_SCRIPT_BLOB: e93ec6c09de11bed7db46050d8ad4a49c944fd69
+
+  AK3_ZIP_NAME: VEUX-U7-N3-5.4.274-ReSukiSU-35158-UAPI4-SUSFS-2.3-NoMount-2.0.0-AK3-CLEAN.zip
+  N2_DIR: ${{ github.workspace }}/n2-source
+  AUDIT_DIR: ${{ github.workspace }}/n3-audit
+  DIST_DIR: ${{ github.workspace }}/n3-dist
+
+jobs:
+  package:
+    name: N3 exact N2-v7 Image to CLEAN AnyKernel3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Verify repository and install N3 dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq python3 unzip zip
+
+          rm -rf "$N2_DIR" "$AUDIT_DIR" "$DIST_DIR" "$GITHUB_WORKSPACE/AnyKernel3"
+          mkdir -p "$N2_DIR" "$AUDIT_DIR" "$DIST_DIR"
+
+          echo 'N3_CONTROLLER_PREFLIGHT=PASS' | tee "$AUDIT_DIR/00-controller.txt"
+
+      - name: Authenticate exact GREEN N2-v7 artifact and build CLEAN AK3
+        id: n3
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          run_json="$RUNNER_TEMP/n2-run.json"
+          artifact_json="$RUNNER_TEMP/n2-artifact.json"
+          n2_zip="$RUNNER_TEMP/n2-v7-artifact.zip"
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/actions/runs/$N2_RUN_ID" \
+            -o "$run_json"
+
+          jq -e \
+            --arg repo "$EXPECTED_REPOSITORY" \
+            --arg sha "$N2_HEAD_SHA" \
+            --argjson run "$N2_RUN_ID" \
+            '.id == $run
+             and .repository.full_name == $repo
+             and .head_sha == $sha
+             and .status == "completed"
+             and .conclusion == "success"' \
+            "$run_json" >/dev/null
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/actions/artifacts/$N2_ARTIFACT_ID" \
+            -o "$artifact_json"
+
+          jq -e \
+            --arg name "$N2_ARTIFACT_NAME" \
+            --arg digest "sha256:$N2_ARTIFACT_SHA256" \
+            --arg sha "$N2_HEAD_SHA" \
+            --argjson id "$N2_ARTIFACT_ID" \
+            --argjson run "$N2_RUN_ID" \
+            --argjson size "$N2_ARTIFACT_SIZE" \
+            '.id == $id
+             and .name == $name
+             and .size_in_bytes == $size
+             and .expired == false
+             and .digest == $digest
+             and .workflow_run.id == $run
+             and .workflow_run.head_sha == $sha' \
+            "$artifact_json" >/dev/null
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api/actions/artifacts/$N2_ARTIFACT_ID/zip" \
+            -o "$n2_zip"
+
+          test -s "$n2_zip"
+          test "$(sha256sum "$n2_zip" | awk '{print $1}')" = "$N2_ARTIFACT_SHA256"
+          unzip -t "$n2_zip" | tee "$AUDIT_DIR/01-n2-artifact-unzip.txt"
+          unzip -q "$n2_zip" -d "$N2_DIR"
+
+          (
+            cd "$N2_DIR"
+            sha256sum -c SHA256SUMS.txt
+          ) | tee "$AUDIT_DIR/02-n2-sha256-check.txt"
+
+          n2_final="$N2_DIR/FINAL-RESULT.txt"
+          n2_status="$N2_DIR/5.4.274/BUILD-STATUS.txt"
+          n2_proof="$N2_DIR/5.4.274/evidence/clean-gen1-p14r1-audit/11-nomount-compile-result.txt"
+          image="$N2_DIR/5.4.274/Image"
+
+          for f in "$n2_final" "$n2_status" "$n2_proof" "$image"; do
+            test -s "$f"
+          done
+
+          grep -Fxq 'VEUX_U7_N2_NOMOUNT_COMPILE=PASS' "$n2_final"
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$n2_final"
+          grep -Fxq 'NOMOUNT_LINKED_IN_IMAGE=PASS' "$n2_final"
+          grep -Fxq 'CONFIG_NOMOUNT=YES' "$n2_final"
+          grep -Fxq 'COMPILE_PASS=YES' "$n2_final"
+          grep -Fxq 'PACKAGE_PASS=NO' "$n2_final"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$n2_final"
+          grep -Fxq 'DEVICE_PASS=NO' "$n2_final"
+
+          grep -Fxq 'KERNEL=5.4.274' "$n2_status"
+          grep -Fxq "AUTHORITY_BLOB=$N2_AUTHORITY_BLOB" "$n2_status"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$n2_status"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$n2_status"
+          grep -Fxq "UAPI=$RESUKISU_UAPI" "$n2_status"
+          grep -Fxq "SUSFS_VERSION=$SUSFS_VERSION" "$n2_status"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$n2_status"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$n2_status"
+          grep -Fxq 'COMPILE_PASS=YES' "$n2_status"
+
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$n2_proof"
+          grep -Fxq 'NOMOUNT_LINKED_IN_IMAGE=PASS' "$n2_proof"
+          grep -Fxq 'CONFIG_NOMOUNT=YES' "$n2_proof"
+          grep -Fxq 'CONFIG_KEYS=YES' "$n2_proof"
+          grep -Fxq 'CONFIG_SECURITY=YES' "$n2_proof"
+          grep -Fxq 'KERNEL_VERSION=5.4.274' "$n2_proof"
+          grep -Fxq 'COMPILE_PASS=YES' "$n2_proof"
+
+          test "$(stat -c '%s' "$image")" = "$N2_IMAGE_BYTES"
+          test "$(sha256sum "$image" | awk '{print $1}')" = "$N2_IMAGE_SHA256"
+          test "$(sed -n 's/^IMAGE_SHA256=//p' "$n2_status")" = "$N2_IMAGE_SHA256"
+          test "$(sed -n 's/^IMAGE_BYTES=//p' "$n2_status")" = "$N2_IMAGE_BYTES"
+
+          strings -a "$image" > "$AUDIT_DIR/03-image-strings.txt"
+          grep -Fq 'NoMount:' "$AUDIT_DIR/03-image-strings.txt"
+
+          {
+            echo 'N2_GREEN_ARTIFACT_AUTH=PASS'
+            echo "N2_RUN_ID=$N2_RUN_ID"
+            echo "N2_HEAD_SHA=$N2_HEAD_SHA"
+            echo "N2_ARTIFACT_ID=$N2_ARTIFACT_ID"
+            echo "N2_ARTIFACT_SHA256=$N2_ARTIFACT_SHA256"
+            echo "N2_IMAGE_SHA256=$N2_IMAGE_SHA256"
+            echo "N2_IMAGE_BYTES=$N2_IMAGE_BYTES"
+            echo 'N2_NOMOUNT_PROOF=PASS'
+          } | tee "$AUDIT_DIR/04-n2-provenance.txt"
+
+          # Reuse the exact AnyKernel3 pin and Image-only packaging contract
+          # already proven by the 5.4.274 P14R1 authority.
+          ak3="$GITHUB_WORKSPACE/AnyKernel3"
+          git clone -q "$AK3_REPO" "$ak3"
+          git -C "$ak3" checkout -q --detach "$AK3_COMMIT"
+          test "$(git -C "$ak3" rev-parse HEAD)" = "$AK3_COMMIT"
+
+          test "$(git -C "$ak3" hash-object tools/ak3-core.sh)" = "$AK3_CORE_BLOB"
+          test "$(git -C "$ak3" hash-object META-INF/com/google/android/update-binary)" = "$AK3_UPDATE_BINARY_BLOB"
+          test "$(git -C "$ak3" hash-object META-INF/com/google/android/updater-script)" = "$AK3_UPDATER_SCRIPT_BLOB"
+
+          rm -f "$ak3/Image" "$ak3/Image.gz" "$ak3/Image.gz-dtb" "$ak3/dtb" "$ak3/dtbo.img"
+          cp "$image" "$ak3/Image"
+          test "$(sha256sum "$ak3/Image" | awk '{print $1}')" = "$N2_IMAGE_SHA256"
+
+          cat > "$ak3/anykernel.sh" <<'EOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=VEUX U7 N3 Linux 5.4.274 ReSukiSU 35158 UAPI4 + SUSFS 2.3 + NoMount 2.0.0
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          chmod 0755 "$ak3/anykernel.sh"
+
+          rm -rf "$ak3/.git" "$ak3/.github"
+          rm -f "$ak3/README.md"
+          find "$ak3" -type f -name '*placeholder' -delete
+          find "$ak3" -maxdepth 1 -type f -name '*.txt' -delete
+
+          ak3_zip="$DIST_DIR/$AK3_ZIP_NAME"
+          (
+            cd "$ak3"
+            zip -r9 "$ak3_zip" . \
+              -x '.github/*' 'README.md' '*placeholder' '*.txt'
+          )
+          test -s "$ak3_zip"
+
+          unzip -t "$ak3_zip" | tee "$AUDIT_DIR/05-ak3-unzip.txt"
+          unzip -Z1 "$ak3_zip" | LC_ALL=C sort | tee "$AUDIT_DIR/06-ak3-contents.txt"
+
+          for required in \
+            anykernel.sh \
+            tools/ak3-core.sh \
+            Image \
+            META-INF/com/google/android/update-binary \
+            META-INF/com/google/android/updater-script
+          do
+            unzip -Z1 "$ak3_zip" | grep -Fxq "$required"
+          done
+
+          test "$(unzip -Z1 "$ak3_zip" | grep -Fxc 'Image')" -eq 1
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          unzip -p "$ak3_zip" Image > "$tmp/Image"
+          cmp -s "$image" "$tmp/Image"
+          test "$(sha256sum "$tmp/Image" | awk '{print $1}')" = "$N2_IMAGE_SHA256"
+
+          unzip -p "$ak3_zip" anykernel.sh > "$tmp/anykernel.sh"
+          bash -n "$tmp/anykernel.sh"
+
+          grep -Fqx 'kernel.string=VEUX U7 N3 Linux 5.4.274 ReSukiSU 35158 UAPI4 + SUSFS 2.3 + NoMount 2.0.0' "$tmp/anykernel.sh"
+          grep -Fqx 'do.devicecheck=1' "$tmp/anykernel.sh"
+          grep -Fqx 'do.modules=0' "$tmp/anykernel.sh"
+          grep -Fqx 'do.systemless=1' "$tmp/anykernel.sh"
+          grep -Fqx 'do.cleanup=1' "$tmp/anykernel.sh"
+          grep -Fqx 'do.cleanuponabort=0' "$tmp/anykernel.sh"
+          grep -Fqx 'device.name1=veux' "$tmp/anykernel.sh"
+          grep -Fqx 'supported.versions=13' "$tmp/anykernel.sh"
+          grep -Fqx 'BLOCK=boot;' "$tmp/anykernel.sh"
+          grep -Fqx 'IS_SLOT_DEVICE=1;' "$tmp/anykernel.sh"
+          grep -Fqx 'SLOT_SELECT=active;' "$tmp/anykernel.sh"
+          grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$tmp/anykernel.sh"
+          grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$tmp/anykernel.sh"
+
+          ! unzip -Z1 "$ak3_zip" | grep -Eq '(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$'
+          ! unzip -Z1 "$ak3_zip" | grep -Eq '(^|/)\.git(/|$)|(^|/)\.github(/|$)|(^|/)README\.md$|placeholder$'
+          ! unzip -Z1 "$ak3_zip" | grep -Ei '(^|/)(audit|build-info|final-result|sha256sums)([^/]*)$'
+
+          python3 - "$ak3_zip" <<'PY'
+          import stat
+          import sys
+          import zipfile
+
+          zpath = sys.argv[1]
+          with zipfile.ZipFile(zpath) as z:
+              names = z.namelist()
+              if len(names) != len(set(names)):
+                  raise SystemExit('duplicate ZIP entries')
+
+              required_exec = {
+                  'anykernel.sh',
+                  'META-INF/com/google/android/update-binary',
+              }
+
+              for info in z.infolist():
+                  name = info.filename
+                  parts = [
+                      p for p in name.replace('\\', '/').split('/')
+                      if p not in ('', '.')
+                  ]
+                  if name.startswith('/') or '..' in parts:
+                      raise SystemExit(f'unsafe ZIP path: {name}')
+
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f'symlink not allowed: {name}')
+
+                  if name in required_exec and not (mode & stat.S_IXUSR):
+                      raise SystemExit(f'executable bit missing: {name}')
+
+          print('ZIP_PATH_SYMLINK_EXEC_GUARD=PASS')
+          PY
+
+          sha256sum "$ak3_zip" > "$DIST_DIR/$AK3_ZIP_NAME.sha256"
+
+          {
+            echo 'N3_PACKAGE_BUILD=PASS'
+            echo 'AK3_EXACT_PIN=PASS'
+            echo 'AK3_CRITICAL_BLOBS=PASS'
+            echo 'AK3_IMAGE_ONLY=PASS'
+            echo 'AK3_IMAGE_EXACT_N2V7=PASS'
+            echo 'AK3_ZIP_SAFETY=PASS'
+            echo "AK3_SHA256=$(sha256sum "$ak3_zip" | awk '{print $1}')"
+            echo "AK3_BYTES=$(stat -c '%s' "$ak3_zip")"
+          } | tee "$AUDIT_DIR/07-package-result.txt"
+
+      - name: Finalize N3 evidence
+        if: always()
+        shell: bash
+        env:
+          N3_OUTCOME: ${{ steps.n3.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_DIR" "$DIST_DIR"
+
+          result="$DIST_DIR/FINAL-RESULT.txt"
+          package_proof="$AUDIT_DIR/07-package-result.txt"
+          ak3_zip="$DIST_DIR/$AK3_ZIP_NAME"
+
+          pass=1
+          [ "$N3_OUTCOME" = success ] || pass=0
+          [ -s "$package_proof" ] || pass=0
+          [ -s "$ak3_zip" ] || pass=0
+          [ -s "$DIST_DIR/$AK3_ZIP_NAME.sha256" ] || pass=0
+
+          if [ "$pass" = 1 ]; then
+            grep -Fxq 'N3_PACKAGE_BUILD=PASS' "$package_proof" || pass=0
+            grep -Fxq 'AK3_EXACT_PIN=PASS' "$package_proof" || pass=0
+            grep -Fxq 'AK3_CRITICAL_BLOBS=PASS' "$package_proof" || pass=0
+            grep -Fxq 'AK3_IMAGE_ONLY=PASS' "$package_proof" || pass=0
+            grep -Fxq 'AK3_IMAGE_EXACT_N2V7=PASS' "$package_proof" || pass=0
+            grep -Fxq 'AK3_ZIP_SAFETY=PASS' "$package_proof" || pass=0
+            test "$(sha256sum "$ak3_zip" | awk '{print $1}')" = \
+              "$(awk '{print $1}' "$DIST_DIR/$AK3_ZIP_NAME.sha256")" || pass=0
+          fi
+
+          {
+            echo "N3_STEP_OUTCOME=$N3_OUTCOME"
+            echo 'DEVICE=veux'
+            echo 'LINUX=5.4.274'
+            echo "SOURCE_N2_RUN_ID=$N2_RUN_ID"
+            echo "SOURCE_N2_HEAD_SHA=$N2_HEAD_SHA"
+            echo "SOURCE_N2_ARTIFACT_ID=$N2_ARTIFACT_ID"
+            echo "SOURCE_N2_ARTIFACT_SHA256=$N2_ARTIFACT_SHA256"
+            echo "IMAGE_SHA256=$N2_IMAGE_SHA256"
+            echo "IMAGE_BYTES=$N2_IMAGE_BYTES"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+            echo "KSU_UAPI=$RESUKISU_UAPI"
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+            echo "NOMOUNT_VERSION=$NOMOUNT_VERSION"
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+            echo "AK3_PIN=$AK3_COMMIT"
+            if [ "$pass" = 1 ]; then
+              echo 'VEUX_U7_N3_AK3_PACKAGE=PASS'
+              echo 'N2_GREEN_ARTIFACT_AUTH=PASS'
+              echo 'NOMOUNT_COMPILE_OBJECT=PASS'
+              echo 'NOMOUNT_LINKED_IN_IMAGE=PASS'
+              echo 'AK3_IMAGE_EXACT_N2V7=PASS'
+              echo 'AK3_ZIP_SAFETY=PASS'
+              echo 'COMPILE_PASS=YES'
+              echo 'PACKAGE_PASS=YES'
+            else
+              echo 'VEUX_U7_N3_AK3_PACKAGE=FAIL'
+              echo 'PACKAGE_PASS=NO'
+            fi
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+            if [ -s "$ak3_zip" ]; then
+              echo "AK3=$AK3_ZIP_NAME"
+              echo "AK3_SHA256=$(sha256sum "$ak3_zip" | awk '{print $1}')"
+              echo "AK3_BYTES=$(stat -c '%s' "$ak3_zip")"
+            fi
+          } > "$result"
+
+          {
+            echo "N2_RUN_ID=$N2_RUN_ID"
+            echo "N2_HEAD_SHA=$N2_HEAD_SHA"
+            echo "N2_ARTIFACT_ID=$N2_ARTIFACT_ID"
+            echo "N2_ARTIFACT_NAME=$N2_ARTIFACT_NAME"
+            echo "N2_ARTIFACT_SHA256=$N2_ARTIFACT_SHA256"
+            echo "N2_IMAGE_SHA256=$N2_IMAGE_SHA256"
+            echo "N2_IMAGE_BYTES=$N2_IMAGE_BYTES"
+            echo "N2_AUTHORITY_BLOB=$N2_AUTHORITY_BLOB"
+            echo "AK3_REPO=$AK3_REPO"
+            echo "AK3_COMMIT=$AK3_COMMIT"
+          } > "$DIST_DIR/SOURCE-PROVENANCE.txt"
+
+          (
+            cd "$DIST_DIR"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+          (
+            cd "$AUDIT_DIR"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Upload N3 CLEAN AK3 package
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U7-N3V1-5.4.274-ReSukiSU-35158-NoMount-2.0.0-AK3-${{ github.run_id }}
+          path: |
+            n3-dist/
+            n3-audit/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Final real N3 GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          result="$DIST_DIR/FINAL-RESULT.txt"
+          test -s "$result"
+
+          grep -Fxq 'VEUX_U7_N3_AK3_PACKAGE=PASS' "$result"
+          grep -Fxq 'N2_GREEN_ARTIFACT_AUTH=PASS' "$result"
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$result"
+          grep -Fxq 'NOMOUNT_LINKED_IN_IMAGE=PASS' "$result"
+          grep -Fxq 'AK3_IMAGE_EXACT_N2V7=PASS' "$result"
+          grep -Fxq 'AK3_ZIP_SAFETY=PASS' "$result"
+          grep -Fxq 'COMPILE_PASS=YES' "$result"
+          grep -Fxq 'PACKAGE_PASS=YES' "$result"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$result"
+          grep -Fxq 'DEVICE_PASS=NO' "$result"
+
+          (
+            cd "$DIST_DIR"
+            sha256sum -c SHA256SUMS.txt
+          )
+          (
+            cd "$AUDIT_DIR"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'N3_REAL_GREEN_GATE=PASS'
