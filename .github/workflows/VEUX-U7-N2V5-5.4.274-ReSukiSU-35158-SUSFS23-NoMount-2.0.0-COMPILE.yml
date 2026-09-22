@@ -1,0 +1,104 @@
+name: VEUX U7-N2 v5 5.4.274 ReSukiSU 35158 + SUSFS 2.3 + NoMount 2.0.0 Compile
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-u7-n2-v4-274-nomount-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  O51_AUTHORITY: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+  RESUKISU_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_VERSION: '35158'
+  RESUKISU_UAPI: '4'
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  NOMOUNT_REPO: https://github.com/maxsteeel/NoMount.git
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_TAG: v2.0.0
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+    - name: Checkout exact project state
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Install controller dependencies
+      shell: bash
+      run: 'set -euo pipefail
+
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+        sudo apt-get update
+
+        sudo apt-get install -y --no-install-recommends python3 python3-yaml git ca-certificates
+
+        python3 - <<''PY''
+
+        import yaml
+
+        print(''PYYAML_IMPORT=PASS'')
+
+        PY
+
+        '
+    - name: Authenticate authority, derive replayer, integrate NoMount and compile
+      id: n2
+      continue-on-error: true
+      shell: bash
+      env:
+        NOMOUNT_REPO: ${{ env.NOMOUNT_REPO }}
+        NOMOUNT_COMMIT: ${{ env.NOMOUNT_COMMIT }}
+      run: "set -euo pipefail\ntest -f \"$O51_AUTHORITY\"\nactual=\"$(git hash-object \"$O51_AUTHORITY\")\"\necho \"O51_AUTHORITY_BLOB_ACTUAL=$actual\"\ntest \"$actual\" = \"$O51_AUTHORITY_BLOB\"\n\npython3 - \"$O51_AUTHORITY\" \"$RUNNER_TEMP/n2_replay.py\" <<'PY'\nfrom pathlib import Path\nimport sys, yaml\nsrc=Path(sys.argv[1]); out=Path(sys.argv[2])\ndoc=yaml.safe_load(src.read_text())\nsteps=next(iter(doc['jobs'].values()))['steps']\nstep=next(s for s in steps if s.get('name')=='Write and self-test fail-closed authority replayer')\nrun=step['run']\nstart=\"cat > \\\"$RUNNER_TEMP/o51_replay.py\\\" <<'PY'\\n\"\na=run.index(start)+len(start)\nb=run.find('\\n          PY\\n',a)\nif b < 0:\n    b=run.index('\\nPY\\n',a)\ncode=run[a:b]\n# YAML block indentation is already removed by parser; heredoc body still has 10 spaces.\nlines=code.splitlines()\nif lines and all((not x.strip()) or x.startswith('          ') for x in lines):\n    code='\\n'.join(x[10:] if x.startswith('          ') else\
+        \ x for x in lines)+'\\n'\n\nmarker='          def patch_293_integrator(workspace: Path, doc: dict[str, Any]) -> str:\\n'\nif marker not in code:\n    marker='def patch_293_integrator(workspace: Path, doc: dict[str, Any]) -> str:\\n'\ninject=r'''def adapt_274_nomount(job: dict[str, Any]) -> None:\n    steps = job.get(\"steps\") or []\n    compile_name = \"Compile P14R1 and enforce P14 warning/DTB regression gates\"\n    compile_idx = next((i for i,s in enumerate(steps) if s.get(\"name\") == compile_name), None)\n    if compile_idx is None:\n        die(\"5.4.274 compile step not found for NoMount injection\")\n\n    integration = {\n        \"name\": \"N2 integrate pinned NoMount 2.0.0\",\n        \"shell\": \"bash\",\n        \"run\": r\"\"\"set -euo pipefail\nnm=\"$RUNNER_TEMP/nomount-v2.0.0\"\nrm -rf \"$nm\"\ngit init -q \"$nm\"\ngit -C \"$nm\" remote add origin \"${NOMOUNT_REPO}\"\ngit -C \"$nm\" fetch -q --depth=1 origin \"${NOMOUNT_COMMIT}\"\ngit -C \"$nm\" checkout -q --detach\
+        \ FETCH_HEAD\ntest \"$(git -C \"$nm\" rev-parse HEAD)\" = \"${NOMOUNT_COMMIT}\"\n\ntest -d kernel/fs\ntest -d kernel/arch/arm64/configs\ntest ! -e kernel/fs/nomount\ntest -d \"$nm/kernel/src\"\n\nn2_exec_before=\"$(sha256sum kernel/fs/exec.c | awk '{print $1}')\"\nn2_contract_before=\"$(sha256sum kernel/include/linux/ksu_hook_contract.h | awk '{print $1}')\"\nn2_susfs_before=\"$(sha256sum kernel/fs/susfs.c | awk '{print $1}')\"\nn2_fs_kconfig_before=\"$(sha256sum kernel/fs/Kconfig | awk '{print $1}')\"\nn2_fs_makefile_before=\"$(sha256sum kernel/fs/Makefile | awk '{print $1}')\"\nn2_defconfig_before=\"$(sha256sum kernel/arch/arm64/configs/veux_defconfig | awk '{print $1}')\"\n\nmkdir -p kernel/fs/nomount\ncp -a \"$nm/kernel/src/.\" kernel/fs/nomount/\ngrep -Fqx 'source \"fs/nomount/Kconfig\"' kernel/fs/Kconfig || printf '\\nsource \"fs/nomount/Kconfig\"\\n' >> kernel/fs/Kconfig\ngrep -Fqx 'obj-$(CONFIG_NOMOUNT) += nomount/' kernel/fs/Makefile || printf '\\nobj-$(CONFIG_NOMOUNT) +=\
+        \ nomount/\\n' >> kernel/fs/Makefile\n\ndefconfig=kernel/arch/arm64/configs/veux_defconfig\nif grep -Eq '^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=' \"$defconfig\"; then\n  sed -i -E 's/^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=.*/CONFIG_NOMOUNT=y/' \"$defconfig\"\nelse\n  printf '\\nCONFIG_NOMOUNT=y\\n' >> \"$defconfig\"\nfi\n\ngrep -Fxq 'CONFIG_NOMOUNT=y' \"$defconfig\"\ngrep -Fxq 'CONFIG_KEYS=y' \"$defconfig\"\ngrep -Fxq 'CONFIG_KSU=y' \"$defconfig\"\ngrep -Fxq 'CONFIG_KSU_SUSFS=y' \"$defconfig\"\ngrep -Fxq 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \"$defconfig\"\n\ntest -f kernel/fs/nomount/Kconfig\ntest -f kernel/fs/nomount/Makefile\ntest -f kernel/fs/nomount/nomount.c\ntest -f kernel/fs/nomount/nomount.h\ngrep -Fq 'register_key_type(&nm_key_type)' kernel/fs/nomount/nomount.c\ngrep -Fq 'LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0)' kernel/fs/nomount/nomount.h\n\n# Fail closed on this NoMount step, not on the already-authenticated dirty authority tree.\ntest \"$(sha256sum kernel/fs/exec.c\
+        \ | awk '{print $1}')\" = \"$n2_exec_before\"\ntest \"$(sha256sum kernel/include/linux/ksu_hook_contract.h | awk '{print $1}')\" = \"$n2_contract_before\"\ntest \"$(sha256sum kernel/fs/susfs.c | awk '{print $1}')\" = \"$n2_susfs_before\"\ntest \"$(sha256sum kernel/fs/Kconfig | awk '{print $1}')\" != \"$n2_fs_kconfig_before\"\ntest \"$(sha256sum kernel/fs/Makefile | awk '{print $1}')\" != \"$n2_fs_makefile_before\"\ntest \"$(sha256sum \"$defconfig\" | awk '{print $1}')\" != \"$n2_defconfig_before\"\ntest -n \"$(find kernel/fs/nomount -maxdepth 1 -type f -print -quit)\"\necho 'N2_SOURCE_DELTA_WHITELIST=PASS'\necho 'NOMOUNT_SOURCE_INTEGRATION=PASS'\n\"\"\"\n    }\n\n    # Add the integration immediately before the proven compile step.\n    steps.insert(compile_idx, integration)\n    compile_idx += 1\n    crun = str(steps[compile_idx][\"run\"])\n    needle=\"grep -Fxq 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \\\"$OUT_DIR/.config\\\"\"\n    if crun.count(needle) != 1:\n        die(\"NoMount\
+        \ config-gate insertion preimage mismatch\")\n    crun=crun.replace(needle, needle+\"\\n          grep -Fxq 'CONFIG_NOMOUNT=y' \\\"$OUT_DIR/.config\\\"\",1)\n    steps[compile_idx][\"run\"] = crun\n\n    verify = {\n        \"name\": \"N2 verify NoMount compile result\",\n        \"shell\": \"bash\",\n        \"run\": r\"\"\"set -euo pipefail\ntest -s \"$OUT_DIR/arch/arm64/boot/Image\"\ntest -s \"$OUT_DIR/fs/nomount/nomount.o\"\ngrep -Fxq 'CONFIG_NOMOUNT=y' \"$OUT_DIR/.config\"\ngrep -Fxq 'CONFIG_KEYS=y' \"$OUT_DIR/.config\"\ngrep -Fxq 'CONFIG_KSU=y' \"$OUT_DIR/.config\"\ngrep -Fxq 'CONFIG_KSU_SUSFS=y' \"$OUT_DIR/.config\"\ngrep -Fxq 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \"$OUT_DIR/.config\"\ntest \"$(make -s -C kernel kernelversion)\" = '5.4.274'\n{\n echo 'NOMOUNT_COMPILE_OBJECT=PASS'\n echo 'CONFIG_NOMOUNT=YES'\n echo 'KERNEL_VERSION=5.4.274'\n echo 'COMPILE_PASS=YES'\n echo 'PACKAGE_PASS=NO'\n echo 'STATIC_BOOT_PATH_PASS=NO'\n echo 'DEVICE_PASS=NO'\n} | tee \"$AUDIT_DIR/11-nomount-compile-result.txt\"\
+        \n\"\"\"\n    }\n    # N2 is compile-only. Drop the old P14R1 packaging/final-gate steps.\n    job[\"steps\"] = steps[:compile_idx+1] + [verify]\n\n'''\nif marker not in code:\n    raise SystemExit('patch_293 marker missing')\ncode=code.replace(marker,inject+marker,1)\n# Locate the real O51-v3 5.4.274 adaptation structurally.\n# Do not depend on exact indentation or surrounding formatting.\n_code_lines = code.splitlines()\n_hits = [\n    i for i, line in enumerate(_code_lines)\n    if line.strip() == 'adapt_274_manager_only_target(job)'\n]\nif len(_hits) != 1:\n    raise SystemExit(f'274 manager adaptation structural match count mismatch: {len(_hits)}')\n_i = _hits[0]\n_indent = _code_lines[_i][:-len(_code_lines[_i].lstrip())]\n_nomount_call = _indent + 'adapt_274_nomount(job)'\nif _nomount_call in _code_lines:\n    raise SystemExit('274 NoMount adaptation already present unexpectedly')\n_code_lines.insert(_i + 1, _nomount_call)\ncode = \"\\n\".join(_code_lines) + \"\\n\"\nout.write_text(code)\n\
+        compile(code,str(out),'exec')\nprint('N2_REPLAYER_DERIVATION=PASS')\nPY\n\npython3 -m py_compile \"$RUNNER_TEMP/n2_replay.py\"\npython3 \"$RUNNER_TEMP/n2_replay.py\" --selftest\n\n\nset -euo pipefail\nagg=\"$GITHUB_WORKSPACE/n2-aggregate\"\nstate=\"$RUNNER_TEMP/n2-state\"\nrm -rf \"$agg\" \"$state\"\nmkdir -p \"$agg\" \"$state\"\npython3 \"$RUNNER_TEMP/n2_replay.py\" \\\n  --kernel 5.4.274 \\\n  --project-root \"$GITHUB_WORKSPACE\" \\\n  --aggregate \"$agg\" \\\n  --state-root \"$state\" \\\n  --sha \"$GITHUB_SHA\"\n"
+      if: ${{ !cancelled() }}
+    - name: Finalize N2 evidence
+      if: always()
+      shell: bash
+      env:
+        N2_OUTCOME: ${{ steps.n2.outcome }}
+      run: "set -euo pipefail\nagg=\"$GITHUB_WORKSPACE/n2-aggregate\"\nout=\"$agg/5.4.274\"\nmkdir -p \"$out\"\nstatus=\"$out/BUILD-STATUS.txt\"\nimage=\"$out/Image\"\nresult=\"$agg/FINAL-RESULT.txt\"\n\npass=1\n[ \"$N2_OUTCOME\" = success ] || pass=0\n[ -s \"$status\" ] || pass=0\n[ -s \"$image\" ] || pass=0\nif [ \"$pass\" = 1 ]; then\n  grep -Fxq 'COMPILE_PASS=YES' \"$status\" || pass=0\n  grep -Fxq \"RESUKISU_COMMIT=$RESUKISU_COMMIT\" \"$status\" || pass=0\n  grep -Fxq \"RESUKISU_VERSION=$RESUKISU_VERSION\" \"$status\" || pass=0\n  grep -Fxq 'UAPI=4' \"$status\" || pass=0\n  grep -Fxq 'SUSFS_VERSION=v2.3.0' \"$status\" || pass=0\n  grep -Fxq \"SUSFS_COMMIT=$SUSFS_COMMIT\" \"$status\" || pass=0\n  grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' \"$status\" || pass=0\n  test \"$(sha256sum \"$image\" | awk '{print $1}')\" = \"$(sed -n 's/^IMAGE_SHA256=//p' \"$status\")\" || pass=0\nfi\n\n{\n  echo \"N2_STEP_OUTCOME=$N2_OUTCOME\"\n  echo 'KERNEL=5.4.274'\n  echo \"RESUKISU_COMMIT=$RESUKISU_COMMIT\"\
+        \n  echo \"RESUKISU_VERSION=$RESUKISU_VERSION\"\n  echo \"UAPI=$RESUKISU_UAPI\"\n  echo \"SUSFS_COMMIT=$SUSFS_COMMIT\"\n  echo \"SUSFS_VERSION=$SUSFS_VERSION\"\n  echo \"NOMOUNT_COMMIT=$NOMOUNT_COMMIT\"\n  echo \"NOMOUNT_TAG=$NOMOUNT_TAG\"\n  echo 'MODULE_LOAD_FILTER=EXCLUDED'\n  if [ \"$pass\" = 1 ]; then\n    echo 'VEUX_U7_N2_NOMOUNT_COMPILE=PASS'\n    echo 'COMPILE_PASS=YES'\n  else\n    echo 'VEUX_U7_N2_NOMOUNT_COMPILE=FAIL'\n    echo 'COMPILE_PASS=NO'\n  fi\n  echo 'PACKAGE_PASS=NO'\n  echo 'STATIC_BOOT_PATH_PASS=NO'\n  echo 'DEVICE_PASS=NO'\n} > \"$result\"\n\n(cd \"$agg\" && find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt)\n"
+    - name: Upload N2 compile evidence
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: VEUX-U7-N2V5-5.4.274-ReSukiSU-35158-NoMount-2.0.0-COMPILE-${{ github.run_id }}
+        path: n2-aggregate/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 6
+    - name: Final real N2 GREEN gate
+      if: always()
+      shell: bash
+      run: 'set -euo pipefail
+
+        agg="$GITHUB_WORKSPACE/n2-aggregate"
+
+        grep -Fxq ''VEUX_U7_N2_NOMOUNT_COMPILE=PASS'' "$agg/FINAL-RESULT.txt"
+
+        grep -Fxq ''COMPILE_PASS=YES'' "$agg/FINAL-RESULT.txt"
+
+        grep -Fxq ''PACKAGE_PASS=NO'' "$agg/FINAL-RESULT.txt"
+
+        grep -Fxq ''STATIC_BOOT_PATH_PASS=NO'' "$agg/FINAL-RESULT.txt"
+
+        grep -Fxq ''DEVICE_PASS=NO'' "$agg/FINAL-RESULT.txt"
+
+        (cd "$agg" && sha256sum -c SHA256SUMS.txt)
+
+        echo ''N2_REAL_GREEN_GATE=PASS''
+
+        '
