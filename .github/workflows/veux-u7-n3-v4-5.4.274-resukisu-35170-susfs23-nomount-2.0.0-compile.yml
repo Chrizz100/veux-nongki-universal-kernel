@@ -1,0 +1,336 @@
+name: VEUX U7-N3 v4 5.4.274 ReSukiSU 35170 + SUSFS 2.3 + NoMount 2.0.0 Compile
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-u7-n3-v4-274-resukisu-35170-nomount-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  O51_AUTHORITY: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+  U7_AUTHORITY: .github/workflows/veux-u7-n2-v3-5.4.274-resukisu-35158-susfs23-nomount-2.0.0-compile.yml
+  U7_AUTHORITY_BLOB: de2db0a53fb3d5458b48fe710882b6eb6ce780c7
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_BASE_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_BASE_VERSION: '35158'
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  RESUKISU_VERSION: '35170'
+  RESUKISU_UAPI: '4'
+  RESUKISU_EXPECTED_BASE_DELTA_COMMITS: '12'
+  RESUKISU_EXPECTED_P14_DELTA_COMMITS: '16'
+  RESUKISU_MANAGER_TARGET_BLOB: 793469e587bfdb92a6b60c1126b14da560317340
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  NOMOUNT_REPO: https://github.com/maxsteeel/NoMount.git
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_TAG: v2.0.0
+  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_MIRROR: https://github.com/ShirkNeko/susfs4ksu.git
+  SUSFS_BRANCH: gki-android13-5.10
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 260
+    steps:
+    - name: Checkout exact project state
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Install controller dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ca-certificates git python3 python3-yaml
+
+        python3 - <<'PY'
+        import yaml
+        print("PYYAML_IMPORT=PASS")
+        PY
+    - name: Authenticate frozen authorities and 35158 to 35170 upstream contract
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        test -f "$O51_AUTHORITY"
+        test -f "$U7_AUTHORITY"
+        test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+        test "$(git hash-object "$U7_AUTHORITY")" = "$U7_AUTHORITY_BLOB"
+
+        up="$RUNNER_TEMP/u7n3-contract-resukisu"
+        rm -rf "$up"
+        git clone -q "$RESUKISU_REPO" "$up"
+        git -C "$up" cat-file -e "$RESUKISU_BASE_COMMIT^{commit}"
+        git -C "$up" cat-file -e "$RESUKISU_COMMIT^{commit}"
+        git -C "$up" merge-base --is-ancestor "$RESUKISU_BASE_COMMIT" "$RESUKISU_COMMIT"
+
+        delta="$(git -C "$up" rev-list --count "$RESUKISU_BASE_COMMIT..$RESUKISU_COMMIT")"
+        test "$delta" = "$RESUKISU_EXPECTED_BASE_DELTA_COMMITS"
+
+        version="$((30700 + $(git -C "$up" rev-list --count "$RESUKISU_COMMIT")))"
+        test "$version" = "$RESUKISU_VERSION"
+
+        primary_susfs_head="$(
+          git ls-remote "$SUSFS_REPO" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}'
+        )"
+        mirror_susfs_head="$(
+          git ls-remote "$SUSFS_MIRROR" "refs/heads/$SUSFS_BRANCH" | awk '{print $1}'
+        )"
+        test "$primary_susfs_head" = "$SUSFS_COMMIT"
+        test "$mirror_susfs_head" = "$SUSFS_COMMIT"
+
+        nomount_tag_head="$(
+          git ls-remote "$NOMOUNT_REPO" "refs/tags/$NOMOUNT_TAG" | awk '{print $1}'
+        )"
+        test "$nomount_tag_head" = "$NOMOUNT_COMMIT"
+
+        echo "U7_AUTHORITY_CHAIN=PASS"
+        echo "RESUKISU_35158_TO_35170_COMMITS=$delta"
+        echo "RESUKISU_VERSION=$version"
+        echo "SUSFS_PIN_CURRENT=PASS"
+        echo "NOMOUNT_2_0_0_TAG_PIN=PASS"
+    - name: Derive fail-closed U7-N3 replayer and compile
+      id: n3
+      continue-on-error: true
+      shell: bash
+      env:
+        NOMOUNT_REPO: ${{ env.NOMOUNT_REPO }}
+        NOMOUNT_COMMIT: ${{ env.NOMOUNT_COMMIT }}
+      run: |
+        set -euo pipefail
+
+        python3 - "$O51_AUTHORITY" "$RUNNER_TEMP/n3_replay.py" <<'PYDERIVE'
+        from pathlib import Path
+        import sys
+        import yaml
+
+        src = Path(sys.argv[1])
+        out = Path(sys.argv[2])
+
+        doc = yaml.safe_load(src.read_text(encoding="utf-8"))
+        steps = next(iter(doc["jobs"].values()))["steps"]
+        step = next(
+            s for s in steps
+            if s.get("name") == "Write and self-test fail-closed authority replayer"
+        )
+        run = step["run"]
+
+        start = 'cat > "$RUNNER_TEMP/o51_replay.py" <<\'PY\'\n'
+        a = run.index(start) + len(start)
+        b = run.find("\n          PY\n", a)
+        if b < 0:
+            b = run.index("\nPY\n", a)
+        code = run[a:b]
+
+        lines = code.splitlines()
+        if lines and all((not x.strip()) or x.startswith("          ") for x in lines):
+            code = "\n".join(
+                x[10:] if x.startswith("          ") else x
+                for x in lines
+            ) + "\n"
+
+        replacements = (
+            (
+                'NEW_COMMIT = "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"',
+                'NEW_COMMIT = "9be0f347f38e790c846915bd5f9c24b337f85c4e"',
+            ),
+            (
+                'NEW_SHORT = "6d18926a"',
+                'NEW_SHORT = "9be0f347"',
+            ),
+            (
+                'NEW_VERSION = "35158"',
+                'NEW_VERSION = "35170"',
+            ),
+            (
+                'nv = "4"',
+                'nv = "16"',
+            ),
+            (
+                'assert got["env"]["RESUKISU_EXPECTED_DELTA_COMMITS"] == "4"',
+                'assert got["env"]["RESUKISU_EXPECTED_DELTA_COMMITS"] == "16"',
+            ),
+        )
+        for old, new in replacements:
+            count = code.count(old)
+            if count != 1:
+                raise SystemExit(
+                    f"U7-N3 replayer transform preimage mismatch {old!r}: {count}"
+                )
+            code = code.replace(old, new, 1)
+
+        marker = "def patch_293_integrator(workspace: Path, doc: dict[str, Any]) -> str:\n"
+        if marker not in code:
+            marker = (
+                "          def patch_293_integrator("
+                "workspace: Path, doc: dict[str, Any]) -> str:\n"
+            )
+
+        inject = 'def adapt_274_resukisu_35170(job: dict[str, Any]) -> None:\n    env = job.setdefault("env", {})\n    env["RESUKISU_U7_BASE"] = "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"\n    env["RESUKISU_U7_BASE_VERSION"] = "35158"\n    env["RESUKISU_EXPECTED_DELTA_COMMITS"] = "16"\n    env["RESUKISU_U7_EXPECTED_DELTA_COMMITS"] = "12"\n    env["RESUKISU_MANAGER_TARGET_BLOB"] = "793469e587bfdb92a6b60c1126b14da560317340"\n\n    steps = job.get("steps") or []\n    auth = [\n        s for s in steps\n        if str(s.get("name", "")).startswith("Authenticate ReSukiSU ")\n        and "construct target subtree" in str(s.get("name", ""))\n    ]\n    if len(auth) != 1:\n        die(f"5.4.274 ReSukiSU auth-step match count mismatch: {len(auth)}")\n\n    auth[0]["name"] = (\n        "Authenticate ReSukiSU 35158 to 35170 kernel delta "\n        "and construct target subtree"\n    )\n    auth[0]["run"] = r\'\'\'set -euo pipefail\nup="$GITHUB_WORKSPACE/resukisu-upstream"\nrm -rf "$up"\ngit clone -q "$RESUKISU_REPO" "$up"\n\nfor c in \\\n  "$RESUKISU_COMMON_BASE" \\\n  "$RESUKISU_P14_DEVICE_PASS" \\\n  "$RESUKISU_U7_BASE" \\\n  "$RESUKISU_TARGET" \\\n  "$RESUKISU_EXCLUDED_MODULE_FILTER"\ndo\n  git -C "$up" cat-file -e "${c}^{commit}"\ndone\n\ngit -C "$up" merge-base --is-ancestor "$RESUKISU_P14_DEVICE_PASS" "$RESUKISU_U7_BASE"\ngit -C "$up" merge-base --is-ancestor "$RESUKISU_U7_BASE" "$RESUKISU_TARGET"\n\np14_delta="$(git -C "$up" rev-list --count "${RESUKISU_P14_DEVICE_PASS}..${RESUKISU_TARGET}")"\ntest "$p14_delta" = "$RESUKISU_EXPECTED_DELTA_COMMITS"\n\nu7_delta="$(git -C "$up" rev-list --count "${RESUKISU_U7_BASE}..${RESUKISU_TARGET}")"\ntest "$u7_delta" = "$RESUKISU_U7_EXPECTED_DELTA_COMMITS"\n\ngit -C "$up" diff --name-only "$RESUKISU_U7_BASE" "$RESUKISU_TARGET" -- kernel uapi \\\n  | LC_ALL=C sort > "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.txt"\n\ncat > "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.expected.txt" <<\'EOF\'\nkernel/Kbuild\nkernel/compat/kernel_compat.c\nkernel/compat/kernel_compat.h\nkernel/core/init.c\nkernel/feature/dynamic_manager.c\nkernel/feature/kernel_umount.c\nkernel/hook/arm64/patch_memory.c\nkernel/hook/lsm_hooks.c\nkernel/hook/syscall_hook_manager.c\nkernel/include/ksu.h\nkernel/infra/su_mount_ns.c\nkernel/manager/apk_sign.c\nkernel/manager/manager.c\nkernel/manager/manager_identity.h\nkernel/manager/throne_tracker.c\nkernel/manager/throne_tracker.h\nkernel/selinux/rules.c\nkernel/selinux/sepolicy.c\nkernel/tools/inline_hook_check.mk\nkernel/tools/kernel_compat.mk\nEOF\n\ndiff -u \\\n  "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.expected.txt" \\\n  "$AUDIT_DIR/03-resukisu-kernel-uapi-delta.txt"\n\ngit -C "$up" diff --quiet "$RESUKISU_U7_BASE" "$RESUKISU_TARGET" -- uapi\n\ntest "$(git -C "$up" rev-parse "$RESUKISU_TARGET:kernel/manager/manager.c")" \\\n  = "$RESUKISU_MANAGER_TARGET_BLOB"\n\ngit -C "$up" show "$RESUKISU_TARGET:kernel/compat/kernel_compat.h" \\\n  | grep -Fq \'ksu_filp_open_nonotify\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/compat/kernel_compat.h" \\\n  | grep -Fq \'#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/compat/kernel_compat.c" \\\n  | grep -Fq \'#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/compat/kernel_compat.c" \\\n  | grep -Fq \'__weak int path_umount(struct path *path, int flags)\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/manager/apk_sign.c" \\\n  | grep -Fq \'ksu_filp_open_nonotify(path, O_RDONLY | O_NOATIME)\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/manager/manager.c" \\\n  | grep -Fq \'void ksu_unregister_all_manager(void)\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/selinux/rules.c" \\\n  | grep -Fq \'old_pol = rcu_dereference_protected(selinux_state.policy\'\ngit -C "$up" show "$RESUKISU_TARGET:kernel/selinux/sepolicy.c" \\\n  | grep -Fq \'#define avtab_for_each(avtab, cur) ksu_hash_for_each(avtab.htable, avtab.nslot, cur)\'\n\ngrep -Fq \'int path_umount(struct path *path, int flags)\' \\\n  "$GITHUB_WORKSPACE/kernel/fs/namespace.c"\n\nif grep -Fq \'policy_mutex\' \\\n  "$GITHUB_WORKSPACE/kernel/security/selinux/include/security.h"; then\n  selinux_54_path="POLICY_MUTEX"\nelse\n  selinux_54_path="LEGACY"\nfi\n\ntarget_count="$(git -C "$up" rev-list --count "$RESUKISU_TARGET")"\ntarget_version="$((30700 + target_count))"\ntest "$target_version" = "35170"\ntarget_short="$(git -C "$up" rev-parse --short=8 "$RESUKISU_TARGET")"\ntest "$target_short" = "9be0f347"\ngit -C "$up" show "$RESUKISU_TARGET:uapi/supercall.h" \\\n  | grep -Eq \'KERNEL_SU_UAPI_VERSION = 4;\'\n\ngit -C "$up" log --reverse --format=\'%H %s\' \\\n  "${RESUKISU_U7_BASE}..${RESUKISU_TARGET}" \\\n  | tee "$AUDIT_DIR/03-resukisu-u7-delta-commits.txt"\n\n{\n  echo "RESUKISU_U7_BASE=$RESUKISU_U7_BASE"\n  echo "RESUKISU_TARGET=$RESUKISU_TARGET"\n  echo "RESUKISU_U7_DELTA_COMMITS=$u7_delta"\n  echo "RESUKISU_P14_DELTA_COMMITS=$p14_delta"\n  echo "RESUKISU_KERNEL_UAPI_DELTA_FILES=20"\n  echo "RESUKISU_UAPI_DELTA=NONE"\n  echo "RESUKISU_MANAGER_TARGET_BLOB=$RESUKISU_MANAGER_TARGET_BLOB"\n  echo "KSYSCALL_5_4_CONTRACT=PASS"\n  echo "PATH_UMOUNT_WEAK_COMPAT_PRESENT=PASS"\n  echo "PATH_UMOUNT_VENDOR_BACKPORT=PASS"\n  echo "MANAGER_NONOTIFY_CONTRACT=PASS"\n  echo "SELINUX_RCU_FIX_PRESENT=PASS"\n  echo "SELINUX_5_4_POLICY_PATH=$selinux_54_path"\n  echo "AVTAB_ITERATION_CONTRACT=PASS"\n  echo "TARGET_SHORT=$target_short"\n  echo "TARGET_KSU_VERSION=$target_version"\n  echo "TARGET_KSU_UAPI=4"\n  echo "RESUKISU_U7_DELTA_CONTRACT=PASS"\n} | tee "$AUDIT_DIR/03-resukisu-update-contract.txt"\n\necho "P14R1_KSU_VERSION=$target_version" >> "$GITHUB_ENV"\necho "P14R1_TARGET_TAG=U7N3" >> "$GITHUB_ENV"\necho "P14R1_TARGET_SHORT=$target_short" >> "$GITHUB_ENV"\n\ngit -C "$up" checkout -q --detach "$RESUKISU_TARGET"\ngit -C "$up" reset --hard -q "$RESUKISU_TARGET"\ngit -C "$up" clean -fdx -q\n\npython3 - <<\'PYFILTER\'\nfrom pathlib import Path\nimport os\n\nroot = Path(os.environ["GITHUB_WORKSPACE"]) / "resukisu-upstream"\n\ndef remove_exact(path, block, expected=1):\n    p = root / path\n    text = p.read_text(encoding="utf-8")\n    count = text.count(block)\n    if count != expected:\n        raise SystemExit(\n            f"{path}: expected {expected}, found {count}: {block!r}"\n        )\n    p.write_text(text.replace(block, "", expected), encoding="utf-8")\n\nfor rel in (\n    "kernel/feature/module_load_filter.c",\n    "kernel/feature/module_load_filter.h",\n):\n    p = root / rel\n    if not p.is_file():\n        raise SystemExit(f"missing expected file: {rel}")\n    p.unlink()\n\nremove_exact(\n    "kernel/Kbuild",\n    "kernelsu-objs += feature/module_load_filter.o\\n",\n)\nremove_exact(\n    "kernel/core/init.c",\n    \'#include "feature/module_load_filter.h"\\n\',\n)\nremove_exact(\n    "kernel/core/init.c",\n    \'char ksu_block_modules[256];\\n\'\n    \'module_param_string(block_modules, ksu_block_modules, \'\n    \'sizeof(ksu_block_modules), 0);\\n\'\n    \'MODULE_PARM_DESC(block_modules, \'\n    \'"Comma-separated preset module names to acknowledge without loading");\\n\\n\'\n)\nremove_exact(\n    "kernel/core/init.c",\n    "        ksu_module_load_filter_hook_init();\\n\\n",\n)\nremove_exact(\n    "kernel/core/init.c",\n    "    ksu_module_load_filter_hook_exit();\\n",\n)\nPYFILTER\n\ntest ! -e "$up/kernel/feature/module_load_filter.c"\ntest ! -e "$up/kernel/feature/module_load_filter.h"\n! grep -RFn \'module_load_filter\' "$up/kernel" "$up/uapi"\n! grep -RFn \'ksu_block_modules\' "$up/kernel" "$up/uapi"\n! grep -RFn \'block_modules\' "$up/kernel" "$up/uapi"\n\npatch="$AUDIT_DIR/04-current-kernel-uapi-minus-module-filter.patch"\ngit -C "$up" diff --binary "$RESUKISU_COMMON_BASE" -- kernel uapi > "$patch"\ntest -s "$patch"\n\ncd "$GITHUB_WORKSPACE/kernel"\nrm -rf KernelSU\ngit clone -q "$RESUKISU_REPO" KernelSU\ngit -C KernelSU checkout -q --detach "$RESUKISU_COMMON_BASE"\ngit -C KernelSU reset --hard -q "$RESUKISU_COMMON_BASE"\ngit -C KernelSU clean -fdx -q\ngit -C KernelSU apply --check --whitespace=nowarn "$patch"\ngit -C KernelSU apply --index --whitespace=nowarn "$patch"\ntest -z "$(git -C KernelSU ls-files -u)"\n\ndiff -qr "$up/kernel" KernelSU/kernel > "$AUDIT_DIR/04-kernel-parity.txt"\ndiff -qr "$up/uapi" KernelSU/uapi > "$AUDIT_DIR/04-uapi-parity.txt"\n\ntest "$(git -C KernelSU hash-object kernel/manager/manager.c)" \\\n  = "$RESUKISU_MANAGER_TARGET_BLOB"\ngrep -Fq \'ksu_filp_open_nonotify\' KernelSU/kernel/compat/kernel_compat.h\ngrep -Fq \'__weak int path_umount(struct path *path, int flags)\' \\\n  KernelSU/kernel/compat/kernel_compat.c\ngrep -Fq \'old_pol = rcu_dereference_protected(selinux_state.policy\' \\\n  KernelSU/kernel/selinux/rules.c\ngrep -Fq \'void ksu_unregister_all_manager(void)\' \\\n  KernelSU/kernel/manager/manager.c\n\n{\n  echo "CURRENT_KERNEL_UAPI_PATCH=PASS"\n  echo "MODULE_LOAD_FILTER_EXCLUDED=PASS"\n  echo "TARGET_SUBTREE_BYTE_PARITY=PASS"\n  echo "MANAGER_TARGET_BLOB=PASS"\n  echo "RESUKISU_35170_TARGET_SUBTREE=PASS"\n} | tee "$AUDIT_DIR/04-subtree-import.txt"\n\'\'\'\n\ndef adapt_274_nomount(job: dict[str, Any]) -> None:\n    steps = job.get("steps") or []\n    compile_name = "Compile P14R1 and enforce P14 warning/DTB regression gates"\n    compile_idx = next(\n        (i for i, s in enumerate(steps) if s.get("name") == compile_name),\n        None,\n    )\n    if compile_idx is None:\n        die("5.4.274 compile step not found for NoMount injection")\n\n    integration = {\n        "name": "U7-N3 integrate pinned NoMount 2.0.0",\n        "shell": "bash",\n        "run": r\'\'\'set -euo pipefail\nnm="$RUNNER_TEMP/nomount-v2.0.0"\nrm -rf "$nm"\ngit init -q "$nm"\ngit -C "$nm" remote add origin "${NOMOUNT_REPO}"\ngit -C "$nm" fetch -q --depth=1 origin "${NOMOUNT_COMMIT}"\ngit -C "$nm" checkout -q --detach FETCH_HEAD\ntest "$(git -C "$nm" rev-parse HEAD)" = "${NOMOUNT_COMMIT}"\n\n# Record the already-valid reconstructed tree before NoMount.  The P14 restore\n# intentionally contains many staged vendor deltas, so comparing the final\n# repository status directly against vendor HEAD is invalid.\ngit -C kernel diff --name-only | LC_ALL=C sort -u > "$RUNNER_TEMP/u7n3-nomount-tracked-before.txt"\ngit -C kernel ls-files --others --exclude-standard | LC_ALL=C sort -u > "$RUNNER_TEMP/u7n3-nomount-untracked-before.txt"\nsha256sum \\\n  kernel/fs/exec.c \\\n  kernel/include/linux/ksu_hook_contract.h \\\n  kernel/fs/susfs.c \\\n  > "$RUNNER_TEMP/u7n3-frozen-before.sha256"\n\ntest -d kernel/fs\ntest -d kernel/arch/arm64/configs\ntest ! -e kernel/fs/nomount\ntest -d "$nm/kernel/src"\n\nmkdir -p kernel/fs/nomount\ncp -a "$nm/kernel/src/." kernel/fs/nomount/\n\ngrep -Fqx \'source "fs/nomount/Kconfig"\' kernel/fs/Kconfig \\\n  || printf \'\\nsource "fs/nomount/Kconfig"\\n\' >> kernel/fs/Kconfig\ngrep -Fqx \'obj-$(CONFIG_NOMOUNT) += nomount/\' kernel/fs/Makefile \\\n  || printf \'\\nobj-$(CONFIG_NOMOUNT) += nomount/\\n\' >> kernel/fs/Makefile\n\ndefconfig=kernel/arch/arm64/configs/veux_defconfig\nif grep -Eq \'^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=\' "$defconfig"; then\n  sed -i -E \\\n    \'s/^# CONFIG_NOMOUNT is not set$|^CONFIG_NOMOUNT=.*/CONFIG_NOMOUNT=y/\' \\\n    "$defconfig"\nelse\n  printf \'\\nCONFIG_NOMOUNT=y\\n\' >> "$defconfig"\nfi\n\ngrep -Fxq \'CONFIG_NOMOUNT=y\' "$defconfig"\n# CONFIG_KEYS is Kconfig-resolved. The proven VEUX/P14 source defconfig may\n# still mark CONFIG_KEYS unset before `make veux_defconfig`.\n# Enforce KEYS only on the resolved OUT_DIR/.config in the compile step.\nif grep -Fxq \'CONFIG_KEYS=y\' "$defconfig"; then\n  echo \'NOMOUNT_DEFCONFIG_KEYS_STATE=EXPLICIT_Y\'\nelif grep -Fxq \'# CONFIG_KEYS is not set\' "$defconfig"; then\n  echo \'NOMOUNT_DEFCONFIG_KEYS_STATE=UNSET_PRE_RESOLVE\'\nelse\n  echo \'NOMOUNT_DEFCONFIG_KEYS_STATE=IMPLICIT_PRE_RESOLVE\'\nfi\necho \'NOMOUNT_KEYS_GATE=DEFERRED_TO_RESOLVED_DOTCONFIG\'\ngrep -Fxq \'CONFIG_KSU=y\' \"$defconfig\" || { echo \'::error::NOMOUNT_SOURCE_CONFIG_KSU_GATE=FAIL\'; exit 1; }\ngrep -Fxq \'CONFIG_KSU_SUSFS=y\' \"$defconfig\" || { echo \'::error::NOMOUNT_SOURCE_CONFIG_KSU_SUSFS_GATE=FAIL\'; exit 1; }\ngrep -Fxq \'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y\' \"$defconfig\" || { echo \'::error::NOMOUNT_SOURCE_OPEN_REDIRECT_GATE=FAIL\'; exit 1; }\n\nfor rel in Kconfig Makefile nomount.c nomount.h; do\n  test -f \"kernel/fs/nomount/$rel\" || { echo \"::error::NOMOUNT_SOURCE_FILE_MISSING=$rel\"; exit 1; }\n  cmp -s \"$nm/kernel/src/$rel\" \"kernel/fs/nomount/$rel\" || { echo \"::error::NOMOUNT_PINNED_COPY_MISMATCH=$rel\"; exit 1; }\ndone\n\ngrep -Fq \'config NOMOUNT\' kernel/fs/nomount/Kconfig || { echo \'::error::NOMOUNT_KCONFIG_SYMBOL_GATE=FAIL\'; exit 1; }\ngrep -Fq \'tristate \"NoMount Path Redirection Subsystem\"\' kernel/fs/nomount/Kconfig || { echo \'::error::NOMOUNT_KCONFIG_TRISTATE_GATE=FAIL\'; exit 1; }\ngrep -Fq \'default y\' kernel/fs/nomount/Kconfig || { echo \'::error::NOMOUNT_KCONFIG_DEFAULT_GATE=FAIL\'; exit 1; }\ngrep -Fq \'obj-$(CONFIG_NOMOUNT) += nomount.o\' kernel/fs/nomount/Makefile || { echo \'::error::NOMOUNT_MAKEFILE_OBJECT_GATE=FAIL\'; exit 1; }\ngrep -Fq \'register_key_type(&nm_key_type)\' kernel/fs/nomount/nomount.c || { echo \'::error::NOMOUNT_KEY_TYPE_REGISTER_GATE=FAIL\'; exit 1; }\ngrep -Fq \'unregister_key_type(&nm_key_type)\' kernel/fs/nomount/nomount.c || { echo \'::error::NOMOUNT_KEY_TYPE_UNREGISTER_GATE=FAIL\'; exit 1; }\ngrep -Fq \'#include <linux/key-type.h>\' kernel/fs/nomount/nomount.h || { echo \'::error::NOMOUNT_KEY_TYPE_HEADER_GATE=FAIL\'; exit 1; }\ngrep -Fq \'LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0)\' kernel/fs/nomount/nomount.h || { echo \'::error::NOMOUNT_5_4_COMPAT_GATE=FAIL\'; exit 1; }\n\necho \'NOMOUNT_PINNED_SOURCE_COPY=PASS\'\necho \'NOMOUNT_KEY_TYPE_CONTRACT=PASS\'\necho \'NOMOUNT_5_4_COMPAT_CONTRACT=PASS\'\nsha256sum \\\n  kernel/fs/exec.c \\\n  kernel/include/linux/ksu_hook_contract.h \\\n  kernel/fs/susfs.c \\\n  > "$RUNNER_TEMP/u7n3-frozen-after.sha256"\n\ndiff -u \\\n  "$RUNNER_TEMP/u7n3-frozen-before.sha256" \\\n  "$RUNNER_TEMP/u7n3-frozen-after.sha256" \\\n  || { echo \'::error::NOMOUNT_FROZEN_OUTER_MUTATION_GATE=FAIL\'; exit 1; }\necho \'NOMOUNT_FROZEN_OUTER_MUTATION_GATE=PASS\'\n\npython3 - <<\'PYNM\'\nfrom pathlib import Path\nimport os\nimport subprocess\n\nroot = Path("kernel")\ntmp = Path(os.environ["RUNNER_TEMP"])\n\ndef read_set(path: Path) -> set[str]:\n    if not path.is_file():\n        raise SystemExit(f"missing NoMount baseline snapshot: {path}")\n    return {line for line in path.read_text(encoding="utf-8").splitlines() if line}\n\ndef capture(*args: str) -> set[str]:\n    p = subprocess.run(\n        list(args),\n        text=True,\n        stdout=subprocess.PIPE,\n        stderr=subprocess.PIPE,\n        check=True,\n    )\n    return {line for line in p.stdout.splitlines() if line}\n\nbefore_tracked = read_set(tmp / "u7n3-nomount-tracked-before.txt")\nbefore_untracked = read_set(tmp / "u7n3-nomount-untracked-before.txt")\nafter_tracked = capture("git", "-C", str(root), "diff", "--name-only")\nafter_untracked = capture(\n    "git", "-C", str(root), "ls-files", "--others", "--exclude-standard"\n)\n\nnew_tracked = after_tracked - before_tracked\nremoved_tracked = before_tracked - after_tracked\nnew_untracked = after_untracked - before_untracked\nremoved_untracked = before_untracked - after_untracked\n\nexpected_tracked = {\n    "arch/arm64/configs/veux_defconfig",\n    "fs/Kconfig",\n    "fs/Makefile",\n}\nexpected_untracked = {\n    "fs/nomount/Kconfig",\n    "fs/nomount/Makefile",\n    "fs/nomount/nomount.c",\n    "fs/nomount/nomount.h",\n}\n\nif removed_tracked:\n    raise SystemExit(\n        "NoMount unexpectedly removed pre-existing tracked worktree deltas: "\n        + repr(sorted(removed_tracked))\n    )\nif removed_untracked:\n    raise SystemExit(\n        "NoMount unexpectedly removed pre-existing untracked paths: "\n        + repr(sorted(removed_untracked))\n    )\nif new_tracked != expected_tracked:\n    raise SystemExit(\n        "unexpected NoMount tracked delta: expected="\n        + repr(sorted(expected_tracked))\n        + " actual="\n        + repr(sorted(new_tracked))\n    )\nif new_untracked != expected_untracked:\n    raise SystemExit(\n        "unexpected NoMount untracked delta: expected="\n        + repr(sorted(expected_untracked))\n        + " actual="\n        + repr(sorted(new_untracked))\n    )\n\nprint("U7_N3_NOMOUNT_BEFORE_AFTER_DELTA_WHITELIST=PASS")\nPYNM\n\necho \'NOMOUNT_SOURCE_INTEGRATION=PASS\'\n\'\'\',\n    }\n\n    steps.insert(compile_idx, integration)\n    compile_idx += 1\n\n    crun = str(steps[compile_idx]["run"])\n    needle = (\n        "grep -Fxq \'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y\' "\n        \'"$OUT_DIR/.config"\'\n    )\n    if crun.count(needle) != 1:\n        die("NoMount config-gate insertion preimage mismatch")\n    crun = crun.replace(\n        needle,\n        needle + \'\\n          grep -Fxq \\\'CONFIG_NOMOUNT=y\\\' "$OUT_DIR/.config"\',\n        1,\n    )\n    steps[compile_idx]["run"] = crun\n\n    verify = {\n        "name": "U7-N3 verify 35170 and NoMount compile result",\n        "shell": "bash",\n        "run": r\'\'\'set -euo pipefail\ntest -s "$OUT_DIR/arch/arm64/boot/Image"\ntest -s "$OUT_DIR/fs/nomount/nomount.o"\ngrep -Fxq \'CONFIG_NOMOUNT=y\' "$OUT_DIR/.config"\ngrep -Fxq \'CONFIG_KEYS=y\' "$OUT_DIR/.config"\ngrep -Fxq \'CONFIG_KSU=y\' "$OUT_DIR/.config"\ngrep -Fxq \'CONFIG_KSU_SUSFS=y\' "$OUT_DIR/.config"\ngrep -Fxq \'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y\' "$OUT_DIR/.config"\ntest "$(make -s -C kernel kernelversion)" = \'5.4.274\'\n\ngrep -Fq \'CLEAN_GEN1_UPSTREAM_COMPAT_VERSION := 35170\' \\\n  kernel/KernelSU/kernel/Kbuild\ngrep -Fq \\\n  \'CLEAN_GEN1_UPSTREAM_TARGET := 9be0f347f38e790c846915bd5f9c24b337f85c4e\' \\\n  kernel/KernelSU/kernel/Kbuild\ngrep -Fq \'ksu_filp_open_nonotify\' \\\n  kernel/KernelSU/kernel/compat/kernel_compat.h\ngrep -Fq \'__weak int path_umount(struct path *path, int flags)\' \\\n  kernel/KernelSU/kernel/compat/kernel_compat.c\ngrep -Fq \'int path_umount(struct path *path, int flags)\' \\\n  kernel/fs/namespace.c\ngrep -Fq \'old_pol = rcu_dereference_protected(selinux_state.policy\' \\\n  kernel/KernelSU/kernel/selinux/rules.c\ntest ! -e kernel/KernelSU/kernel/feature/module_load_filter.c\ntest ! -e kernel/KernelSU/kernel/feature/module_load_filter.h\n\n{\n  echo \'RESUKISU_35170_COMPILE_OBJECTS=PASS\'\n  echo \'NOMOUNT_COMPILE_OBJECT=PASS\'\n  echo \'CONFIG_NOMOUNT=YES\'\n  echo \'KERNEL_VERSION=5.4.274\'\n  echo \'COMPILE_PASS=YES\'\n  echo \'PACKAGE_PASS=NO\'\n  echo \'STATIC_BOOT_PATH_PASS=NO\'\n  echo \'DEVICE_PASS=NO\'\n} | tee "$AUDIT_DIR/11-u7n3-compile-result.txt"\n\'\'\',\n    }\n\n    job["steps"] = steps[:compile_idx + 1] + [verify]\n\n'
+
+        if marker not in code:
+            raise SystemExit("patch_293 marker missing")
+        code = code.replace(marker, inject + marker, 1)
+
+        code_lines = code.splitlines()
+        hits = [
+            i for i, line in enumerate(code_lines)
+            if line.strip() == "adapt_274_manager_only_target(job)"
+        ]
+        if len(hits) != 1:
+            raise SystemExit(
+                f"274 manager adaptation structural match count mismatch: {len(hits)}"
+            )
+        i = hits[0]
+        indent = code_lines[i][:-len(code_lines[i].lstrip())]
+        code_lines[i:i + 1] = [
+            indent + "adapt_274_resukisu_35170(job)",
+            indent + "adapt_274_nomount(job)",
+        ]
+        code = "\n".join(code_lines) + "\n"
+
+        if 'NEW_COMMIT = "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"' in code:
+            raise SystemExit("old 35158 NEW_COMMIT remains")
+        if 'NEW_VERSION = "35158"' in code:
+            raise SystemExit("old 35158 NEW_VERSION remains")
+        if 'nv = "4"' in code:
+            raise SystemExit("old delta count remains")
+        if any(
+            line.strip() == "adapt_274_manager_only_target(job)"
+            for line in code.splitlines()
+        ):
+            raise SystemExit("manager-only runtime adaptation remains")
+
+        out.write_text(code, encoding="utf-8")
+        compile(code, str(out), "exec")
+        print("U7_N3_REPLAYER_DERIVATION=PASS")
+        PYDERIVE
+
+        python3 -m py_compile "$RUNNER_TEMP/n3_replay.py"
+        python3 "$RUNNER_TEMP/n3_replay.py" --selftest
+
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+        state="$RUNNER_TEMP/n3-state"
+        rm -rf "$agg" "$state"
+        mkdir -p "$agg" "$state"
+
+        python3 "$RUNNER_TEMP/n3_replay.py" \
+          --kernel 5.4.274 \
+          --project-root "$GITHUB_WORKSPACE" \
+          --aggregate "$agg" \
+          --state-root "$state" \
+          --sha "$GITHUB_SHA"
+    - name: Finalize U7-N3 evidence
+      if: always()
+      shell: bash
+      env:
+        N3_OUTCOME: ${{ steps.n3.outcome }}
+      run: |
+        set -euo pipefail
+
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+        out="$agg/5.4.274"
+        mkdir -p "$out"
+        status="$out/BUILD-STATUS.txt"
+        image="$out/Image"
+        result="$agg/FINAL-RESULT.txt"
+
+        pass=1
+        [ "$N3_OUTCOME" = success ] || pass=0
+        [ -s "$status" ] || pass=0
+        [ -s "$image" ] || pass=0
+
+        if [ "$pass" = 1 ]; then
+          grep -Fxq 'COMPILE_PASS=YES' "$status" || pass=0
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$status" || pass=0
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$status" || pass=0
+          grep -Fxq 'UAPI=4' "$status" || pass=0
+          grep -Fxq 'SUSFS_VERSION=v2.3.0' "$status" || pass=0
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$status" || pass=0
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$status" || pass=0
+          test "$(sha256sum "$image" | awk '{print $1}')" \
+            = "$(sed -n 's/^IMAGE_SHA256=//p' "$status")" || pass=0
+
+          contract="$out/evidence/clean-gen1-p14r1-audit/03-resukisu-update-contract.txt"
+          compile_result="$out/evidence/clean-gen1-p14r1-audit/11-u7n3-compile-result.txt"
+          [ -s "$contract" ] || pass=0
+          [ -s "$compile_result" ] || pass=0
+          if [ "$pass" = 1 ]; then
+            grep -Fxq 'RESUKISU_U7_DELTA_CONTRACT=PASS' "$contract" || pass=0
+            grep -Fxq 'KSYSCALL_5_4_CONTRACT=PASS' "$contract" || pass=0
+            grep -Fxq 'PATH_UMOUNT_WEAK_COMPAT_PRESENT=PASS' "$contract" || pass=0
+            grep -Fxq 'PATH_UMOUNT_VENDOR_BACKPORT=PASS' "$contract" || pass=0
+            grep -Fxq 'SELINUX_RCU_FIX_PRESENT=PASS' "$contract" || pass=0
+            grep -Fxq 'RESUKISU_35170_COMPILE_OBJECTS=PASS' "$compile_result" || pass=0
+            grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$compile_result" || pass=0
+          fi
+        fi
+
+        {
+          echo "N3_STEP_OUTCOME=$N3_OUTCOME"
+          echo 'KERNEL=5.4.274'
+          echo "RESUKISU_BASE_COMMIT=$RESUKISU_BASE_COMMIT"
+          echo "RESUKISU_BASE_VERSION=$RESUKISU_BASE_VERSION"
+          echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+          echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+          echo "UAPI=$RESUKISU_UAPI"
+          echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+          echo "SUSFS_VERSION=$SUSFS_VERSION"
+          echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+          echo "NOMOUNT_TAG=$NOMOUNT_TAG"
+          echo 'MODULE_LOAD_FILTER=EXCLUDED'
+          if [ "$pass" = 1 ]; then
+            echo 'VEUX_U7_N3_RESUKISU_35170_NOMOUNT_COMPILE=PASS'
+            echo 'COMPILE_PASS=YES'
+          else
+            echo 'VEUX_U7_N3_RESUKISU_35170_NOMOUNT_COMPILE=FAIL'
+            echo 'COMPILE_PASS=NO'
+          fi
+          echo 'PACKAGE_PASS=NO'
+          echo 'STATIC_BOOT_PATH_PASS=NO'
+          echo 'DEVICE_PASS=NO'
+        } > "$result"
+
+        (
+          cd "$agg"
+          find . -type f ! -name SHA256SUMS.txt -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 -r sha256sum > SHA256SUMS.txt
+        )
+    - name: Upload U7-N3 compile evidence
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: VEUX-U7-N3V4-5.4.274-ReSukiSU-35170-NoMount-2.0.0-COMPILE-${{ github.run_id }}
+        path: n3-aggregate/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 6
+    - name: Final real U7-N3 GREEN gate
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+
+        grep -Fxq \
+          'VEUX_U7_N3_RESUKISU_35170_NOMOUNT_COMPILE=PASS' \
+          "$agg/FINAL-RESULT.txt"
+        grep -Fxq 'COMPILE_PASS=YES' "$agg/FINAL-RESULT.txt"
+        grep -Fxq 'PACKAGE_PASS=NO' "$agg/FINAL-RESULT.txt"
+        grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$agg/FINAL-RESULT.txt"
+        grep -Fxq 'DEVICE_PASS=NO' "$agg/FINAL-RESULT.txt"
+
+        (
+          cd "$agg"
+          sha256sum -c SHA256SUMS.txt
+        )
+
+        echo 'U7_N3_REAL_GREEN_GATE=PASS'
