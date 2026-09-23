@@ -1,0 +1,521 @@
+name: VEUX U7-N4 v2 5.4.274 ReSukiSU 35170 + SUSFS 2.3 + NoMount 2.0.0 AK3
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-u7-n4-v2-274-resukisu-35170-nomount-ak3-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  SOURCE_RUN_ID: '35849208105'
+  SOURCE_ARTIFACT_ID: '10744659472'
+  SOURCE_ARTIFACT_NAME: VEUX-U7-N3V4-5.4.274-ReSukiSU-35170-NoMount-2.0.0-COMPILE-35849208105
+  SOURCE_ARTIFACT_SHA256: 2d568dd64a1950436234e1f3b92defdcef1ec71d9bf5fb7e499fdc2217766cda
+  SOURCE_HEAD_SHA: 29481b46f927df8534c73c2325e5fd1f69f888f4
+
+  IMAGE_BYTES: '29846016'
+  IMAGE_SHA256: f3e13fb5c2600276fe97f304c8f41b92c701632db85db0645323b7e2cade0ac2
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  RESUKISU_VERSION: '35170'
+  RESUKISU_UAPI: '4'
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_VERSION: v2.0.0
+
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_ARCHIVE_EPOCH: '1733410079'
+
+  WORK_DIR: ${{ github.workspace }}/u7-n4-ak3-work
+  DIST_DIR: ${{ github.workspace }}/u7-n4-ak3-dist
+  AUDIT_DIR: ${{ github.workspace }}/u7-n4-ak3-audit
+
+jobs:
+  package-ak3:
+    name: Build and validate VEUX AK3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout exact project state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize and install packaging dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+          rm -rf "$WORK_DIR" "$DIST_DIR" "$AUDIT_DIR"
+          mkdir -p "$WORK_DIR" "$DIST_DIR" "$AUDIT_DIR"
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl file git jq python3 unzip zip
+
+          {
+            echo "EXPECTED_REPOSITORY=$EXPECTED_REPOSITORY"
+            echo "SOURCE_RUN_ID=$SOURCE_RUN_ID"
+            echo "SOURCE_ARTIFACT_ID=$SOURCE_ARTIFACT_ID"
+            echo "SOURCE_HEAD_SHA=$SOURCE_HEAD_SHA"
+            echo "AK3_COMMIT=$AK3_COMMIT"
+          } > "$AUDIT_DIR/00-plan.txt"
+
+      - name: Authenticate exact N3-v4 GREEN run and artifact
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          run_json="$WORK_DIR/source-run.json"
+          artifacts_json="$WORK_DIR/source-artifacts.json"
+          source_zip="$WORK_DIR/source-artifact.zip"
+          source_dir="$WORK_DIR/source-artifact"
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+            -o "$run_json"
+
+          jq -e \
+            --arg sha "$SOURCE_HEAD_SHA" \
+            '.id == ($ENV.SOURCE_RUN_ID | tonumber)
+             and .head_sha == $sha
+             and .status == "completed"
+             and .conclusion == "success"' \
+            "$run_json" >/dev/null
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts" \
+            -o "$artifacts_json"
+
+          jq -e \
+            --argjson aid "$SOURCE_ARTIFACT_ID" \
+            --arg name "$SOURCE_ARTIFACT_NAME" \
+            --arg digest "sha256:$SOURCE_ARTIFACT_SHA256" \
+            '[.artifacts[]
+              | select(.id == $aid and .name == $name and .digest == $digest and .expired == false)]
+             | length == 1' \
+            "$artifacts_json" >/dev/null
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" \
+            -o "$source_zip"
+
+          test -s "$source_zip"
+          test "$(sha256sum "$source_zip" | awk '{print $1}')" = "$SOURCE_ARTIFACT_SHA256"
+          unzip -t "$source_zip" > "$AUDIT_DIR/01-source-artifact-unzip.txt"
+
+          rm -rf "$source_dir"
+          mkdir -p "$source_dir"
+          unzip -q "$source_zip" -d "$source_dir"
+
+          (
+            cd "$source_dir"
+            test -s SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          ) | tee "$AUDIT_DIR/01-source-internal-sha256.txt"
+
+          grep -Fxq 'N3_STEP_OUTCOME=success' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'KERNEL=5.4.274' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "UAPI=$RESUKISU_UAPI" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "SUSFS_VERSION=$SUSFS_VERSION" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_TAG=v2.0.0' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'VEUX_U7_N3_RESUKISU_35170_NOMOUNT_COMPILE=PASS' "$source_dir/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$source_dir/FINAL-RESULT.txt"
+
+          image="$source_dir/5.4.274/Image"
+          status="$source_dir/5.4.274/BUILD-STATUS.txt"
+          test -s "$image"
+          test -s "$status"
+          test "$(stat -c '%s' "$image")" = "$IMAGE_BYTES"
+          test "$(sha256sum "$image" | awk '{print $1}')" = "$IMAGE_SHA256"
+          grep -Fxq "IMAGE_BYTES=$IMAGE_BYTES" "$status"
+          grep -Fxq "IMAGE_SHA256=$IMAGE_SHA256" "$status"
+          grep -Fxq 'COMPILE_PASS=YES' "$status"
+
+          python3 - "$image" <<'PY'
+          import struct, sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          data = p.read_bytes()
+          if len(data) != 29846016:
+              raise SystemExit("unexpected Image byte count")
+          text_offset, image_size, flags = struct.unpack_from("<QQQ", data, 8)
+          magic, res5 = struct.unpack_from("<II", data, 56)
+          assert text_offset == 0x80000
+          assert image_size == 38825984
+          assert flags == 0xA
+          assert magic == 0x644D5241
+          assert res5 == 0x40
+          print("ARM64_IMAGE_HEADER=PASS")
+          PY
+
+          cp "$image" "$DIST_DIR/Image"
+
+          {
+            echo "SOURCE_GREEN_RUN_AUTH=PASS"
+            echo "SOURCE_ARTIFACT_SHA256=$SOURCE_ARTIFACT_SHA256"
+            echo "SOURCE_IMAGE_BYTES=$IMAGE_BYTES"
+            echo "SOURCE_IMAGE_SHA256=$IMAGE_SHA256"
+            echo "ARM64_IMAGE_HEADER=PASS"
+          } | tee "$AUDIT_DIR/01-source-auth.txt"
+
+      - name: Checkout proven device-booted AnyKernel3 checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ak3_ref="$WORK_DIR/AnyKernel3-reference"
+          rm -rf "$ak3_ref"
+          git clone -q "$AK3_REPO" "$ak3_ref"
+          git -C "$ak3_ref" checkout -q --detach "$AK3_COMMIT"
+          git -C "$ak3_ref" reset --hard -q "$AK3_COMMIT"
+          git -C "$ak3_ref" clean -fdx -q
+          test "$(git -C "$ak3_ref" rev-parse HEAD)" = "$AK3_COMMIT"
+
+          test -s "$ak3_ref/tools/ak3-core.sh"
+          test -s "$ak3_ref/META-INF/com/google/android/update-binary"
+          test -s "$ak3_ref/META-INF/com/google/android/updater-script"
+
+          {
+            echo "AK3_PIN=$AK3_COMMIT"
+            echo "AK3_CHECKOUT=PASS"
+            echo "AK3_DEVICE_BOOTED_CHECKPOINT_LINE=P12"
+          } | tee "$AUDIT_DIR/02-ak3-checkout.txt"
+
+      - name: Build clean image-only VEUX AnyKernel3 package twice
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ak3_ref="$WORK_DIR/AnyKernel3-reference"
+          ak3="$WORK_DIR/AnyKernel3-stage"
+          rm -rf "$ak3"
+          cp -a "$ak3_ref" "$ak3"
+
+          rm -f "$ak3/Image" "$ak3/Image.gz" "$ak3/Image.gz-dtb" \
+                "$ak3/dtb" "$ak3/dtbo.img"
+          cp "$DIST_DIR/Image" "$ak3/Image"
+
+          cat > "$ak3/anykernel.sh" <<'EOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=VEUX U7 N4 Linux 5.4.274 ReSukiSU 9be0f347 UAPI4 + SUSFS 2.3 + NoMount 2.0.0
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          # Proven VEUX A/B active-slot contract from P11/P12 device-booted line.
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          chmod 0755 "$ak3/anykernel.sh"
+          chmod 0644 "$ak3/Image"
+
+          rm -rf "$ak3/.git" "$ak3/.github"
+          rm -f "$ak3/README.md"
+          find "$ak3" -type f -name '*placeholder' -delete
+
+          zip_name="VEUX-U7-N4-5.4.274-ReSukiSU-35170-UAPI4-SUSFS-2.3-NoMount-2.0.0-AK3-CLEAN.zip"
+          zip_a="$WORK_DIR/package-A.zip"
+          zip_b="$WORK_DIR/package-B.zip"
+          zip_list="$WORK_DIR/ak3-zip-filelist.txt"
+
+          # Make the ZIP container reproducible as well as its payload:
+          # fixed mtimes remove clock/atime variance; -X removes volatile
+          # extended timestamp fields; sorted explicit input fixes entry order.
+          find "$ak3" -exec touch -h -d "@$AK3_ARCHIVE_EPOCH" {} +
+          (
+            cd "$ak3"
+            LC_ALL=C find . -mindepth 1 -print | LC_ALL=C sort > "$zip_list"
+            test -s "$zip_list"
+
+            zip -X -9 "$zip_a" -@ < "$zip_list"
+            zip -X -9 "$zip_b" -@ < "$zip_list"
+          )
+
+          test -s "$zip_a"
+          test -s "$zip_b"
+          if ! cmp -s "$zip_a" "$zip_b"; then
+            echo '::error::AK3_DETERMINISTIC_ZIP_A_B_GATE=FAIL'
+            sha256sum "$zip_a" "$zip_b" || true
+            exit 1
+          fi
+          echo 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS'             | tee "$AUDIT_DIR/03-ak3-deterministic-zip.txt"
+
+          cp "$zip_a" "$DIST_DIR/$zip_name"
+          echo "AK3_ZIP=$DIST_DIR/$zip_name" >> "$GITHUB_ENV"
+
+          {
+            echo "AK3_BUILD=PASS"
+            echo "AK3_BUILD_A_B_BYTE_IDENTICAL=PASS"
+            echo "AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS"
+            echo "AK3_IMAGE_ONLY=PASS"
+            echo "AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS"
+          } | tee "$AUDIT_DIR/03-ak3-build.txt"
+
+      - name: Exhaustively validate AnyKernel3 package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "${AK3_ZIP:-}"
+          test -s "$AK3_ZIP"
+
+          unzip -t "$AK3_ZIP" | tee "$AUDIT_DIR/04-ak3-unzip.txt"
+
+          for required in \
+            anykernel.sh \
+            tools/ak3-core.sh \
+            Image \
+            META-INF/com/google/android/update-binary \
+            META-INF/com/google/android/updater-script
+          do
+            unzip -Z1 "$AK3_ZIP" | grep -Fxq "$required"
+          done
+
+          tmp="$WORK_DIR/validated-package"
+          rm -rf "$tmp"
+          mkdir -p "$tmp"
+          unzip -q "$AK3_ZIP" -d "$tmp"
+
+          cmp -s "$DIST_DIR/Image" "$tmp/Image"
+          test "$(stat -c '%s' "$tmp/Image")" = "$IMAGE_BYTES"
+          test "$(sha256sum "$tmp/Image" | awk '{print $1}')" = "$IMAGE_SHA256"
+
+          bash -n "$tmp/anykernel.sh"
+          grep -Fqx 'device.name1=veux' "$tmp/anykernel.sh"
+          grep -Fqx 'supported.versions=13' "$tmp/anykernel.sh"
+          grep -Fqx 'BLOCK=boot;' "$tmp/anykernel.sh"
+          grep -Fqx 'IS_SLOT_DEVICE=1;' "$tmp/anykernel.sh"
+          grep -Fqx 'SLOT_SELECT=active;' "$tmp/anykernel.sh"
+          grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$tmp/anykernel.sh"
+          grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$tmp/anykernel.sh"
+          grep -Fqx 'dump_boot;' "$tmp/anykernel.sh"
+          grep -Fqx 'write_boot;' "$tmp/anykernel.sh"
+          ! grep -Eq \
+            '^(block|is_slot_device|slot_select|ramdisk_compression|patch_vbmeta_flag)=' \
+            "$tmp/anykernel.sh"
+
+          ! unzip -Z1 "$AK3_ZIP" | grep -Eq \
+            '(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$'
+          ! unzip -Z1 "$AK3_ZIP" | grep -Ei \
+            '(^|/)(audit|build-info|final-result|sha256sums)([^/]*)$'
+
+          python3 - \
+            "$AK3_ZIP" \
+            "$WORK_DIR/AnyKernel3-reference" \
+            "$tmp" <<'PY'
+          import os
+          import stat
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          zpath = Path(sys.argv[1])
+          ref = Path(sys.argv[2])
+          extracted = Path(sys.argv[3])
+
+          excluded_roots = {".git", ".github"}
+          excluded_exact = {
+              "README.md",
+              "Image",
+              "Image.gz",
+              "Image.gz-dtb",
+              "dtb",
+              "dtbo.img",
+              "anykernel.sh",
+          }
+
+          def excluded(path: str) -> bool:
+              parts = Path(path).parts
+              if not parts:
+                  return True
+              if parts[0] in excluded_roots:
+                  return True
+              if path in excluded_exact:
+                  return True
+              if Path(path).name.endswith("placeholder"):
+                  return True
+              if Path(path).suffix == ".txt":
+                  return True
+              return False
+
+          with zipfile.ZipFile(zpath) as z:
+              infos = z.infolist()
+              names = [i.filename for i in infos]
+
+              if len(names) != len(set(names)):
+                  raise SystemExit("duplicate ZIP path")
+
+              files = []
+              for info in infos:
+                  name = info.filename
+                  pure = Path(name)
+                  if name.startswith("/") or ".." in pure.parts:
+                      raise SystemExit(f"unsafe ZIP path: {name}")
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if stat.S_ISLNK(mode):
+                      raise SystemExit(f"symlink not allowed: {name}")
+                  if not info.is_dir():
+                      files.append(name)
+
+              actual_unchanged = {p for p in files if p not in {"Image", "anykernel.sh"}}
+
+              expected_unchanged = set()
+              for p in ref.rglob("*"):
+                  if not p.is_file():
+                      continue
+                  rel = p.relative_to(ref).as_posix()
+                  if excluded(rel):
+                      continue
+                  expected_unchanged.add(rel)
+
+              if actual_unchanged != expected_unchanged:
+                  missing = sorted(expected_unchanged - actual_unchanged)
+                  extra = sorted(actual_unchanged - expected_unchanged)
+                  raise SystemExit(
+                      f"AK3 file-set mismatch missing={missing} extra={extra}"
+                  )
+
+              by_name = {i.filename: i for i in infos}
+              for rel in sorted(expected_unchanged):
+                  src = ref / rel
+                  dst = extracted / rel
+                  if src.read_bytes() != dst.read_bytes():
+                      raise SystemExit(f"AK3 upstream byte mismatch: {rel}")
+
+                  zip_mode = (by_name[rel].external_attr >> 16) & 0o7777
+                  fs_mode = stat.S_IMODE(src.stat().st_mode)
+                  if zip_mode != fs_mode:
+                      raise SystemExit(
+                          f"AK3 mode mismatch {rel}: zip={oct(zip_mode)} ref={oct(fs_mode)}"
+                      )
+
+              anykernel_mode = (by_name["anykernel.sh"].external_attr >> 16) & 0o7777
+              image_mode = (by_name["Image"].external_attr >> 16) & 0o7777
+              if anykernel_mode != 0o755:
+                  raise SystemExit(f"anykernel.sh mode={oct(anykernel_mode)}")
+              if image_mode != 0o644:
+                  raise SystemExit(f"Image mode={oct(image_mode)}")
+
+          print("AK3_ZIP_PATH_AND_SYMLINK_GUARD=PASS")
+          print("AK3_UPSTREAM_FILESET_PARITY=PASS")
+          print("AK3_UPSTREAM_BYTE_PARITY=PASS")
+          print("AK3_UNIX_MODE_PARITY=PASS")
+          PY
+
+          sha256sum "$AK3_ZIP" > "$AK3_ZIP.sha256"
+
+          {
+            echo "VEUX_U7_N4_AK3_PACKAGE=PASS"
+            echo "KERNEL=5.4.274"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+            echo "UAPI=$RESUKISU_UAPI"
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+            echo "NOMOUNT_VERSION=$NOMOUNT_VERSION"
+            echo "IMAGE_BYTES=$IMAGE_BYTES"
+            echo "IMAGE_SHA256=$IMAGE_SHA256"
+            echo "AK3=$(basename "$AK3_ZIP")"
+            echo "AK3_SHA256=$(sha256sum "$AK3_ZIP" | awk '{print $1}')"
+            echo "AK3_PIN=$AK3_COMMIT"
+            echo "AK3_IMAGE_ONLY=PASS"
+            echo "AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS"
+            echo "AK3_BUILD_A_B_BYTE_IDENTICAL=PASS"
+            echo "AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS"
+            echo "PACKAGE_PASS=YES"
+            echo "STATIC_BOOT_PATH_PASS=NO"
+            echo "DEVICE_PASS=NO"
+          } | tee "$DIST_DIR/FINAL-RESULT.txt"
+
+          (
+            cd "$DIST_DIR"
+            sha256sum \
+              Image \
+              "$(basename "$AK3_ZIP")" \
+              "$(basename "$AK3_ZIP").sha256" \
+              FINAL-RESULT.txt \
+              > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          ) | tee "$AUDIT_DIR/04-final-sha256.txt"
+
+      - name: Upload validated AK3 package
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-U7-N4V2-5.4.274-ReSukiSU-35170-NoMount-2.0.0-AK3-${{ github.run_id }}
+          path: |
+            u7-n4-ak3-dist/
+            u7-n4-ak3-audit/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Final AK3 GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          grep -Fxq 'VEUX_U7_N4_AK3_PACKAGE=PASS' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'PACKAGE_PASS=YES' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'DEVICE_PASS=NO' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'AK3_IMAGE_ONLY=PASS' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'AK3_BUILD_A_B_BYTE_IDENTICAL=PASS' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS' "$DIST_DIR/FINAL-RESULT.txt"
+          grep -Fxq 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS' "$AUDIT_DIR/03-ak3-deterministic-zip.txt"
+
+          (
+            cd "$DIST_DIR"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'U7_N4_AK3_REAL_GREEN_GATE=PASS'
