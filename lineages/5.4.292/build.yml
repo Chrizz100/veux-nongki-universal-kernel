@@ -1,0 +1,30 @@
+schema: 1
+kernel: "5.4.292"
+enabled: true
+device: "veux"
+platform: "sm6375"
+target: "android13-stock-vendor"
+legacy_authority:
+  workflow: ".github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml"
+features:
+  resukisu:
+    enabled: true
+    version: "35158"
+    commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+    uapi: 4
+  susfs:
+    enabled: true
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    enabled: false
+    version: "disabled"
+    commit: ""
+outputs:
+  ak3: true
+  boot_img: true
+validation:
+  compile: true
+  package: true
+  static_boot: true
+  device: false
