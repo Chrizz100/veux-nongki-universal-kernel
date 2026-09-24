@@ -1,1 +1,23 @@
+schema: 1
+component: "nomount"
 
+sources:
+  - "https://github.com/maxsteeel/NoMount.git"
+
+track:
+  ref: "refs/heads/main"
+
+stable:
+  version: "2.0.0"
+  commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+
+promotion:
+  automatic: false
+  require_build_all_green: true
+
+snapshot:
+  destination: "third_party/nomount"
+  include:
+    - "kernel"
+    - "LICENSE"
+    - "README.md"
