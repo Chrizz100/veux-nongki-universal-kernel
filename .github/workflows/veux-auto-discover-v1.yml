@@ -1,0 +1,95 @@
+name: VEUX Auto V1 - Discover Kernel Matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'lineages/**/build.yml'
+      - 'common/scripts/discover_build_matrix.py'
+      - '.github/workflows/veux-auto-discover-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-auto-discover-v1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover and validate kernel profiles
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Ensure YAML parser is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Discover lineages and emit build matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/discover_build_matrix.py --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Require at least one enabled kernel
+        shell: bash
+        env:
+          KERNEL_COUNT: ${{ steps.matrix.outputs.count }}
+        run: |
+          set -euo pipefail
+          test "$KERNEL_COUNT" -ge 1
+          echo "DISCOVERED_KERNELS=$KERNEL_COUNT"
+
+  profile-preflight:
+    name: Preflight ${{ matrix.kernel }}
+    needs: discover
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify discovered profile contract
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+          CONFIG: ${{ matrix.config }}
+          AUTHORITY_WORKFLOW: ${{ matrix.authority_workflow }}
+          RESUKISU_VERSION: ${{ matrix.resukisu_version }}
+          SUSFS_VERSION: ${{ matrix.susfs_version }}
+          NOMOUNT_ENABLED: ${{ matrix.nomount_enabled }}
+        run: |
+          set -euo pipefail
+          test -f "$CONFIG"
+          test -f "$AUTHORITY_WORKFLOW"
+          test -n "$KERNEL"
+          test -n "$RESUKISU_VERSION"
+          test -n "$SUSFS_VERSION"
+          case "$NOMOUNT_ENABLED" in
+            true|false) ;;
+            *) echo "Invalid NOMOUNT_ENABLED=$NOMOUNT_ENABLED" >&2; exit 1 ;;
+          esac
+          echo "PROFILE_PREFLIGHT=PASS"
+          echo "KERNEL=$KERNEL"
+          echo "RESUKISU=$RESUKISU_VERSION"
+          echo "SUSFS=$SUSFS_VERSION"
+          echo "NOMOUNT=$NOMOUNT_ENABLED"
