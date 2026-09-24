@@ -1,0 +1,116 @@
+name: VEUX Auto V2 - Golden Full-Pass Baseline
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'common/contracts/GOLDEN_BASELINE.yml'
+      - 'common/scripts/discover_build_matrix.py'
+      - 'common/scripts/verify_golden_baseline.py'
+      - 'lineages/**/build.yml'
+      - '.github/workflows/veux-auto-v2-golden-baseline.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-auto-v2-golden-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden-baseline:
+    name: Authenticate V7 Full-Pass Golden Baseline
+    runs-on: ubuntu-24.04
+    outputs:
+      golden_id: ${{ steps.golden.outputs.golden_id }}
+      port_matrix: ${{ steps.golden.outputs.port_matrix }}
+      port_count: ${{ steps.golden.outputs.port_count }}
+    steps:
+      - name: Checkout exact repository state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate dynamic lineage matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/discover_build_matrix.py --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Authenticate Golden Baseline and derive port matrix
+        id: golden
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 common/scripts/verify_golden_baseline.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --manifest common/contracts/GOLDEN_BASELINE.yml \
+            --online
+
+  port-contract:
+    name: Golden port contract ${{ matrix.kernel }}
+    needs: golden-baseline
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.golden-baseline.outputs.port_matrix) }}
+    steps:
+      - name: Checkout exact repository state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Enforce derived-lineage contract
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+          ROLE: ${{ matrix.role }}
+          PORT_STATUS: ${{ matrix.port_status }}
+          GOLDEN_ID: ${{ needs.golden-baseline.outputs.golden_id }}
+        run: |
+          set -euo pipefail
+          test "$ROLE" = derive
+          case "$PORT_STATUS" in
+            pending|candidate|validated) ;;
+            *) echo "Invalid port status: $PORT_STATUS" >&2; exit 1 ;;
+          esac
+          test -f "lineages/$KERNEL/build.yml"
+          test -n "$GOLDEN_ID"
+          echo "KERNEL=$KERNEL"
+          echo "GOLDEN_BASELINE=$GOLDEN_ID"
+          echo "PORT_STATUS=$PORT_STATUS"
+          echo "GOLDEN_PORT_CONTRACT=PASS"
+
+  final:
+    name: V2 Golden Baseline Gate
+    needs:
+      - golden-baseline
+      - port-contract
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Final V2 verdict
+        shell: bash
+        env:
+          GOLDEN_ID: ${{ needs.golden-baseline.outputs.golden_id }}
+          PORT_COUNT: ${{ needs.golden-baseline.outputs.port_count }}
+        run: |
+          set -euo pipefail
+          test -n "$GOLDEN_ID"
+          test "$PORT_COUNT" -ge 1
+          echo "GOLDEN_BASELINE_ID=$GOLDEN_ID"
+          echo "DERIVED_PORT_TARGETS=$PORT_COUNT"
+          echo "VEUX_AUTO_V2_GOLDEN_BASELINE=PASS"
