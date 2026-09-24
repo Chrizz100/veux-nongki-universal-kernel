@@ -4,8 +4,17 @@ enabled: true
 device: "veux"
 platform: "sm6375"
 target: "android13-stock-vendor"
+
+baseline:
+  id: "veux-u7-n4-v7-5.4.274-full-pass-2026-09-24"
+  manifest: "common/contracts/GOLDEN_BASELINE.yml"
+  role: "derive"
+  port_status: "pending"
+  from_kernel: "5.4.274"
+
 legacy_authority:
   workflow: ".github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml"
+
 features:
   resukisu:
     enabled: true
@@ -20,9 +29,11 @@ features:
     enabled: false
     version: "disabled"
     commit: ""
+
 outputs:
   ak3: true
   boot_img: true
+
 validation:
   compile: true
   package: true
