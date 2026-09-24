@@ -1,0 +1,417 @@
+name: VEUX Build Worker V1 - 5.4.292 Local Target Compile
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-build-worker-v1-292-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  KERNEL: '5.4.292'
+  PROFILE: lineages/5.4.292/build.yml
+  O51_AUTHORITY: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+  PORT_HELPER: lineages/5.4.292/GOLDEN_PORT_V1.py
+  PORT_HELPER_SHA256: c26e488c0f97f7bc1e46ae1fb5329c06f18ca48dd1ecc56bc3c2da01eb2bfcc5
+  LOCAL_STAGE: lineages/5.4.292/LOCAL_TARGET_V1.py
+  LOCAL_STAGE_SHA256: 162ab86a3134b5424b70b9f9490d5bb552fa88603d73c47c40ea646c176f7ab3
+
+  SOURCE_COMMIT: fb3bbb10bc0480282c01b88ccaf39c0145cd9f51
+  RESUKISU_BASE_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_BASE_VERSION: '35158'
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  RESUKISU_VERSION: '35170'
+  RESUKISU_UAPI: '4'
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_VERSION: 2.0.0
+
+jobs:
+  preflight:
+    name: 5.4.292 local-target preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      status: ${{ steps.gate.outputs.status }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate local snapshots and candidate profile
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test -f "$PROFILE"
+          test -f "$O51_AUTHORITY"
+          test -f "$PORT_HELPER"
+          test -f "$LOCAL_STAGE"
+          test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+          test "$(sha256sum "$PORT_HELPER" | awk '{print $1}')" = "$PORT_HELPER_SHA256"
+          test "$(sha256sum "$LOCAL_STAGE" | awk '{print $1}')" = "$LOCAL_STAGE_SHA256"
+
+          python3 -m py_compile "$LOCAL_STAGE"
+          python3 "$LOCAL_STAGE" selftest
+          python3 common/scripts/verify_local_snapshots.py --repo-root "$GITHUB_WORKSPACE"
+
+          python3 - "$PROFILE" <<'PY'
+          from pathlib import Path
+          import sys, yaml
+          p = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert p["kernel"] == "5.4.292"
+          assert p["enabled"] is True
+          assert p["baseline"]["port_status"] == "candidate"
+          rs = p["features"]["resukisu"]
+          sf = p["features"]["susfs"]
+          nm = p["features"]["nomount"]
+          assert rs == {
+              "enabled": True,
+              "version": "35170",
+              "commit": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+              "uapi": 4,
+          }
+          assert sf["enabled"] is True
+          assert str(sf["version"]) == "2.3.0"
+          assert sf["commit"] == "04a9d713106191ba98be680bd7ad9547ab1de964"
+          assert nm["enabled"] is True
+          assert str(nm["version"]) == "2.0.0"
+          assert nm["commit"] == "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+          assert p["validation"]["compile"] is True
+          assert p["validation"]["device"] is False
+          print("PROFILE_292_LOCAL_TARGET=PASS")
+          PY
+
+          python3 -m py_compile "$PORT_HELPER"
+          python3 "$PORT_HELPER" selftest
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+          echo "LOCAL_292_PREFLIGHT=PASS"
+
+  compile:
+    name: Build real 5.4.292 Image
+    needs: preflight
+    if: needs.preflight.outputs.status == 'PASS'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates curl dwarves flex git \
+            libelf-dev libncurses-dev libssl-dev perl python3 python3-yaml \
+            rsync unzip xz-utils zstd
+          test "$(sha256sum "$LOCAL_STAGE" | awk '{print $1}')" = "$LOCAL_STAGE_SHA256"
+          python3 common/scripts/verify_local_snapshots.py --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Extract exact O51 baseline replayer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+
+          python3 - "$O51_AUTHORITY" "$RUNNER_TEMP/o51_replay.py" <<'PY'
+          from pathlib import Path
+          import sys, yaml
+          src = Path(sys.argv[1])
+          out = Path(sys.argv[2])
+          doc = yaml.safe_load(src.read_text(encoding="utf-8"))
+          steps = next(iter(doc["jobs"].values()))["steps"]
+          step = next(
+              s for s in steps
+              if s.get("name") == "Write and self-test fail-closed authority replayer"
+          )
+          run = str(step["run"])
+          start = 'cat > "$RUNNER_TEMP/o51_replay.py" <<\'PY\'\n'
+          if run.count(start) != 1:
+              raise SystemExit(f"O51 replayer start marker count={run.count(start)}")
+          a = run.index(start) + len(start)
+          ends = [x for x in (run.find("\n          PY\n", a), run.find("\nPY\n", a)) if x >= 0]
+          if not ends:
+              raise SystemExit("O51 replayer end marker missing")
+          b = min(ends)
+          code = run[a:b]
+          lines = code.splitlines()
+          if lines and all((not x.strip()) or x.startswith("          ") for x in lines):
+              code = "\n".join(x[10:] if x.startswith("          ") else x for x in lines) + "\n"
+          compile(code, str(out), "exec")
+          out.write_text(code, encoding="utf-8")
+          print("O51_REPLAYER_EXTRACTION=PASS")
+          PY
+
+          python3 -m py_compile "$RUNNER_TEMP/o51_replay.py"
+          python3 "$RUNNER_TEMP/o51_replay.py" --selftest
+
+      - name: Reconstruct proven 5.4.292 baseline workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$GITHUB_WORKSPACE/worker-292-baseline"
+          STATE="$RUNNER_TEMP/worker-292-state"
+          rm -rf "$BASE" "$STATE"
+          mkdir -p "$BASE" "$STATE"
+
+          python3 "$RUNNER_TEMP/o51_replay.py" \
+            --kernel 5.4.292 \
+            --project-root "$GITHUB_WORKSPACE" \
+            --aggregate "$BASE" \
+            --state-root "$STATE" \
+            --sha "$GITHUB_SHA"
+
+          test -s "$BASE/5.4.292/Image"
+          test -s "$BASE/5.4.292/BUILD-STATUS.txt"
+          grep -Fxq 'KERNEL=5.4.292' "$BASE/5.4.292/BUILD-STATUS.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_BASE_COMMIT" "$BASE/5.4.292/BUILD-STATUS.txt"
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_BASE_VERSION" "$BASE/5.4.292/BUILD-STATUS.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$BASE/5.4.292/BUILD-STATUS.txt"
+
+          SRC="$STATE/workspace-5.4.292/.work/5.4.292-update-r1/kernel"
+          test -d "$SRC/.git"
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(make -s -C "$SRC" kernelversion)" = '5.4.292'
+          python3 "$PORT_HELPER" verify-pre --src "$SRC"
+          echo "WORKER_292_BASELINE_RECONSTRUCTION=PASS"
+
+      - name: Stage local 35170 and NoMount then compile
+        id: build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATE="$RUNNER_TEMP/worker-292-state"
+          WORK="$STATE/workspace-5.4.292/.work/5.4.292-update-r1"
+          SRC="$WORK/kernel"
+          TC="$WORK/clang-r547379"
+          OUT="$WORK/out-local-target"
+          EVID="$GITHUB_WORKSPACE/worker-292-evidence"
+          rm -rf "$OUT" "$EVID"
+          mkdir -p "$EVID"
+          exec > >(tee "$EVID/build-worker.log") 2>&1
+
+          test -d "$SRC/.resukisu/.git"
+          test -x "$TC/bin/clang"
+          test -x "$TC/bin/ld.lld"
+          grep -Fq '"bid": "13065274"' "$TC/BUILD_INFO"
+          grep -Fq '"branch": "aosp-llvm-r547379-release"' "$TC/BUILD_INFO"
+
+          python3 "$LOCAL_STAGE" stage \
+            --src "$SRC" \
+            --resukisu "$GITHUB_WORKSPACE/third_party/resukisu" \
+            --nomount "$GITHUB_WORKSPACE/third_party/nomount" \
+            | tee "$EVID/local-target-stage.txt"
+
+          python3 "$PORT_HELPER" fastfail --src "$SRC" \
+            | tee "$EVID/fastfail-contract.txt"
+
+          bash common/scripts/identity_guard.sh \
+            snapshot "$SRC" veux_defconfig "$EVID/identity-before-build.sha256"
+
+          export PATH="$TC/bin:$PATH"
+          export ARCH=arm64
+          clang --version | tee "$EVID/clang-version.txt"
+          ld.lld --version | tee "$EVID/lld-version.txt"
+
+          make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            veux_defconfig 2>&1 | tee "$EVID/defconfig.log"
+          test -f "$OUT/.config"
+          test -x "$SRC/scripts/config"
+
+          "$SRC/scripts/config" --file "$OUT/.config" \
+            --enable KSU \
+            --disable KSU_TRACEPOINT_HOOK \
+            --disable KSU_MANUAL_HOOK \
+            --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+            --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+            --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
+            --enable KSU_SUSFS \
+            --enable KSU_SUSFS_SUS_PATH \
+            --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT \
+            --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_ENABLE_LOG \
+            --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable KSU_SUSFS_OPEN_REDIRECT \
+            --enable KSU_SUSFS_SUS_MAP \
+            --enable THREAD_INFO_IN_TASK \
+            --enable NOMOUNT
+
+          make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            olddefconfig 2>&1 | tee "$EVID/olddefconfig.log"
+
+          for expected in \
+            'CONFIG_KSU=y' \
+            'CONFIG_KSU_SUSFS=y' \
+            'CONFIG_KSU_SUSFS_SUS_PATH=y' \
+            'CONFIG_KSU_SUSFS_SUS_MOUNT=y' \
+            'CONFIG_KSU_SUSFS_SUS_KSTAT=y' \
+            'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' \
+            'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
+            'CONFIG_KSU_SUSFS_SUS_MAP=y' \
+            'CONFIG_THREAD_INFO_IN_TASK=y' \
+            'CONFIG_NOMOUNT=y' \
+            'CONFIG_64BIT=y'
+          do
+            grep -Fxq "$expected" "$OUT/.config"
+          done
+          grep -Fxq '# CONFIG_KSU_TRACEPOINT_HOOK is not set' "$OUT/.config"
+          grep -Fxq '# CONFIG_KSU_MANUAL_HOOK is not set' "$OUT/.config"
+
+          make -C "$SRC" -j"$(nproc)" O="$OUT" \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LD=ld.lld \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            Image \
+            2>&1 | tee "$EVID/compile.log"
+
+          IMAGE="$OUT/arch/arm64/boot/Image"
+          test -s "$IMAGE"
+          test -s "$OUT/fs/susfs.o"
+          test -s "$OUT/fs/nomount/nomount.o"
+
+          if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+            echo 'reject/orig files found' >&2
+            exit 71
+          fi
+
+          bash common/scripts/audit_existing_integration.sh "$SRC" \
+            | tee "$EVID/post-build-integration-audit.txt"
+          bash common/scripts/identity_guard.sh \
+            verify "$SRC" veux_defconfig "$EVID/identity-before-build.sha256" \
+            | tee "$EVID/identity-after-build.txt"
+          python3 "$PORT_HELPER" fastfail --src "$SRC" \
+            | tee "$EVID/fastfail-post-build.txt"
+
+          kernelrelease="$(
+            make -s -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 kernelrelease
+          )"
+          case "$kernelrelease" in 5.4.292*) ;; *) exit 72;; esac
+
+          warnings="$(grep -Ec '(^|[[:space:]])warning:' "$EVID/compile.log" || true)"
+          errors="$(
+            grep -Eic '(^|[[:space:]])error:|undefined reference|fatal error:|make(\[[0-9]+\])?: \*\*\*' \
+              "$EVID/compile.log" || true
+          )"
+          test "$errors" = 0
+
+          cp "$IMAGE" "$EVID/Image"
+          image_sha="$(sha256sum "$EVID/Image" | awk '{print $1}')"
+          image_bytes="$(wc -c < "$EVID/Image" | tr -d ' ')"
+
+          {
+            echo 'KERNEL=5.4.292'
+            echo "SOURCE_COMMIT=$SOURCE_COMMIT"
+            echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+            echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+            echo "UAPI=$RESUKISU_UAPI"
+            echo 'RESUKISU_SOURCE=LOCAL_SNAPSHOT'
+            echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+            echo "SUSFS_VERSION=$SUSFS_VERSION"
+            echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+            echo "NOMOUNT_VERSION=$NOMOUNT_VERSION"
+            echo 'NOMOUNT_SOURCE=LOCAL_SNAPSHOT'
+            echo 'MODULE_LOAD_FILTER=EXCLUDED'
+            echo 'U7_N4_FASTFAIL_BEHAVIORAL_CONTRACT=PASS'
+            echo 'NOMOUNT_COMPILE_OBJECT=PASS'
+            echo "KERNELRELEASE=$kernelrelease"
+            echo "WARNINGS=$warnings"
+            echo "ERROR_SIGNATURES=$errors"
+            echo "IMAGE_BYTES=$image_bytes"
+            echo "IMAGE_SHA256=$image_sha"
+            echo 'COMPILE_PASS=YES'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+            echo 'VEUX_5_4_292_REAL_LOCAL_TARGET_BUILD=PASS'
+          } | tee "$EVID/BUILD-RESULT.txt"
+
+      - name: Finalize evidence
+        if: always()
+        shell: bash
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -euo pipefail
+          EVID="$GITHUB_WORKSPACE/worker-292-evidence"
+          mkdir -p "$EVID"
+          if [ "$BUILD_OUTCOME" != success ] || [ ! -s "$EVID/BUILD-RESULT.txt" ]; then
+            {
+              echo "BUILD_STEP_OUTCOME=$BUILD_OUTCOME"
+              echo 'COMPILE_PASS=NO'
+              echo 'VEUX_5_4_292_REAL_LOCAL_TARGET_BUILD=FAIL'
+            } > "$EVID/FINAL-RESULT.txt"
+          else
+            cp "$EVID/BUILD-RESULT.txt" "$EVID/FINAL-RESULT.txt"
+          fi
+          (
+            cd "$EVID"
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Upload build evidence and Image
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-5.4.292-ReSukiSU35170-SUSFS2.3-NoMount2.0-Compile-${{ github.run_id }}
+          path: worker-292-evidence/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final real build gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVID="$GITHUB_WORKSPACE/worker-292-evidence"
+          test -s "$EVID/Image"
+          test -s "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'KERNEL=5.4.292' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'RESUKISU_SOURCE=LOCAL_SNAPSHOT' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$EVID/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_SOURCE=LOCAL_SNAPSHOT' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$EVID/FINAL-RESULT.txt"
+          grep -Fxq 'VEUX_5_4_292_REAL_LOCAL_TARGET_BUILD=PASS' "$EVID/FINAL-RESULT.txt"
+          (
+            cd "$EVID"
+            sha256sum -c SHA256SUMS.txt
+          )
+          echo 'VEUX_292_REAL_BUILD_WORKER_V1=PASS'
