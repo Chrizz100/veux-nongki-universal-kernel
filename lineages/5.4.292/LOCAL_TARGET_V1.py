@@ -57,6 +57,12 @@ def replace_exact(path: Path, old: str, new: str = "") -> None:
 
 
 def copy_tree_contents(src: Path, dst: Path) -> None:
+    if not src.is_dir():
+        die(f"copy source directory missing: {src}")
+    if dst.exists() or dst.is_symlink():
+        die(f"copy destination must not pre-exist: {dst}")
+    dst.mkdir(parents=True, exist_ok=False)
+
     for child in src.iterdir():
         target = dst / child.name
         if child.is_symlink():
@@ -307,6 +313,20 @@ def selftest() -> None:
         text = kbuild.read_text(encoding="utf-8")
         if "KSU_VERSION := 35170" not in text or "rev-list --count" in text:
             die("selftest pinned Kbuild transform failed")
+
+        # Regression for run 36056318740: after preserving only .git,
+        # kernel/ and uapi/ no longer exist. The copy helper must create the
+        # destination directory itself and must preserve dotfiles.
+        copy_src = root / "copy-src"
+        (copy_src / "nested").mkdir(parents=True)
+        (copy_src / ".clangd.example").write_text("dotfile\n", encoding="utf-8")
+        (copy_src / "nested/data.txt").write_text("nested\n", encoding="utf-8")
+        copy_dst = root / "copy-dst"
+        copy_tree_contents(copy_src, copy_dst)
+        if (copy_dst / ".clangd.example").read_text(encoding="utf-8") != "dotfile\n":
+            die("selftest hidden-file copy regression failed")
+        if (copy_dst / "nested/data.txt").read_text(encoding="utf-8") != "nested\n":
+            die("selftest nested-directory copy regression failed")
 
         vendor = root / "vendor"
         (vendor / "kernel/feature").mkdir(parents=True)
