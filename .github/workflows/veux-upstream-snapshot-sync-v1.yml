@@ -67,30 +67,73 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             --component "$COMPONENT"
 
-      - name: Validate snapshot diff
+      - name: Validate snapshot contents and path isolation
         shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
         run: |
           set -euo pipefail
-          git diff --check
+
           if git status --porcelain=v1 | grep -E '(^| )(\.github/workflows|lineages|common/contracts|common/upstream)/'; then
             echo 'Snapshot sync attempted to change protected project control files.' >&2
             exit 1
           fi
-          if find third_party -type f \( -name '*.log' -o -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+
+          if find third_party -type f \
+            \( -name '*.log' -o -name '*.rej' -o -name '*.orig' -o -name '*.pyc' \) \
+            -print -quit | grep -q .; then
             echo 'Forbidden work file found in third_party.' >&2
             exit 1
           fi
+
+          case "$COMPONENT" in
+            all)
+              required=(resukisu susfs nomount)
+              ;;
+            resukisu|susfs|nomount)
+              required=("$COMPONENT")
+              ;;
+            *)
+              echo "Unsupported component: $COMPONENT" >&2
+              exit 1
+              ;;
+          esac
+
+          for component in "${required[@]}"; do
+            dir="third_party/$component"
+            test -d "$dir"
+            test -s "$dir/_VEUX_SOURCE.yml"
+            test -s "$dir/SHA256SUMS.txt"
+            (
+              cd "$dir"
+              sha256sum -c SHA256SUMS.txt
+            )
+          done
+
+          echo 'UPSTREAM_SNAPSHOT_CONTENT_GATE=PASS'
 
       - name: Commit snapshot change
         shell: bash
         run: |
           set -euo pipefail
+
           git add third_party
-          git diff --cached --check
+
+          bad_staged="$(
+            git diff --cached --name-only \
+              | awk 'NF && $0 !~ /^third_party\// { print }'
+          )"
+          if [ -n "$bad_staged" ]; then
+            echo 'Refusing to commit paths outside third_party/:' >&2
+            printf '%s\n' "$bad_staged" >&2
+            exit 1
+          fi
+
           if git diff --cached --quiet; then
             echo 'UPSTREAM_SNAPSHOT_CHANGED=NO'
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(upstream): refresh pinned source snapshots [skip ci]"
