@@ -1,0 +1,34 @@
+schema: 1
+kernel: "5.4.292"
+status: "candidate"
+
+workflow:
+  path: ".github/workflows/veux-auto-v3-5.4.292-golden-candidate-compile.yml"
+  blob: "a3871d70312ef0e21cb2935c4153e80038316e45"
+  run_id: 36024141602
+  run_head_sha: "58970a8b9446513cd1a9f96cff07097af7f4a5a9"
+  conclusion: "success"
+
+artifact:
+  id: 10819847016
+  name: "VEUX-V3-5.4.292-GOLDEN-CANDIDATE-COMPILE-36024141602"
+  size_bytes: 14475439
+  digest: "sha256:cd51b683de90105f2fc97c69048845c09205bfd40ef496f52e0af8d9ea08bc2b"
+
+components:
+  resukisu:
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+    uapi: 4
+  susfs:
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+
+validation:
+  compile_pass: true
+  package_pass: false
+  static_boot_path_pass: false
+  device_pass: false
