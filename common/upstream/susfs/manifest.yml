@@ -1,1 +1,24 @@
+schema: 1
+component: "susfs"
 
+sources:
+  - "https://gitlab.com/simonpunk/susfs4ksu.git"
+  - "https://github.com/ShirkNeko/susfs4ksu.git"
+
+track:
+  ref: "refs/heads/gki-android13-5.10"
+
+stable:
+  version: "2.3.0"
+  commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+
+promotion:
+  automatic: false
+  require_build_all_green: true
+
+snapshot:
+  destination: "third_party/susfs"
+  include:
+    - "kernel_patches"
+    - "LICENSE"
+    - "README.md"
