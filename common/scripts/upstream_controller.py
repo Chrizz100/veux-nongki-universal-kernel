@@ -277,15 +277,31 @@ def ls_remote(sources: list[str], ref: str) -> tuple[str, str]:
     errors = []
     for url in sources:
         p = run(["git", "ls-remote", url, ref], check=False)
-        if p.returncode == 0:
-            lines = [x for x in p.stdout.splitlines() if x.strip()]
-            if len(lines) == 1:
-                sha = lines[0].split()[0].lower()
-                if SHA40.fullmatch(sha):
-                    return url, sha
-            errors.append(f"{url}: ref not uniquely resolved")
-        else:
-            errors.append(f"{url}: rc={p.returncode}")
+        if p.returncode != 0:
+            errors.append(f"{url}: git ls-remote rc={p.returncode}")
+            continue
+
+        lines = [x for x in p.stdout.splitlines() if x.strip()]
+        if not lines:
+            errors.append(f"{url}: ref not found: {ref}")
+            continue
+        if len(lines) != 1:
+            errors.append(f"{url}: ref resolved to {len(lines)} entries: {ref}")
+            continue
+
+        fields = lines[0].split()
+        if len(fields) < 2:
+            errors.append(f"{url}: malformed ls-remote response for {ref}")
+            continue
+        sha, returned_ref = fields[0].lower(), fields[1]
+        if returned_ref != ref:
+            errors.append(f"{url}: returned ref mismatch: expected={ref} got={returned_ref}")
+            continue
+        if not SHA40.fullmatch(sha):
+            errors.append(f"{url}: resolved object is not a 40-hex commit id: {sha}")
+            continue
+        return url, sha
+
     die("all upstream sources failed: " + "; ".join(errors))
 
 
@@ -411,6 +427,21 @@ snapshot:
             die("selftest manifest discovery failed")
         if SHA40.fullmatch("bad"):
             die("selftest SHA validator is broken")
+
+        repo = root / "remote-test"
+        bare = root / "remote-test.git"
+        run(["git", "init", "-q", str(repo)])
+        run(["git", "-C", str(repo), "config", "user.name", "VEUX selftest"])
+        run(["git", "-C", str(repo), "config", "user.email", "selftest@example.invalid"])
+        (repo / "x").write_text("x\n", encoding="utf-8")
+        run(["git", "-C", str(repo), "add", "x"])
+        run(["git", "-C", str(repo), "commit", "-q", "-m", "selftest"])
+        run(["git", "-C", str(repo), "branch", "-M", "master"])
+        run(["git", "clone", "-q", "--bare", str(repo), str(bare)])
+        expected = run(["git", "-C", str(repo), "rev-parse", "HEAD"]).stdout.strip()
+        source, resolved = ls_remote([str(bare)], "refs/heads/master")
+        if Path(source) != bare or resolved != expected:
+            die("selftest ls_remote exact-ref resolution failed")
     print("UPSTREAM_CONTROLLER_SELFTEST=PASS")
 
 
