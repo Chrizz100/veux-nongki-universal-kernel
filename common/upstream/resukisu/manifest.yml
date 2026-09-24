@@ -1,1 +1,24 @@
+schema: 1
+component: "resukisu"
 
+sources:
+  - "https://github.com/ReSukiSU/ReSukiSU.git"
+
+track:
+  ref: "refs/heads/main"
+
+stable:
+  version: "35170"
+  commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+  uapi: 4
+
+promotion:
+  automatic: false
+  require_build_all_green: true
+
+snapshot:
+  destination: "third_party/resukisu"
+  include:
+    - "kernel"
+    - "uapi"
+    - "LICENSE"
