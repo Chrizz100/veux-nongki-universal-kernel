@@ -1,0 +1,7 @@
+schema: 1
+component: resukisu
+source: https://github.com/ReSukiSU/ReSukiSU.git
+track_ref: refs/heads/main
+version: '35170'
+commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+uapi: 4

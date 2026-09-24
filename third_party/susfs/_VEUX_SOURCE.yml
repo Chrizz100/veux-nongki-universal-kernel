@@ -1,0 +1,6 @@
+schema: 1
+component: susfs
+source: https://gitlab.com/simonpunk/susfs4ksu.git
+track_ref: refs/heads/gki-android13-5.10
+version: 2.3.0
+commit: 04a9d713106191ba98be680bd7ad9547ab1de964
