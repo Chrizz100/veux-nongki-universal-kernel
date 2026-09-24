@@ -2,10 +2,10 @@ schema: 1
 component: "nomount"
 
 sources:
-  - "https://github.com/maxsteeel/NoMount.git"
+  - "https://github.com/maxsteeel/nomount.git"
 
 track:
-  ref: "refs/heads/main"
+  ref: "refs/heads/master"
 
 stable:
   version: "2.0.0"
