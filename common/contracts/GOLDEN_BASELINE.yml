@@ -1,0 +1,69 @@
+schema: 1
+id: "veux-u7-n4-v7-5.4.274-full-pass-2026-09-24"
+device: "veux"
+platform: "sm6375"
+target: "android13-stock-vendor"
+kernel: "5.4.274"
+
+workflow:
+  path: ".github/workflows/veux-u7-n4-test-v7-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml"
+  blob: "0cfd79f84eb0644ef0a143fb1ee85403fe81c423"
+  run_id: 35964050678
+  run_head_sha: "f317d11b2b6791f3eebd1526f7e26bdfdef1e992"
+  conclusion: "success"
+
+artifact:
+  id: 10793508842
+  name: "VEUX-U7-N4V6-TEST-35170-LatencyFastFail-35964050678"
+  size_bytes: 28259881
+  digest: "sha256:04459b331ef572445bbdb066de625d8b725400752afa6710b4b7b9cff21000db"
+  ak3_file: "VEUX-5.4.274-U7-N4-TEST-ReSukiSU-35170-SUSFS2.3-NoMount2.0.0-LatencyFastFail-AK3.zip"
+  ak3_sha256: "39966457b06a8718c7430a020f728656b450a29206cbc9b75e8ff88a08ac43bf"
+
+image:
+  bytes: 29846016
+  sha256: "6702b0edee8b08ed33620c58de43f7273d67d92fef25e0301d0b1b198777216e"
+
+dtb:
+  sha256: "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37"
+
+components:
+  resukisu:
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+    uapi: 4
+  susfs:
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+  anykernel3:
+    commit: "af770f7b16cf8f8eb7c68614b2a693b3b361c90c"
+
+golden_delta:
+  id: "u7-n4-latency-fastfail"
+  scope:
+    - "fs/open.c"
+    - "fs/stat.c"
+  patch_sha256: "1db14b7e33ab127968f19a203544ed95570f15d96d4930fb15808be59df5e6c3"
+  evidence_sha256: "d483f644d9e94d7b58ddc8382da96387b47ef931052a38ab44bbc38c2717c270"
+  open_before_sha256: "70e3dfa8011381c551cc5db7a268a76cfe272b2e7784fba5df9dd709788cba06"
+  open_after_sha256: "e792629492c2e6579c10a92e87d3ccd4528d639b2a0f53b8c302c2dc0b9e929a"
+  stat_before_sha256: "53f6fd9cdee6c28cd4810086120dca0cadde97f84be79c4245b82a1719416b15"
+  stat_after_sha256: "be500df947c56b91682742d486b825381ac400d44054790555ced8f37187d4ba"
+
+ci_evidence:
+  static_green: true
+  compile_pass: true
+  package_pass: true
+  static_boot_path_pass: false
+  device_pass_recorded_in_ci: false
+  note: "The historical CI artifact intentionally records DEVICE_PASS=NO because device validation was outside CI."
+
+device_validation:
+  status: "FULL_PASS"
+  source: "manual-device-test-after-flash"
+  confirmed_date: "2026-09-24"
+  automated_verification: false
+  note: "Real-device result is an external acceptance gate and must never be synthesized from CI."
