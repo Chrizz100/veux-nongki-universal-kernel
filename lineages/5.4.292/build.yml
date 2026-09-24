@@ -13,7 +13,7 @@ baseline:
   from_kernel: "5.4.274"
 
 legacy_authority:
-  workflow: ".github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml"
+  workflow: ".github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml"
 
 features:
   resukisu:
