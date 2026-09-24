@@ -10,11 +10,13 @@ from pathlib import Path
 
 try:
     import yaml
-except ImportError as exc:  # fail closed on the runner
+except ImportError as exc:
     raise SystemExit("PyYAML is required: python3 -m pip install PyYAML") from exc
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 KERNEL = re.compile(r"^5\.4\.\d+$")
+BASELINE_ROLES = {"golden", "derive"}
+PORT_STATUS = {"full-pass", "pending", "candidate", "validated"}
 
 
 def die(message: str) -> "None":
@@ -63,6 +65,30 @@ def validate_feature(features: dict, name: str, config_path: Path) -> dict:
     return result
 
 
+def validate_baseline(repo_root: Path, doc: dict, config_path: Path, verify_paths: bool) -> dict:
+    b = require_mapping(doc.get("baseline"), f"{config_path}:baseline")
+    baseline_id = require_string(b, "id", f"{config_path}:baseline")
+    manifest = require_string(b, "manifest", f"{config_path}:baseline")
+    role = require_string(b, "role", f"{config_path}:baseline")
+    status = require_string(b, "port_status", f"{config_path}:baseline")
+    from_kernel = require_string(b, "from_kernel", f"{config_path}:baseline")
+    if role not in BASELINE_ROLES:
+        die(f"{config_path}: baseline.role must be one of {sorted(BASELINE_ROLES)}")
+    if status not in PORT_STATUS:
+        die(f"{config_path}: baseline.port_status must be one of {sorted(PORT_STATUS)}")
+    if from_kernel != "5.4.274":
+        die(f"{config_path}: baseline.from_kernel must be '5.4.274'")
+    if verify_paths and not (repo_root / manifest).is_file():
+        die(f"{config_path}: golden manifest does not exist: {manifest}")
+    return {
+        "baseline_id": baseline_id,
+        "baseline_manifest": manifest,
+        "baseline_role": role,
+        "port_status": status,
+        "from_kernel": from_kernel,
+    }
+
+
 def validate_config(repo_root: Path, config_path: Path, verify_paths: bool) -> dict:
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -72,7 +98,7 @@ def validate_config(repo_root: Path, config_path: Path, verify_paths: bool) -> d
 
     allowed = {
         "schema", "kernel", "enabled", "device", "platform", "target",
-        "legacy_authority", "features", "outputs", "validation"
+        "baseline", "legacy_authority", "features", "outputs", "validation"
     }
     unknown = sorted(set(doc) - allowed)
     if unknown:
@@ -96,9 +122,11 @@ def validate_config(repo_root: Path, config_path: Path, verify_paths: bool) -> d
     if platform.lower() != "sm6375":
         die(f"{config_path}: platform must be 'sm6375'")
 
+    baseline = validate_baseline(repo_root, doc, config_path, verify_paths)
+
     authority = require_mapping(doc.get("legacy_authority"), f"{config_path}:legacy_authority")
     workflow = require_string(authority, "workflow", f"{config_path}:legacy_authority")
-    if not workflow.startswith(".github/workflows/") or not workflow.endswith(('.yml', '.yaml')):
+    if not workflow.startswith(".github/workflows/") or not workflow.endswith((".yml", ".yaml")):
         die(f"{config_path}: legacy authority must point to a workflow YAML")
     if verify_paths and not (repo_root / workflow).is_file():
         die(f"{config_path}: authority workflow does not exist: {workflow}")
@@ -120,6 +148,17 @@ def validate_config(repo_root: Path, config_path: Path, verify_paths: bool) -> d
     for key in ("compile", "package", "static_boot", "device"):
         require_bool(validation, key, f"{config_path}:validation")
 
+    if baseline["baseline_role"] == "golden":
+        if kernel != "5.4.274":
+            die(f"{config_path}: only 5.4.274 may be the golden baseline")
+        if baseline["port_status"] != "full-pass":
+            die(f"{config_path}: golden baseline must have port_status=full-pass")
+        if not validation["device"]:
+            die(f"{config_path}: golden baseline must record device=true")
+    else:
+        if validation["device"]:
+            die(f"{config_path}: derived pending/candidate lineages may not claim device=true")
+
     return {
         "kernel": kernel,
         "config": config_path.relative_to(repo_root).as_posix(),
@@ -138,6 +177,7 @@ def validate_config(repo_root: Path, config_path: Path, verify_paths: bool) -> d
         "ak3": ak3,
         "boot_img": boot_img,
         "enabled": enabled,
+        **baseline,
     }
 
 
@@ -157,6 +197,15 @@ def main() -> int:
     if len(kernels) != len(set(kernels)):
         die("duplicate kernel versions discovered")
 
+    baseline_ids = {row["baseline_id"] for row in rows}
+    manifests = {row["baseline_manifest"] for row in rows}
+    if len(baseline_ids) != 1 or len(manifests) != 1:
+        die("all enabled lineages must reference one identical golden baseline")
+
+    golden = [row for row in rows if row["baseline_role"] == "golden"]
+    if len(golden) != 1 or golden[0]["kernel"] != "5.4.274":
+        die("exactly one golden baseline is required and it must be 5.4.274")
+
     enabled = [row for row in rows if row["enabled"]]
     if not enabled:
         die("all discovered kernel profiles are disabled")
@@ -171,6 +220,7 @@ def main() -> int:
         with open(github_output, "a", encoding="utf-8") as fh:
             fh.write(f"matrix={compact}\n")
             fh.write(f"count={len(enabled)}\n")
+            fh.write(f"baseline_id={golden[0]['baseline_id']}\n")
 
     return 0
 
