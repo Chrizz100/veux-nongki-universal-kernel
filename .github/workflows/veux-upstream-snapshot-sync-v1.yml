@@ -1,0 +1,98 @@
+name: VEUX Upstream Snapshot Sync V1
+
+'on':
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Pinned source snapshot to refresh
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - resukisu
+          - susfs
+          - nomount
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veux-upstream-snapshot-sync-v1
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Refresh pinned source snapshot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = main
+          test "$GITHUB_REPOSITORY" = "Chrizz100/veux-nongki-universal-kernel"
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate controller and stable pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile common/scripts/upstream_controller.py
+          python3 common/scripts/upstream_controller.py selftest
+          python3 common/scripts/upstream_controller.py validate --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Materialize pinned source snapshots
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          set -euo pipefail
+          python3 common/scripts/upstream_controller.py snapshot \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --component "$COMPONENT"
+
+      - name: Validate snapshot diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if git status --porcelain=v1 | grep -E '(^| )(\.github/workflows|lineages|common/contracts|common/upstream)/'; then
+            echo 'Snapshot sync attempted to change protected project control files.' >&2
+            exit 1
+          fi
+          if find third_party -type f \( -name '*.log' -o -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+            echo 'Forbidden work file found in third_party.' >&2
+            exit 1
+          fi
+
+      - name: Commit snapshot change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add third_party
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'UPSTREAM_SNAPSHOT_CHANGED=NO'
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(upstream): refresh pinned source snapshots [skip ci]"
+          git push origin HEAD:main
+          echo 'UPSTREAM_SNAPSHOT_CHANGED=YES'

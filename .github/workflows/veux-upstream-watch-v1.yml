@@ -1,0 +1,79 @@
+name: VEUX Upstream Watch V1
+
+'on':
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-upstream-watch-v1
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check ReSukiSU SUSFS NoMount
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate upstream controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile common/scripts/upstream_controller.py
+          python3 common/scripts/upstream_controller.py selftest
+          python3 common/scripts/upstream_controller.py validate --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Resolve current remote heads
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/upstream_controller.py resolve \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --report "$GITHUB_WORKSPACE/upstream-report.json" \
+            --github-output
+
+      - name: Upload upstream report
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-upstream-report-${{ github.run_id }}
+          path: upstream-report.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Final watcher gate
+        shell: bash
+        env:
+          UPDATES_FOUND: ${{ steps.upstream.outputs.updates_found }}
+          RESUKISU_HEAD: ${{ steps.upstream.outputs.resukisu_head }}
+          SUSFS_HEAD: ${{ steps.upstream.outputs.susfs_head }}
+          NOMOUNT_HEAD: ${{ steps.upstream.outputs.nomount_head }}
+        run: |
+          set -euo pipefail
+          test -n "$RESUKISU_HEAD"
+          test -n "$SUSFS_HEAD"
+          test -n "$NOMOUNT_HEAD"
+          echo "UPDATES_FOUND=$UPDATES_FOUND"
+          echo "RESUKISU_REMOTE_HEAD=$RESUKISU_HEAD"
+          echo "SUSFS_REMOTE_HEAD=$SUSFS_HEAD"
+          echo "NOMOUNT_REMOTE_HEAD=$NOMOUNT_HEAD"
+          echo 'VEUX_UPSTREAM_WATCH=PASS'

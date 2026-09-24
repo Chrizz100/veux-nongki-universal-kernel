@@ -1,0 +1,132 @@
+name: VEUX Build All Controller V1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-build-all-controller-v1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover all VEUX lineages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      count: ${{ steps.matrix.outputs.count }}
+      baseline_id: ${{ steps.matrix.outputs.baseline_id }}
+      updates_found: ${{ steps.upstream.outputs.updates_found }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate central upstream state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile common/scripts/upstream_controller.py
+          python3 common/scripts/upstream_controller.py selftest
+          python3 common/scripts/upstream_controller.py validate --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Discover dynamic lineage matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/discover_build_matrix.py --repo-root "$GITHUB_WORKSPACE"
+
+      - name: Resolve upstream candidates
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/upstream_controller.py resolve \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --report "$GITHUB_WORKSPACE/upstream-report.json" \
+            --github-output
+
+      - name: Upload controller report
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-build-all-controller-${{ github.run_id }}
+          path: upstream-report.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  lineage-preflight:
+    name: Preflight ${{ matrix.kernel }}
+    needs: discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Validate lineage contract
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          test -n "$KERNEL"
+          test -f "lineages/$KERNEL/build.yml"
+          python3 common/scripts/upstream_controller.py profiles \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --kernel "$KERNEL"
+          echo "LINEAGE_PREFLIGHT_$KERNEL=PASS"
+
+  final:
+    name: Build All controller gate
+    needs:
+      - discover
+      - lineage-preflight
+    if: ${{ needs.discover.result == 'success' && needs.lineage-preflight.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Final controller gate
+        shell: bash
+        env:
+          LINEAGE_COUNT: ${{ needs.discover.outputs.count }}
+          BASELINE_ID: ${{ needs.discover.outputs.baseline_id }}
+          UPDATES_FOUND: ${{ needs.discover.outputs.updates_found }}
+        run: |
+          set -euo pipefail
+          test "$LINEAGE_COUNT" -ge 1
+          test -n "$BASELINE_ID"
+          echo "LINEAGE_COUNT=$LINEAGE_COUNT"
+          echo "BASELINE_ID=$BASELINE_ID"
+          echo "UPDATES_FOUND=$UPDATES_FOUND"
+          echo 'VEUX_BUILD_ALL_CONTROLLER_V1=PASS'
