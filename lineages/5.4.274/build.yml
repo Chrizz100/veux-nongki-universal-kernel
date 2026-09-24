@@ -1,0 +1,30 @@
+schema: 1
+kernel: "5.4.274"
+enabled: true
+device: "veux"
+platform: "sm6375"
+target: "android13-stock-vendor"
+legacy_authority:
+  workflow: ".github/workflows/veux-u7-n3-v4-5.4.274-resukisu-35170-susfs23-nomount-2.0.0-compile.yml"
+features:
+  resukisu:
+    enabled: true
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+    uapi: 4
+  susfs:
+    enabled: true
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    enabled: true
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+outputs:
+  ak3: true
+  boot_img: true
+validation:
+  compile: true
+  package: true
+  static_boot: true
+  device: false
