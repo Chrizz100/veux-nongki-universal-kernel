@@ -1,0 +1,22 @@
+VEUX BUILD ALL V2 - LOCAL SNAPSHOTS
+
+Add:
+  .github/workflows/veux-build-all-controller-v2-local-snapshots.yml
+  common/scripts/verify_local_snapshots.py
+  common/contracts/LOCAL_SNAPSHOT_BUILD_V2.yml
+
+This step does NOT yet build kernels.
+It proves that all future builds can consume the pinned local third_party
+ReSukiSU/SUSFS/NoMount source evidence without fetching those components
+from the network.
+
+After upload, run:
+  VEUX Build All Controller V2 - Local Snapshots
+
+Expected:
+  local snapshots PASS
+  dynamic discovery >= 6 lineages
+  one preflight per enabled lineage
+  final V2 gate PASS
+
+No existing lineages/build.yml is replaced by this package.
