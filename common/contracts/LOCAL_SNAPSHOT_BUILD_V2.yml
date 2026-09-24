@@ -1,0 +1,27 @@
+schema: 1
+id: "veux-build-all-v2-local-snapshots"
+
+local_sources:
+  resukisu:
+    path: "third_party/resukisu"
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+    uapi: 4
+    integration_policy:
+      module_load_filter: "exclude-at-integration"
+  susfs:
+    path: "third_party/susfs"
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    path: "third_party/nomount"
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+
+rules:
+  network_fetch_for_components: false
+  snapshot_sha256_required: true
+  snapshot_provenance_required: true
+  dynamic_lineage_discovery: true
+  minimum_enabled_lineages: 6
+  clean_release_payload_only: true
