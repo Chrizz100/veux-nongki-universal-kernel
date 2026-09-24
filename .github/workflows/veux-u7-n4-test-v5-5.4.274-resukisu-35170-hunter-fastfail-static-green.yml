@@ -1,0 +1,1062 @@
+name: VEUX U7-N4 TEST v5 5.4.274 ReSukiSU 35170 Hunter latency fast-fail + STATIC GREEN + FAIL EVIDENCE
+'on':
+  workflow_dispatch:
+  push:
+    branches:
+    - main
+    paths:
+    - .github/workflows/veux-u7-n4-test-v5-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-u7-n4-v5-hunter-fastfail-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  SELF_WORKFLOW: .github/workflows/veux-u7-n4-test-v5-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml
+  U7N3_AUTHORITY: .github/workflows/veux-u7-n3-v4-5.4.274-resukisu-35170-susfs23-nomount-2.0.0-compile.yml
+  U7N3_AUTHORITY_BLOB: d5accb592400412b025c6e67c473ed420c0d2494
+  O51_AUTHORITY: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+  U7_AUTHORITY: .github/workflows/veux-u7-n2-v3-5.4.274-resukisu-35158-susfs23-nomount-2.0.0-compile.yml
+  U7_AUTHORITY_BLOB: de2db0a53fb3d5458b48fe710882b6eb6ce780c7
+  RESUKISU_REPO: https://github.com/ReSukiSU/ReSukiSU.git
+  RESUKISU_BASE_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_BASE_VERSION: '35158'
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  RESUKISU_VERSION: '35170'
+  RESUKISU_UAPI: '4'
+  RESUKISU_EXPECTED_BASE_DELTA_COMMITS: '12'
+  RESUKISU_EXPECTED_P14_DELTA_COMMITS: '16'
+  RESUKISU_MANAGER_TARGET_BLOB: 793469e587bfdb92a6b60c1126b14da560317340
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  SUSFS_VERSION: v2.3.0
+  SUSFS_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_MIRROR: https://github.com/ShirkNeko/susfs4ksu.git
+  SUSFS_BRANCH: gki-android13-5.10
+  NOMOUNT_REPO: https://github.com/maxsteeel/NoMount.git
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  NOMOUNT_TAG: v2.0.0
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+jobs:
+  static-green:
+    name: U7-N4 controller STATIC GREEN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    outputs:
+      status: ${{ steps.static.outputs.status }}
+      workflow_sha256: ${{ steps.static.outputs.workflow_sha256 }}
+      authority_blob: ${{ steps.static.outputs.authority_blob }}
+      patch_selftest: ${{ steps.static.outputs.patch_selftest }}
+    steps:
+    - name: Checkout exact project state
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Static fail-closed workflow and patch self-test
+      id: static
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+        test -f "$SELF_WORKFLOW"
+        test -f "$U7N3_AUTHORITY"
+        test -f "$O51_AUTHORITY"
+        test -f "$U7_AUTHORITY"
+        test "$(git hash-object "$U7N3_AUTHORITY")" = "$U7N3_AUTHORITY_BLOB"
+        test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+        test "$(git hash-object "$U7_AUTHORITY")" = "$U7_AUTHORITY_BLOB"
+
+        python3 - <<'PY'
+        import yaml
+        print('PYYAML_IMPORT=PASS')
+        PY
+
+        audit="$RUNNER_TEMP/u7n4-static-green.txt"
+        : > "$audit"
+
+        python3 - "$SELF_WORKFLOW" "$U7N3_AUTHORITY" "$audit" <<'PYSTATIC'
+        from __future__ import annotations
+
+        import base64
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+        import sys
+        import tempfile
+        from typing import Any
+
+        import yaml
+
+        self_path = Path(sys.argv[1])
+        authority_path = Path(sys.argv[2])
+        audit_path = Path(sys.argv[3])
+
+        EXPECTED_SELF = ".github/workflows/veux-u7-n4-test-v5-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml"
+        EXPECTED_AUTHORITY = ".github/workflows/veux-u7-n3-v4-5.4.274-resukisu-35170-susfs23-nomount-2.0.0-compile.yml"
+        EXPECTED_AUTHORITY_BLOB = "d5accb592400412b025c6e67c473ed420c0d2494"
+        EXPECTED = {
+            "RESUKISU_COMMIT": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+            "RESUKISU_VERSION": "35170",
+            "RESUKISU_UAPI": "4",
+            "SUSFS_COMMIT": "04a9d713106191ba98be680bd7ad9547ab1de964",
+            "SUSFS_VERSION": "v2.3.0",
+            "NOMOUNT_COMMIT": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+            "NOMOUNT_TAG": "v2.0.0",
+        }
+
+        def die(msg: str) -> None:
+            raise SystemExit(msg)
+
+        def record(line: str) -> None:
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            print(line)
+
+        if self_path.as_posix() != EXPECTED_SELF:
+            die(f"self path mismatch: {self_path}")
+        if authority_path.as_posix() != EXPECTED_AUTHORITY:
+            die(f"authority path mismatch: {authority_path}")
+
+        doc = yaml.safe_load(self_path.read_text(encoding="utf-8"))
+        authority = yaml.safe_load(authority_path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict) or not isinstance(authority, dict):
+            die("workflow YAML root must be a mapping")
+
+        if doc.get("permissions") != {"contents": "read", "actions": "read"}:
+            die(f"permissions drift: {doc.get('permissions')!r}")
+
+        trigger = doc.get("on") or {}
+        if "workflow_dispatch" not in trigger:
+            die("workflow_dispatch missing")
+        push = trigger.get("push") or {}
+        if push.get("branches") != ["main"]:
+            die(f"push branch mismatch: {push.get('branches')!r}")
+        if push.get("paths") != [EXPECTED_SELF]:
+            die(f"push path mismatch: {push.get('paths')!r}")
+
+        env = doc.get("env") or {}
+        if env.get("SELF_WORKFLOW") != EXPECTED_SELF:
+            die("SELF_WORKFLOW mismatch")
+        for key, value in EXPECTED.items():
+            if str(env.get(key)) != value:
+                die(f"workflow env mismatch {key}: {env.get(key)!r}")
+
+        aenv = authority.get("env") or {}
+        for key, value in EXPECTED.items():
+            if key == "NOMOUNT_TAG":
+                continue
+            if str(aenv.get(key)) != value:
+                die(f"authority env mismatch {key}: {aenv.get(key)!r}")
+        if str(aenv.get("NOMOUNT_TAG")) != EXPECTED["NOMOUNT_TAG"]:
+            die("authority NoMount tag mismatch")
+
+        jobs = doc.get("jobs") or {}
+        if set(jobs) != {"static-green", "compile-test"}:
+            die(f"unexpected job set: {sorted(jobs)}")
+        compile_job = jobs["compile-test"]
+        if compile_job.get("needs") != "static-green":
+            die(f"compile-test needs drift: {compile_job.get('needs')!r}")
+
+        def step_names(job: dict[str, Any]) -> list[str]:
+            return [str(s.get("name", "")) for s in (job.get("steps") or [])]
+
+        c_names = step_names(compile_job)
+        required_compile_steps = [
+            "Checkout exact test branch",
+            "Bind STATIC GREEN evidence",
+            "Install controller dependencies",
+            "Authenticate frozen U7-N3 authority",
+            "Derive U7-N4 fast-fail test from exact U7-N3 and compile",
+            "Collect U7-N4 replay diagnostics",
+            "Finalize U7-N4 compile evidence",
+            "Build U7-N4 CLEAN AnyKernel3 test package",
+            "Upload U7-N4 test kernel",
+            "Final real U7-N4 GREEN gate",
+        ]
+        for name in required_compile_steps:
+            if c_names.count(name) != 1:
+                die(f"compile step mismatch {name!r}: {c_names.count(name)}")
+        if "Re-run U7-N3 upstream authentication" in c_names:
+            die("obsolete redundant upstream-auth re-run still present")
+
+        diag_name = "Collect U7-N4 replay diagnostics"
+        diag_step = next(s for s in compile_job.get("steps") or [] if s.get("name") == diag_name)
+        if str(diag_step.get("if", "")) != "always()":
+            die("diagnostic step must use always()")
+        if c_names.index("Derive U7-N4 fast-fail test from exact U7-N3 and compile") > c_names.index(diag_name):
+            die("diagnostic step must follow build/replay step")
+        if c_names.index(diag_name) > c_names.index("Finalize U7-N4 compile evidence"):
+            die("diagnostic step must precede finalization")
+
+        upload_step = next(s for s in compile_job.get("steps") or [] if s.get("name") == "Upload U7-N4 test kernel")
+        upload_with = upload_step.get("with") or {}
+        upload_path = str(upload_with.get("path", ""))
+        upload_items = {x.strip() for x in upload_path.splitlines() if x.strip()}
+        for required_path in (
+            "u7-n4-debug/DIAGNOSTIC-SUMMARY.txt",
+            "u7-n4-debug/REPLAY-tail-500.txt",
+            "u7-n4-debug/ACTUAL-open-context.txt",
+            "u7-n4-debug/ACTUAL-stat-context.txt",
+            "n3-aggregate/5.4.274/REPLAY.log",
+            "n3-aggregate/5.4.274/BUILD-STATUS.txt",
+        ):
+            if required_path not in upload_items:
+                die(f"failure-evidence upload path missing: {required_path}")
+        if "u7-n4-debug/" in upload_items:
+            die("whole u7-n4-debug directory must never be uploaded")
+        if any("n3-state" in x or "live-audit" in x for x in upload_items):
+            die("large replay/source directory leaked into artifact upload contract")
+        if str(upload_with.get("compression-level")) != "6":
+            die(f"artifact compression-level drift: {upload_with.get('compression-level')!r}")
+        diag_run = str(diag_step.get("run", ""))
+        if 'copy_if_dir' in diag_run or '"$RUNNER_TEMP/n3-state"' in diag_run:
+            die("diagnostic step still copies a complete replay directory")
+        for marker in (
+            "REPLAY-tail-500.txt",
+            "U7-N4 REPLAY.log tail 500",
+            "12-u7n4-patch-diagnostic.txt",
+            "12-u7n4-patch-python.log",
+        ):
+            if marker not in diag_run:
+                die(f"diagnostic console/evidence marker missing: {marker}")
+
+        if 'replay_workspace="$RUNNER_TEMP/n3-state/workspace-5.4.274"' not in diag_run:
+            die("diagnostic source path is not bound to real replay workspace")
+        if '$GITHUB_WORKSPACE/kernel/fs/open.c' in diag_run or '$GITHUB_WORKSPACE/kernel/fs/stat.c' in diag_run:
+            die("obsolete outer-workspace source diagnostic path remains")
+
+        if c_names.index("Upload U7-N4 test kernel") > c_names.index("Final real U7-N4 GREEN gate"):
+            die("artifact upload must precede final GREEN gate")
+
+        uses = []
+        for job in jobs.values():
+            for step in job.get("steps") or []:
+                if "uses" in step:
+                    uses.append(str(step["uses"]))
+        allowed_uses = {"actions/checkout@v7", "actions/upload-artifact@v7"}
+        if not uses or any(u not in allowed_uses for u in uses):
+            die(f"unexpected action use: {uses!r}")
+        if uses.count("actions/checkout@v7") != 2:
+            die(f"checkout action count mismatch: {uses.count('actions/checkout@v7')}")
+        if uses.count("actions/upload-artifact@v7") != 1:
+            die(f"upload action count mismatch: {uses.count('actions/upload-artifact@v7')}")
+
+        authority_steps = next(iter(authority["jobs"].values()))["steps"]
+        authority_names = [str(s.get("name", "")) for s in authority_steps]
+        for name in [
+            "Authenticate frozen authorities and 35158 to 35170 upstream contract",
+            "Derive fail-closed U7-N3 replayer and compile",
+            "Final real U7-N3 GREEN gate",
+        ]:
+            if authority_names.count(name) != 1:
+                die(f"authority step mismatch {name!r}: {authority_names.count(name)}")
+
+        build_steps = [
+            s for s in compile_job.get("steps") or []
+            if s.get("name") == "Derive U7-N4 fast-fail test from exact U7-N3 and compile"
+        ]
+        if len(build_steps) != 1:
+            die("U7-N4 build step not unique")
+        build_run = str(build_steps[0].get("run", ""))
+        authority_build = next(
+            s for s in authority_steps
+            if s.get("name") == "Derive fail-closed U7-N3 replayer and compile"
+        )
+        authority_run = str(authority_build.get("run", ""))
+        anchor = 'PYDERIVE\n\npython3 -m py_compile "$RUNNER_TEMP/n3_replay.py"\n'
+        if authority_run.count(anchor) != 1:
+            die(f"authority PYDERIVE anchor count={authority_run.count(anchor)}")
+        if build_run.count("U7_N4_REPLAYER_PATCH=PASS") != 1:
+            die("U7-N4 replayer patch marker count mismatch")
+
+        # Every shell run block must parse. This catches broken heredocs/quoting before build.
+        with tempfile.TemporaryDirectory(prefix="u7n4-static-shell-") as td:
+            root = Path(td)
+            idx = 0
+            for job_name, job in jobs.items():
+                for step in job.get("steps") or []:
+                    if str(step.get("shell", "")) != "bash" or "run" not in step:
+                        continue
+                    idx += 1
+                    p = root / f"{idx:02d}-{job_name}.sh"
+                    p.write_text(str(step["run"]) + "\n", encoding="utf-8")
+                    subprocess.run(["bash", "-n", str(p)], check=True)
+        record("BASH_SYNTAX_ALL_RUN_BLOCKS=PASS")
+
+        # Compile top-level Python heredocs in shell blocks. Nested heredocs are inside
+        # the outer Python source and are validated separately below.
+        py_start = re.compile(r"^\s*python3(?:\s+.*?)?\s+<<'([A-Za-z0-9_]+)'\s*$")
+        py_count = 0
+        for job in jobs.values():
+            for step in job.get("steps") or []:
+                run = str(step.get("run", ""))
+                lines = run.splitlines()
+                i = 0
+                while i < len(lines):
+                    m = py_start.match(lines[i])
+                    if not m:
+                        i += 1
+                        continue
+                    marker = m.group(1)
+                    j = i + 1
+                    while j < len(lines) and lines[j].strip() != marker:
+                        j += 1
+                    if j >= len(lines):
+                        die(f"unterminated Python heredoc {marker}")
+                    code = "\n".join(lines[i + 1:j]) + "\n"
+                    compile(code, f"<{marker}>", "exec")
+                    py_count += 1
+                    i = j + 1
+        if py_count < 3:
+            die(f"too few Python heredocs checked: {py_count}")
+        record(f"PYTHON_HEREDOC_COMPILE_COUNT={py_count}")
+        record("PYTHON_HEREDOC_SYNTAX=PASS")
+
+        # Decode the exact embedded U7-N4 adaptation payload and validate it directly.
+        payloads = re.findall(
+            r'base64\.b64decode\("([A-Za-z0-9+/=]+)"\)\.decode\("utf-8"\)',
+            build_run,
+        )
+        if len(payloads) != 1:
+            die(f"embedded adaptation payload count={len(payloads)}")
+        payload = base64.b64decode(payloads[0], validate=True).decode("utf-8")
+        compile(payload, "<U7-N4-adaptation>", "exec")
+
+        ns: dict[str, Any] = {
+            "Any": Any,
+            "die": die,
+        }
+        exec(payload, ns)
+        fn = ns.get("adapt_274_latency_fastfail")
+        if not callable(fn):
+            die("adapt_274_latency_fastfail missing after payload exec")
+
+        compile_name = "Compile P14R1 and enforce P14 warning/DTB regression gates"
+        synthetic_job: dict[str, Any] = {
+            "steps": [
+                {"name": compile_name, "shell": "bash", "run": "echo COMPILE"},
+            ]
+        }
+        fn(synthetic_job)
+        ssteps = synthetic_job["steps"]
+        if len(ssteps) != 2 or ssteps[0].get("name") != "U7-N4 move invalid-argument validation before KSU hooks":
+            die("adaptation did not inject exactly one patch step before compile")
+        patch_run = str(ssteps[0].get("run", ""))
+
+        with tempfile.TemporaryDirectory(prefix="u7n4-patch-syntax-") as td:
+            patch_sh = Path(td) / "patch.sh"
+            patch_sh.write_text(patch_run + "\n", encoding="utf-8")
+            subprocess.run(["bash", "-n", str(patch_sh)], check=True)
+        record("EMBEDDED_PATCH_BASH_SYNTAX=PASS")
+
+        pyfast_start = "python3 - <<'PYFAST' 2>&1 | tee \"$patch_pylog\"\n"
+        if patch_run.count(pyfast_start) != 1 or patch_run.count("\nPYFAST\n") != 1:
+            die("PYFAST heredoc structure mismatch")
+        a = patch_run.index(pyfast_start) + len(pyfast_start)
+        b = patch_run.index("\nPYFAST\n", a)
+        pyfast = patch_run[a:b] + "\n"
+        compile(pyfast, "<PYFAST>", "exec")
+        record("EMBEDDED_PATCH_PYTHON_SYNTAX=PASS")
+
+        for token in (
+            "def function_bounds(lines, pattern):",
+            "global_calls_before = original_text.count",
+        ):
+            if token not in pyfast:
+                die(f"function-boundary regression fix missing: {token}")
+        if "def window(lines, pattern, span=180):" in pyfast:
+            die("obsolete fixed-span function scanner remains")
+        record("FUNCTION_BOUNDARY_PATCH_ENGINE=PASS")
+
+        # Execute the exact patch step against a synthetic preimage that mirrors the
+        # only ordering contract this test is allowed to change.
+        with tempfile.TemporaryDirectory(prefix="u7n4-patch-selftest-") as td:
+            root = Path(td)
+            kernel = root / "kernel"
+            fs = kernel / "fs"
+            audit = root / "audit"
+            fs.mkdir(parents=True)
+            audit.mkdir()
+
+            (fs / "open.c").write_text(
+                "#include <linux/fs.h>\n"
+                "static long do_faccessat(int dfd, const char __user *filename, int mode)\n"
+                "{\n"
+                "#ifdef CONFIG_KSU\n"
+                "    ksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+                "#endif\n"
+                "    if (mode & ~S_IRWXO)\n"
+                "        return -EINVAL;\n"
+                "    return 0;\n"
+                "}\n"
+                "\n"
+                "static long decoy_access_path(int dfd, const char __user *filename, int mode)\n"
+                "{\n"
+                "#ifdef CONFIG_KSU\n"
+                "    ksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+                "#endif\n"
+                "    return 0;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (fs / "stat.c").write_text(
+                "#include <linux/fs.h>\n"
+                "int vfs_statx(int dfd, const char __user *filename, int flags)\n"
+                "{\n"
+                "#ifdef CONFIG_KSU\n"
+                "    ksu_handle_stat(&dfd, &filename, &flags);\n"
+                "#endif\n"
+                "    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT))\n"
+                "        return -EINVAL;\n"
+                "    return 0;\n"
+                "}\n"
+                "\n"
+                "static int decoy_stat_path(int dfd, const char __user *filename, int flags)\n"
+                "{\n"
+                "#ifdef CONFIG_KSU\n"
+                "    ksu_handle_stat(&dfd, &filename, &flags);\n"
+                "#endif\n"
+                "    return 0;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            subprocess.run(["git", "init", "-q", str(kernel)], check=True)
+            subprocess.run(["git", "-C", str(kernel), "config", "user.email", "static-green@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(kernel), "config", "user.name", "U7-N4 Static Green"], check=True)
+            subprocess.run(["git", "-C", str(kernel), "add", "fs/open.c", "fs/stat.c"], check=True)
+            subprocess.run(["git", "-C", str(kernel), "commit", "-q", "-m", "synthetic preimage"], check=True)
+
+            patch_sh = root / "patch.sh"
+            patch_sh.write_text(patch_run + "\n", encoding="utf-8")
+            penv = os.environ.copy()
+            penv["AUDIT_DIR"] = str(audit)
+            subprocess.run(["bash", str(patch_sh)], cwd=root, env=penv, check=True)
+
+            evidence = audit / "12-u7n4-latency-fastfail.txt"
+            patch = audit / "12-u7n4-latency-fastfail.patch"
+            if not evidence.is_file() or not patch.is_file() or patch.stat().st_size == 0:
+                die("patch self-test evidence missing")
+            et = evidence.read_text(encoding="utf-8")
+            for token in [
+                "U7_N4_LATENCY_FASTFAIL_PATCH=PASS",
+                "PATCH_SCOPE=fs/open.c,fs/stat.c",
+                "HYPOTHESIS=invalid_argument_validation_before_KSU_hook",
+                "DEVICE_PASS=NO",
+            ]:
+                if token not in et.splitlines():
+                    die(f"patch self-test evidence token missing: {token}")
+
+            open_post = (fs / "open.c").read_text(encoding="utf-8")
+            stat_post = (fs / "stat.c").read_text(encoding="utf-8")
+            if open_post.index("if (mode & ~S_IRWXO)") > open_post.index("ksu_handle_faccessat"):
+                die("open.c self-test ordering failed")
+            if stat_post.index("if (flags & ~(") > stat_post.index("ksu_handle_stat"):
+                die("stat.c self-test ordering failed")
+            if open_post.count("ksu_handle_faccessat(&") != 2:
+                die("open.c decoy/global hook preservation failed")
+            if stat_post.count("ksu_handle_stat(&") != 2:
+                die("stat.c decoy/global hook preservation failed")
+
+        record("U7_N4_PATCH_SYNTHETIC_SELFTEST=PASS")
+        record("U7_N4_FUNCTION_BOUNDARY_REGRESSION_SELFTEST=PASS")
+
+        final_step = next(
+            s for s in compile_job["steps"]
+            if s.get("name") == "Final real U7-N4 GREEN gate"
+        )
+        final_run = str(final_step.get("run", ""))
+        for token in [
+            "STATIC_GREEN_PASS=YES",
+            "VEUX_U7_N4_LATENCY_FASTFAIL_COMPILE=PASS",
+            "COMPILE_PASS=YES",
+            "PACKAGE_PASS=YES",
+            "STATIC_BOOT_PATH_PASS=NO",
+            "DEVICE_PASS=NO",
+            "U7_N4_REAL_GREEN_GATE=PASS",
+        ]:
+            if token not in final_run:
+                die(f"final GREEN gate token missing: {token}")
+
+        record("WORKFLOW_SCHEMA=PASS")
+        record("V5_SMALL_ARTIFACT_CONTRACT=PASS")
+        record("AUTHORITY_SCHEMA=PASS")
+        record(f"AUTHORITY_BLOB={EXPECTED_AUTHORITY_BLOB}")
+        record("READ_ONLY_PERMISSIONS=PASS")
+        record("ACTION_ALLOWLIST=PASS")
+        record("REDUNDANT_UPSTREAM_AUTH_RERUN=ABSENT")
+        record("FAILURE_EVIDENCE_CONTRACT=PASS")
+        record("REPLAY_LOG_UPLOAD_CONTRACT=PASS")
+        record("STATIC_GREEN_PASS=YES")
+        PYSTATIC
+
+        grep -Fxq 'BASH_SYNTAX_ALL_RUN_BLOCKS=PASS' "$audit"
+        grep -Fxq 'PYTHON_HEREDOC_SYNTAX=PASS' "$audit"
+        grep -Fxq 'EMBEDDED_PATCH_BASH_SYNTAX=PASS' "$audit"
+        grep -Fxq 'EMBEDDED_PATCH_PYTHON_SYNTAX=PASS' "$audit"
+        grep -Fxq 'FUNCTION_BOUNDARY_PATCH_ENGINE=PASS' "$audit"
+        grep -Fxq 'U7_N4_PATCH_SYNTHETIC_SELFTEST=PASS' "$audit"
+        grep -Fxq 'U7_N4_FUNCTION_BOUNDARY_REGRESSION_SELFTEST=PASS' "$audit"
+        grep -Fxq 'WORKFLOW_SCHEMA=PASS' "$audit"
+        grep -Fxq 'AUTHORITY_SCHEMA=PASS' "$audit"
+        grep -Fxq 'READ_ONLY_PERMISSIONS=PASS' "$audit"
+        grep -Fxq 'ACTION_ALLOWLIST=PASS' "$audit"
+        grep -Fxq 'REDUNDANT_UPSTREAM_AUTH_RERUN=ABSENT' "$audit"
+        grep -Fxq 'FAILURE_EVIDENCE_CONTRACT=PASS' "$audit"
+        grep -Fxq 'REPLAY_LOG_UPLOAD_CONTRACT=PASS' "$audit"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$audit"
+
+        workflow_sha256="$(sha256sum "$SELF_WORKFLOW" | awk '{print $1}')"
+        authority_blob="$(git hash-object "$U7N3_AUTHORITY")"
+        echo "status=PASS" >> "$GITHUB_OUTPUT"
+        echo "workflow_sha256=$workflow_sha256" >> "$GITHUB_OUTPUT"
+        echo "authority_blob=$authority_blob" >> "$GITHUB_OUTPUT"
+        echo "patch_selftest=PASS" >> "$GITHUB_OUTPUT"
+
+        echo "STATIC_GREEN_WORKFLOW_SHA256=$workflow_sha256"
+        echo "STATIC_GREEN_AUTHORITY_BLOB=$authority_blob"
+        echo 'U7_N4_STATIC_GREEN=PASS'
+  compile-test:
+    needs: static-green
+    runs-on: ubuntu-24.04
+    timeout-minutes: 280
+    steps:
+    - name: Checkout exact test branch
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Bind STATIC GREEN evidence
+      shell: bash
+      env:
+        STATIC_STATUS: ${{ needs.static-green.outputs.status }}
+        STATIC_WORKFLOW_SHA256: ${{ needs.static-green.outputs.workflow_sha256 }}
+        STATIC_AUTHORITY_BLOB: ${{ needs.static-green.outputs.authority_blob }}
+        STATIC_PATCH_SELFTEST: ${{ needs.static-green.outputs.patch_selftest }}
+      run: |
+        set -euo pipefail
+        test "$STATIC_STATUS" = PASS
+        test "$STATIC_PATCH_SELFTEST" = PASS
+        test "$STATIC_AUTHORITY_BLOB" = "$U7N3_AUTHORITY_BLOB"
+        [[ "$STATIC_WORKFLOW_SHA256" =~ ^[0-9a-f]{64}$ ]]
+        cat > "$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt" <<EOF
+        U7_N4_STATIC_GREEN=PASS
+        STATIC_GREEN_PASS=YES
+        WORKFLOW_SHA256=$STATIC_WORKFLOW_SHA256
+        U7N3_AUTHORITY_BLOB=$STATIC_AUTHORITY_BLOB
+        PATCH_SYNTHETIC_SELFTEST=PASS
+        DEVICE_PASS=NO
+        EOF
+    - name: Install controller dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ca-certificates git python3 python3-yaml unzip zip
+        python3 - <<'PY'
+        import yaml
+        print("PYYAML_IMPORT=PASS")
+        PY
+    - name: Authenticate frozen U7-N3 authority
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "$U7N3_AUTHORITY"
+        actual="$(git hash-object "$U7N3_AUTHORITY")"
+        test "$actual" = "$U7N3_AUTHORITY_BLOB"
+        python3 - "$U7N3_AUTHORITY" <<'PY'
+        from pathlib import Path
+        import sys, yaml
+        p = Path(sys.argv[1])
+        doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+        env = doc.get("env") or {}
+        expected = {
+            "RESUKISU_COMMIT": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+            "RESUKISU_VERSION": "35170",
+            "RESUKISU_UAPI": "4",
+            "SUSFS_COMMIT": "04a9d713106191ba98be680bd7ad9547ab1de964",
+            "NOMOUNT_COMMIT": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+        }
+        for key, value in expected.items():
+            if str(env.get(key)) != value:
+                raise SystemExit(f"U7-N3 authority env mismatch {key}: {env.get(key)!r}")
+        steps = next(iter(doc["jobs"].values()))["steps"]
+        names = [str(s.get("name", "")) for s in steps]
+        required = [
+            "Authenticate frozen authorities and 35158 to 35170 upstream contract",
+            "Derive fail-closed U7-N3 replayer and compile",
+            "Final real U7-N3 GREEN gate",
+        ]
+        for name in required:
+            if names.count(name) != 1:
+                raise SystemExit(f"U7-N3 authority step mismatch {name!r}: {names.count(name)}")
+        print("U7_N3_AUTHORITY_SCHEMA=PASS")
+        PY
+        echo "U7_N3_AUTHORITY_BLOB=$actual"
+        echo "U7_N3_AUTHORITY_AUTH=PASS"
+    - name: Derive U7-N4 fast-fail test from exact U7-N3 and compile
+      id: n4
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        python3 - "$U7N3_AUTHORITY" "$RUNNER_TEMP/u7n4-build.sh" <<'PYOUTER'
+        from pathlib import Path
+        import sys
+        import yaml
+
+        src = Path(sys.argv[1])
+        out = Path(sys.argv[2])
+        doc = yaml.safe_load(src.read_text(encoding="utf-8"))
+        steps = next(iter(doc["jobs"].values()))["steps"]
+
+        matches = [
+            s for s in steps
+            if s.get("name") == "Derive fail-closed U7-N3 replayer and compile"
+        ]
+        if len(matches) != 1:
+            raise SystemExit(f"U7-N3 build step count={len(matches)}")
+
+        run = str(matches[0].get("run", ""))
+        anchor = (
+            'PYDERIVE\n\n'
+            'python3 -m py_compile "$RUNNER_TEMP/n3_replay.py"\n'
+        )
+        if run.count(anchor) != 1:
+            raise SystemExit(
+                f"U7-N3 PYDERIVE insertion anchor count={run.count(anchor)}"
+            )
+
+        injection = r'''PYDERIVE
+
+        python3 - "$RUNNER_TEMP/n3_replay.py" <<'PYN4PATCH'
+        from pathlib import Path
+        import base64
+        import sys
+
+        path = Path(sys.argv[1])
+        code = path.read_text(encoding="utf-8")
+
+        marker = (
+            "def patch_293_integrator("
+            "workspace: Path, doc: dict[str, Any]) -> str:\n"
+        )
+        if code.count(marker) != 1:
+            raise SystemExit(
+                f"U7-N4 replayer injection marker count={code.count(marker)}"
+            )
+
+        inject = base64.b64decode("ZGVmIGFkYXB0XzI3NF9sYXRlbmN5X2Zhc3RmYWlsKGpvYjogZGljdFtzdHIsIEFueV0pIC0+IE5vbmU6CiAgICBzdGVwcyA9IGpvYi5nZXQoInN0ZXBzIikgb3IgW10KICAgIGNvbXBpbGVfbmFtZSA9ICJDb21waWxlIFAxNFIxIGFuZCBlbmZvcmNlIFAxNCB3YXJuaW5nL0RUQiByZWdyZXNzaW9uIGdhdGVzIgogICAgY29tcGlsZV9pZHggPSBuZXh0KAogICAgICAgIChpIGZvciBpLCBzIGluIGVudW1lcmF0ZShzdGVwcykgaWYgcy5nZXQoIm5hbWUiKSA9PSBjb21waWxlX25hbWUpLAogICAgICAgIE5vbmUsCiAgICApCiAgICBpZiBjb21waWxlX2lkeCBpcyBOb25lOgogICAgICAgIGRpZSgiVTctTjQgY29tcGlsZSBzdGVwIG5vdCBmb3VuZCBmb3IgZmFzdC1mYWlsIGluamVjdGlvbiIpCgogICAgcGF0Y2hfc3RlcCA9IHsKICAgICAgICAibmFtZSI6ICJVNy1ONCBtb3ZlIGludmFsaWQtYXJndW1lbnQgdmFsaWRhdGlvbiBiZWZvcmUgS1NVIGhvb2tzIiwKICAgICAgICAic2hlbGwiOiAiYmFzaCIsCiAgICAgICAgInJ1biI6ICdzZXQgLWV1byBwaXBlZmFpbFxub3Blbl9maWxlPWtlcm5lbC9mcy9vcGVuLmNcbnN0YXRfZmlsZT1rZXJuZWwvZnMvc3RhdC5jXG50ZXN0IC1mICIkb3Blbl9maWxlIlxudGVzdCAtZiAiJHN0YXRfZmlsZSJcbm1rZGlyIC1wICIkQVVESVRfRElSIlxuc3RhZ2U9cHJlaW1hZ2VcbnBhdGNoX2RpYWc9IiRBVURJVF9ESVIvMTItdTduNC1wYXRjaC1kaWFnbm9zdGljLnR4dCJcbnBhdGNoX3B5bG9nPSIkQVVESVRfRElSLzEyLXU3bjQtcGF0Y2gtcHl0aG9uLmxvZyJcbmZpbmlzaF9uNF9wYXRjaCgpIHtcbiAgcmM9JD9cbiAgdHJhcCAtIEVYSVRcbiAge1xuICAgIGVjaG8gIlU3X040X1BBVENIX0VYSVQ9JHJjIlxuICAgIGVjaG8gIlU3X040X1BBVENIX1NUQUdFPSRzdGFnZSJcbiAgICBlY2hvICJPUEVOX0ZJTEVfUFJFU0VOVD0kKFsgLWYgIiRvcGVuX2ZpbGUiIF0gJiYgZWNobyBZRVMgfHwgZWNobyBOTykiXG4gICAgZWNobyAiU1RBVF9GSUxFX1BSRVNFTlQ9JChbIC1mICIkc3RhdF9maWxlIiBdICYmIGVjaG8gWUVTIHx8IGVjaG8gTk8pIlxuICB9ID4gIiRwYXRjaF9kaWFnIlxuICBleGl0ICIkcmMiXG59XG50cmFwIGZpbmlzaF9uNF9wYXRjaCBFWElUXG5cbnB5dGhvbjMgLSAiJEFVRElUX0RJUiIgPDxcJ1BZUFJFSU1BR0VcJ1xuZnJvbSBwYXRobGliIGltcG9ydCBQYXRoXG5pbXBvcnQgcmUsIHN5c1xuYXVkaXQgPSBQYXRoKHN5cy5hcmd2WzFdKVxuXG5kZWYgZW1pdChzcmM6IHN0ciwgZm5fcGF0OiBzdHIsIG91dDogc3RyKSAtPiBOb25lOlxuICAgIHAgPSBQYXRoKHNyYylcbiAgICBsaW5lcyA9IHAucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpLnNwbGl0bGluZXMoKVxuICAgIGhpdHMgPSBbaSBmb3IgaSwgbGluZSBpbiBlbnVtZXJhdGUobGluZXMpIGlmIHJlLnNlYXJjaChmbl9wYXQsIGxpbmUpXVxuICAgIGRhdGEgPSBbZiJTT1VSQ0U9e3NyY30iLCBmIkZVTkNUSU9OX01BVENIX0NPVU5UPXtsZW4oaGl0cyl9Il1cbiAgICBmb3IgaCBpbiBoaXRzWzozXTpcbiAgICAgICAgc3RhcnQ9bWF4KDAsaC0xMik7IGVuZD1taW4obGVuKGxpbmVzKSxoKzEwMClcbiAgICAgICAgZGF0YS5hcHBlbmQoZiJGVU5DVElPTl9MSU5FPXtoKzF9IilcbiAgICAgICAgZGF0YS5leHRlbmQoZiJ7aSsxOjA2ZH06IHtsaW5lc1tpXX0iIGZvciBpIGluIHJhbmdlKHN0YXJ0LGVuZCkpXG4gICAgUGF0aChvdXQpLndyaXRlX3RleHQoIlxcbiIuam9pbihkYXRhKSsiXFxuIiwgZW5jb2Rpbmc9InV0Zi04IilcblxuZW1pdCgia2VybmVsL2ZzL29wZW4uYyIsIHIiXlxccyooPzpzdGF0aWNcXHMrKT9sb25nXFxzK2RvX2ZhY2Nlc3NhdFxccypcXCgiLFxuICAgICBhdWRpdCAvICIxMi11N240LXByZWltYWdlLW9wZW4udHh0IilcbmVtaXQoImtlcm5lbC9mcy9zdGF0LmMiLCByIl5cXHMqKD86c3RhdGljXFxzKyk/aW50XFxzK3Zmc19zdGF0eFxccypcXCgiLFxuICAgICBhdWRpdCAvICIxMi11N240LXByZWltYWdlLXN0YXQudHh0IilcblBZUFJFSU1BR0VcbnN0YWdlPXRyYW5zZm9ybVxuXG5vcGVuX2JlZm9yZT0iJChzaGEyNTZzdW0gIiRvcGVuX2ZpbGUiIHwgYXdrIFwne3ByaW50ICQxfVwnKSJcbnN0YXRfYmVmb3JlPSIkKHNoYTI1NnN1bSAiJHN0YXRfZmlsZSIgfCBhd2sgXCd7cHJpbnQgJDF9XCcpIlxuXG5weXRob24zIC0gPDxcJ1BZRkFTVFwnIDI+JjEgfCB0ZWUgIiRwYXRjaF9weWxvZyJcbmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aFxuaW1wb3J0IHJlXG5cbmRlZiBmYWlsKG1zZyk6XG4gICAgcmFpc2UgU3lzdGVtRXhpdChtc2cpXG5cbmRlZiBmdW5jdGlvbl9ib3VuZHMobGluZXMsIHBhdHRlcm4pOlxuICAgIGhpdHMgPSBbaSBmb3IgaSwgbGluZSBpbiBlbnVtZXJhdGUobGluZXMpIGlmIHJlLnNlYXJjaChwYXR0ZXJuLCBsaW5lKV1cbiAgICBpZiBsZW4oaGl0cykgIT0gMTpcbiAgICAgICAgZmFpbChmImZ1bmN0aW9uIG1hdGNoIHtwYXR0ZXJuIXJ9OiB7bGVuKGhpdHMpfSIpXG4gICAgc3RhcnQgPSBoaXRzWzBdXG5cbiAgICBib2R5X29wZW4gPSBOb25lXG4gICAgZm9yIGkgaW4gcmFuZ2Uoc3RhcnQsIG1pbihsZW4obGluZXMpLCBzdGFydCArIDI0KSk6XG4gICAgICAgIGlmICJ7IiBpbiBsaW5lc1tpXTpcbiAgICAgICAgICAgIGJvZHlfb3BlbiA9IGlcbiAgICAgICAgICAgIGJyZWFrXG4gICAgaWYgYm9keV9vcGVuIGlzIE5vbmU6XG4gICAgICAgIGZhaWwoZiJmdW5jdGlvbiBib2R5IHN0YXJ0IG5vdCBmb3VuZCBmb3Ige3BhdHRlcm4hcn0iKVxuXG4gICAgZm9yIGkgaW4gcmFuZ2UoYm9keV9vcGVuICsgMSwgbGVuKGxpbmVzKSk6XG4gICAgICAgIGlmIHJlLm1hdGNoKHIiXn1cXHMqKD86L1xcKi4qXFwqL1xccyopPyQiLCBsaW5lc1tpXSk6XG4gICAgICAgICAgICByZXR1cm4gc3RhcnQsIGkgKyAxXG4gICAgZmFpbChmImZ1bmN0aW9uIGJvZHkgZW5kIG5vdCBmb3VuZCBmb3Ige3BhdHRlcm4hcn0iKVxuXG5kZWYgb25lKGxpbmVzLCBwYXR0ZXJuLCBzdGFydCwgZW5kLCBsYWJlbCk6XG4gICAgaGl0cyA9IFtpIGZvciBpIGluIHJhbmdlKHN0YXJ0LCBlbmQpIGlmIHJlLnNlYXJjaChwYXR0ZXJuLCBsaW5lc1tpXSldXG4gICAgaWYgbGVuKGhpdHMpICE9IDE6XG4gICAgICAgIGZhaWwoZiJ7bGFiZWx9IG1hdGNoIGNvdW50PXtsZW4oaGl0cyl9IilcbiAgICByZXR1cm4gaGl0c1swXVxuXG5kZWYgcHBfYmxvY2sobGluZXMsIGNhbGwpOlxuICAgIHN0YXJ0ID0gTm9uZVxuICAgIGZvciBpIGluIHJhbmdlKGNhbGwgLSAxLCBtYXgoLTEsIGNhbGwgLSAyMCksIC0xKTpcbiAgICAgICAgaWYgcmUubWF0Y2goclwnXlxccyojXFxzKmlmXCcsIGxpbmVzW2ldKSBhbmQgXCdDT05GSUdfS1NVXCcgaW4gbGluZXNbaV06XG4gICAgICAgICAgICBzdGFydCA9IGlcbiAgICAgICAgICAgIGJyZWFrXG4gICAgaWYgc3RhcnQgaXMgTm9uZTpcbiAgICAgICAgZmFpbCgiS1NVIHByZXByb2Nlc3NvciBibG9jayBzdGFydCBub3QgZm91bmQiKVxuXG4gICAgZGVwdGggPSAwXG4gICAgZm9yIGkgaW4gcmFuZ2Uoc3RhcnQsIG1pbihsZW4obGluZXMpLCBjYWxsICsgNDApKTpcbiAgICAgICAgcyA9IGxpbmVzW2ldLmxzdHJpcCgpXG4gICAgICAgIGlmIHJlLm1hdGNoKHJcJ14jXFxzKmlmXCcsIHMpOlxuICAgICAgICAgICAgZGVwdGggKz0gMVxuICAgICAgICBlbGlmIHJlLm1hdGNoKHJcJ14jXFxzKmVuZGlmXFxiXCcsIHMpOlxuICAgICAgICAgICAgZGVwdGggLT0gMVxuICAgICAgICAgICAgaWYgZGVwdGggPT0gMDpcbiAgICAgICAgICAgICAgICBpZiBpIDwgY2FsbDpcbiAgICAgICAgICAgICAgICAgICAgZmFpbCgiS1NVIGJsb2NrIGNsb3NlcyBiZWZvcmUgaG9vayBjYWxsIilcbiAgICAgICAgICAgICAgICByZXR1cm4gc3RhcnQsIGlcbiAgICBmYWlsKCJLU1UgcHJlcHJvY2Vzc29yIGJsb2NrIGVuZCBub3QgZm91bmQiKVxuXG5kZWYgbW92ZV9vcGVuKHBhdGgpOlxuICAgIGxpbmVzID0gcGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04Iikuc3BsaXRsaW5lcyhrZWVwZW5kcz1UcnVlKVxuICAgIG9yaWdpbmFsX3RleHQgPSAiIi5qb2luKGxpbmVzKVxuICAgIGdsb2JhbF9jYWxsc19iZWZvcmUgPSBvcmlnaW5hbF90ZXh0LmNvdW50KCJrc3VfaGFuZGxlX2ZhY2Nlc3NhdCgmIilcbiAgICBpZiBnbG9iYWxfY2FsbHNfYmVmb3JlIDwgMTpcbiAgICAgICAgZmFpbCgib3BlbiBob29rIGdsb2JhbGx5IGFic2VudCIpXG4gICAgZnMsIGZlID0gZnVuY3Rpb25fYm91bmRzKGxpbmVzLCByXCdeXFxzKig/OnN0YXRpY1xccyspP2xvbmdcXHMrZG9fZmFjY2Vzc2F0XFxzKlxcKFwnKVxuICAgIGNhbGwgPSBvbmUobGluZXMsIHJcJ15cXHMqa3N1X2hhbmRsZV9mYWNjZXNzYXRcXHMqXFwoXCcsIGZzLCBmZSwgIm9wZW4gaG9vayIpXG4gICAgZ3VhcmQgPSBvbmUoXG4gICAgICAgIGxpbmVzLFxuICAgICAgICByXCdpZlxccypcXChcXHMqbW9kZVxccyomXFxzKn5TX0lSV1hPXFxzKlxcKVwnLFxuICAgICAgICBmcyxcbiAgICAgICAgZmUsXG4gICAgICAgICJvcGVuIGludmFsaWQtbW9kZSBndWFyZCIsXG4gICAgKVxuICAgIHJldHMgPSBbXG4gICAgICAgIGkgZm9yIGkgaW4gcmFuZ2UoZ3VhcmQsIG1pbihmZSwgZ3VhcmQgKyA4KSlcbiAgICAgICAgaWYgInJldHVybiAtRUlOVkFMOyIgaW4gbGluZXNbaV1cbiAgICBdXG4gICAgaWYgbGVuKHJldHMpICE9IDE6XG4gICAgICAgIGZhaWwoZiJvcGVuIGd1YXJkIHJldHVybiBjb3VudD17bGVuKHJldHMpfSIpXG4gICAgcmV0ID0gcmV0c1swXVxuXG4gICAgaWYgY2FsbCA+IHJldDpcbiAgICAgICAgZmFpbCgib3Blbi5jIGFscmVhZHkgdmFsaWRhdGlvbi1maXJzdDsgaHlwb3RoZXNpcyBwcmVpbWFnZSBhYnNlbnQiKVxuXG4gICAgYnMsIGJlID0gcHBfYmxvY2sobGluZXMsIGNhbGwpXG4gICAgaWYgbm90IChicyA8PSBjYWxsIDw9IGJlIDwgZ3VhcmQpOlxuICAgICAgICBmYWlsKGYib3BlbiBvcmRlcmluZyB1bmV4cGVjdGVkIHtic306e2JlfSBjYWxsPXtjYWxsfSBndWFyZD17Z3VhcmR9IilcblxuICAgIGJsb2NrID0gbGluZXNbYnM6YmUgKyAxXVxuICAgIGRlbCBsaW5lc1ticzpiZSArIDFdXG4gICAgcmVtb3ZlZCA9IGJlIC0gYnMgKyAxXG4gICAgcmV0IC09IHJlbW92ZWRcblxuICAgIGJsb2NrID0gWyJcXG4iXSArIGJsb2NrICsgWyJcXG4iXVxuICAgIGxpbmVzW3JldCArIDE6cmV0ICsgMV0gPSBibG9ja1xuXG4gICAgdGV4dCA9ICIiLmpvaW4obGluZXMpXG4gICAgYWZ0ZXJfY2FsbHMgPSB0ZXh0LmNvdW50KCJrc3VfaGFuZGxlX2ZhY2Nlc3NhdCgmIilcbiAgICBpZiBhZnRlcl9jYWxscyAhPSBnbG9iYWxfY2FsbHNfYmVmb3JlOlxuICAgICAgICBmYWlsKFxuICAgICAgICAgICAgZiJvcGVuIGdsb2JhbCBob29rIGNhbGwgY291bnQgY2hhbmdlZDogIlxuICAgICAgICAgICAgZiJiZWZvcmU9e2dsb2JhbF9jYWxsc19iZWZvcmV9IGFmdGVyPXthZnRlcl9jYWxsc30iXG4gICAgICAgIClcbiAgICBwYXRoLndyaXRlX3RleHQodGV4dCwgZW5jb2Rpbmc9InV0Zi04IilcblxuICAgIHBvc3QgPSB0ZXh0LnNwbGl0bGluZXMoKVxuICAgIGZzLCBmZSA9IGZ1bmN0aW9uX2JvdW5kcyhwb3N0LCByXCdeXFxzKig/OnN0YXRpY1xccyspP2xvbmdcXHMrZG9fZmFjY2Vzc2F0XFxzKlxcKFwnKVxuICAgIGNhbGwyID0gb25lKHBvc3QsIHJcJ15cXHMqa3N1X2hhbmRsZV9mYWNjZXNzYXRcXHMqXFwoXCcsIGZzLCBmZSwgIm9wZW4gaG9vayBwb3N0IilcbiAgICBndWFyZDIgPSBvbmUoXG4gICAgICAgIHBvc3QsXG4gICAgICAgIHJcJ2lmXFxzKlxcKFxccyptb2RlXFxzKiZcXHMqflNfSVJXWE9cXHMqXFwpXCcsXG4gICAgICAgIGZzLFxuICAgICAgICBmZSxcbiAgICAgICAgIm9wZW4gZ3VhcmQgcG9zdCIsXG4gICAgKVxuICAgIGlmIG5vdCBndWFyZDIgPCBjYWxsMjpcbiAgICAgICAgZmFpbCgib3BlbiB2YWxpZGF0aW9uLWZpcnN0IHBvc3Rjb25kaXRpb24gZmFpbGVkIilcblxuZGVmIG1vdmVfc3RhdChwYXRoKTpcbiAgICBsaW5lcyA9IHBhdGgucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpLnNwbGl0bGluZXMoa2VlcGVuZHM9VHJ1ZSlcbiAgICBvcmlnaW5hbF90ZXh0ID0gIiIuam9pbihsaW5lcylcbiAgICBnbG9iYWxfY2FsbHNfYmVmb3JlID0gb3JpZ2luYWxfdGV4dC5jb3VudCgia3N1X2hhbmRsZV9zdGF0KCYiKVxuICAgIGlmIGdsb2JhbF9jYWxsc19iZWZvcmUgPCAxOlxuICAgICAgICBmYWlsKCJzdGF0IGhvb2sgZ2xvYmFsbHkgYWJzZW50IilcbiAgICBmcywgZmUgPSBmdW5jdGlvbl9ib3VuZHMobGluZXMsIHJcJ15cXHMqKD86c3RhdGljXFxzKyk/aW50XFxzK3Zmc19zdGF0eFxccypcXChcJylcbiAgICBjYWxsID0gb25lKGxpbmVzLCByXCdeXFxzKmtzdV9oYW5kbGVfc3RhdFxccypcXChcJywgZnMsIGZlLCAic3RhdCBob29rIilcbiAgICBndWFyZHMgPSBbaSBmb3IgaSBpbiByYW5nZShmcywgZmUpIGlmICJmbGFncyAmIH4oIiBpbiBsaW5lc1tpXV1cbiAgICBpZiBsZW4oZ3VhcmRzKSAhPSAxOlxuICAgICAgICBmYWlsKGYic3RhdCBpbnZhbGlkLWZsYWdzIGd1YXJkIGNvdW50PXtsZW4oZ3VhcmRzKX0iKVxuICAgIGd1YXJkID0gZ3VhcmRzWzBdXG5cbiAgICByZXRzID0gW1xuICAgICAgICBpIGZvciBpIGluIHJhbmdlKGd1YXJkLCBtaW4oZmUsIGd1YXJkICsgMTIpKVxuICAgICAgICBpZiAicmV0dXJuIC1FSU5WQUw7IiBpbiBsaW5lc1tpXVxuICAgIF1cbiAgICBpZiBsZW4ocmV0cykgIT0gMTpcbiAgICAgICAgZmFpbChmInN0YXQgZ3VhcmQgcmV0dXJuIGNvdW50PXtsZW4ocmV0cyl9IilcbiAgICByZXQgPSByZXRzWzBdXG5cbiAgICBpZiBjYWxsID4gcmV0OlxuICAgICAgICBmYWlsKCJzdGF0LmMgYWxyZWFkeSB2YWxpZGF0aW9uLWZpcnN0OyBoeXBvdGhlc2lzIHByZWltYWdlIGFic2VudCIpXG5cbiAgICBicywgYmUgPSBwcF9ibG9jayhsaW5lcywgY2FsbClcbiAgICBpZiBub3QgKGJzIDw9IGNhbGwgPD0gYmUgPCBndWFyZCk6XG4gICAgICAgIGZhaWwoZiJzdGF0IG9yZGVyaW5nIHVuZXhwZWN0ZWQge2JzfTp7YmV9IGNhbGw9e2NhbGx9IGd1YXJkPXtndWFyZH0iKVxuXG4gICAgYmxvY2sgPSBsaW5lc1ticzpiZSArIDFdXG4gICAgZGVsIGxpbmVzW2JzOmJlICsgMV1cbiAgICByZW1vdmVkID0gYmUgLSBicyArIDFcbiAgICByZXQgLT0gcmVtb3ZlZFxuXG4gICAgYmxvY2sgPSBbIlxcbiJdICsgYmxvY2sgKyBbIlxcbiJdXG4gICAgbGluZXNbcmV0ICsgMTpyZXQgKyAxXSA9IGJsb2NrXG5cbiAgICB0ZXh0ID0gIiIuam9pbihsaW5lcylcbiAgICBhZnRlcl9jYWxscyA9IHRleHQuY291bnQoImtzdV9oYW5kbGVfc3RhdCgmIilcbiAgICBpZiBhZnRlcl9jYWxscyAhPSBnbG9iYWxfY2FsbHNfYmVmb3JlOlxuICAgICAgICBmYWlsKFxuICAgICAgICAgICAgZiJzdGF0IGdsb2JhbCBob29rIGNhbGwgY291bnQgY2hhbmdlZDogIlxuICAgICAgICAgICAgZiJiZWZvcmU9e2dsb2JhbF9jYWxsc19iZWZvcmV9IGFmdGVyPXthZnRlcl9jYWxsc30iXG4gICAgICAgIClcbiAgICBwYXRoLndyaXRlX3RleHQodGV4dCwgZW5jb2Rpbmc9InV0Zi04IilcblxuICAgIHBvc3QgPSB0ZXh0LnNwbGl0bGluZXMoKVxuICAgIGZzLCBmZSA9IGZ1bmN0aW9uX2JvdW5kcyhwb3N0LCByXCdeXFxzKig/OnN0YXRpY1xccyspP2ludFxccyt2ZnNfc3RhdHhcXHMqXFwoXCcpXG4gICAgY2FsbDIgPSBvbmUocG9zdCwgclwnXlxccyprc3VfaGFuZGxlX3N0YXRcXHMqXFwoXCcsIGZzLCBmZSwgInN0YXQgaG9vayBwb3N0IilcbiAgICBndWFyZHMyID0gW2kgZm9yIGkgaW4gcmFuZ2UoZnMsIGZlKSBpZiAiZmxhZ3MgJiB+KCIgaW4gcG9zdFtpXV1cbiAgICBpZiBsZW4oZ3VhcmRzMikgIT0gMSBvciBub3QgZ3VhcmRzMlswXSA8IGNhbGwyOlxuICAgICAgICBmYWlsKCJzdGF0IHZhbGlkYXRpb24tZmlyc3QgcG9zdGNvbmRpdGlvbiBmYWlsZWQiKVxuXG5tb3ZlX29wZW4oUGF0aCgia2VybmVsL2ZzL29wZW4uYyIpKVxubW92ZV9zdGF0KFBhdGgoImtlcm5lbC9mcy9zdGF0LmMiKSlcbnByaW50KCJVN19ONF9PUEVOX1ZBTElEQVRJT05fRklSU1Q9UEFTUyIpXG5wcmludCgiVTdfTjRfU1RBVF9WQUxJREFUSU9OX0ZJUlNUPVBBU1MiKVxuUFlGQVNUXG5zdGFnZT1wb3N0X3RyYW5zZm9ybVxuXG5vcGVuX2FmdGVyPSIkKHNoYTI1NnN1bSAiJG9wZW5fZmlsZSIgfCBhd2sgXCd7cHJpbnQgJDF9XCcpIlxuc3RhdF9hZnRlcj0iJChzaGEyNTZzdW0gIiRzdGF0X2ZpbGUiIHwgYXdrIFwne3ByaW50ICQxfVwnKSJcbnRlc3QgIiRvcGVuX2JlZm9yZSIgIT0gIiRvcGVuX2FmdGVyIlxudGVzdCAiJHN0YXRfYmVmb3JlIiAhPSAiJHN0YXRfYWZ0ZXIiXG5zdGFnZT1ldmlkZW5jZVxuXG5weXRob24zIC0gIiRBVURJVF9ESVIiIDw8XCdQWVBPU1RJTUFHRVwnXG5mcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGhcbmltcG9ydCByZSwgc3lzXG5hdWRpdCA9IFBhdGgoc3lzLmFyZ3ZbMV0pXG5cbmRlZiBlbWl0KHNyYzogc3RyLCBmbl9wYXQ6IHN0ciwgb3V0OiBzdHIpIC0+IE5vbmU6XG4gICAgcCA9IFBhdGgoc3JjKVxuICAgIGxpbmVzID0gcC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04Iikuc3BsaXRsaW5lcygpXG4gICAgaGl0cyA9IFtpIGZvciBpLCBsaW5lIGluIGVudW1lcmF0ZShsaW5lcykgaWYgcmUuc2VhcmNoKGZuX3BhdCwgbGluZSldXG4gICAgZGF0YSA9IFtmIlNPVVJDRT17c3JjfSIsIGYiRlVOQ1RJT05fTUFUQ0hfQ09VTlQ9e2xlbihoaXRzKX0iXVxuICAgIGZvciBoIGluIGhpdHNbOjNdOlxuICAgICAgICBzdGFydD1tYXgoMCxoLTEyKTsgZW5kPW1pbihsZW4obGluZXMpLGgrMTAwKVxuICAgICAgICBkYXRhLmFwcGVuZChmIkZVTkNUSU9OX0xJTkU9e2grMX0iKVxuICAgICAgICBkYXRhLmV4dGVuZChmIntpKzE6MDZkfToge2xpbmVzW2ldfSIgZm9yIGkgaW4gcmFuZ2Uoc3RhcnQsZW5kKSlcbiAgICBQYXRoKG91dCkud3JpdGVfdGV4dCgiXFxuIi5qb2luKGRhdGEpKyJcXG4iLCBlbmNvZGluZz0idXRmLTgiKVxuXG5lbWl0KCJrZXJuZWwvZnMvb3Blbi5jIiwgciJeXFxzKig/OnN0YXRpY1xccyspP2xvbmdcXHMrZG9fZmFjY2Vzc2F0XFxzKlxcKCIsXG4gICAgIGF1ZGl0IC8gIjEyLXU3bjQtcG9zdGltYWdlLW9wZW4udHh0IilcbmVtaXQoImtlcm5lbC9mcy9zdGF0LmMiLCByIl5cXHMqKD86c3RhdGljXFxzKyk/aW50XFxzK3Zmc19zdGF0eFxccypcXCgiLFxuICAgICBhdWRpdCAvICIxMi11N240LXBvc3RpbWFnZS1zdGF0LnR4dCIpXG5QWVBPU1RJTUFHRVxuXG5naXQgLUMga2VybmVsIGRpZmYgLS1jaGVjayAtLSBmcy9vcGVuLmMgZnMvc3RhdC5jXG5naXQgLUMga2VybmVsIGRpZmYgLS1iaW5hcnkgLS0gZnMvb3Blbi5jIGZzL3N0YXQuYyBcXFxuICA+ICIkQVVESVRfRElSLzEyLXU3bjQtbGF0ZW5jeS1mYXN0ZmFpbC5wYXRjaCJcbnRlc3QgLXMgIiRBVURJVF9ESVIvMTItdTduNC1sYXRlbmN5LWZhc3RmYWlsLnBhdGNoIlxuXG57XG4gIGVjaG8gIlU3X040X0xBVEVOQ1lfRkFTVEZBSUxfUEFUQ0g9UEFTUyJcbiAgZWNobyAiT1BFTl9CRUZPUkVfU0hBMjU2PSRvcGVuX2JlZm9yZSJcbiAgZWNobyAiT1BFTl9BRlRFUl9TSEEyNTY9JG9wZW5fYWZ0ZXIiXG4gIGVjaG8gIlNUQVRfQkVGT1JFX1NIQTI1Nj0kc3RhdF9iZWZvcmUiXG4gIGVjaG8gIlNUQVRfQUZURVJfU0hBMjU2PSRzdGF0X2FmdGVyIlxuICBlY2hvICJQQVRDSF9TQ09QRT1mcy9vcGVuLmMsZnMvc3RhdC5jIlxuICBlY2hvICJIWVBPVEhFU0lTPWludmFsaWRfYXJndW1lbnRfdmFsaWRhdGlvbl9iZWZvcmVfS1NVX2hvb2siXG4gIGVjaG8gIkRFVklDRV9QQVNTPU5PIlxufSB8IHRlZSAiJEFVRElUX0RJUi8xMi11N240LWxhdGVuY3ktZmFzdGZhaWwudHh0Ilxuc3RhZ2U9Y29tcGxldGVcbicsCiAgICB9CgogICAgc3RlcHMuaW5zZXJ0KGNvbXBpbGVfaWR4LCBwYXRjaF9zdGVwKQogICAgam9iWyJzdGVwcyJdID0gc3RlcHMKCgo=").decode("utf-8")
+        compile(inject, "<U7-N4-inject>", "exec")
+        code = code.replace(marker, inject + marker, 1)
+
+        lines = code.splitlines()
+        hits = [
+            i for i, line in enumerate(lines)
+            if line.strip() == "adapt_274_nomount(job)"
+        ]
+        if len(hits) != 1:
+            raise SystemExit(
+                f"U7-N4 NoMount call structural match count={len(hits)}"
+            )
+
+        i = hits[0]
+        indent = lines[i][:-len(lines[i].lstrip())]
+        lines.insert(i + 1, indent + "adapt_274_latency_fastfail(job)")
+        code = "\n".join(lines) + "\n"
+
+        if code.count("adapt_274_latency_fastfail(job)") != 1:
+            raise SystemExit("U7-N4 fast-fail adaptation call count mismatch")
+        if code.count("def adapt_274_latency_fastfail(") != 1:
+            raise SystemExit("U7-N4 fast-fail adaptation definition count mismatch")
+
+        path.write_text(code, encoding="utf-8")
+        compile(code, str(path), "exec")
+        print("U7_N4_REPLAYER_PATCH=PASS")
+        PYN4PATCH
+
+        python3 -m py_compile "$RUNNER_TEMP/n3_replay.py"
+        '''
+
+        run = run.replace(anchor, injection, 1)
+        out.write_text(run + "\n", encoding="utf-8")
+        PYOUTER
+
+        bash -n "$RUNNER_TEMP/u7n4-build.sh"
+        bash "$RUNNER_TEMP/u7n4-build.sh"
+    - name: Collect U7-N4 replay diagnostics
+      if: always()
+      shell: bash
+      env:
+        N4_OUTCOME: ${{ steps.n4.outcome }}
+      run: |
+        set -uo pipefail
+
+        debug="$GITHUB_WORKSPACE/u7-n4-debug"
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+        out="$agg/5.4.274"
+        rm -rf "$debug"
+        mkdir -p "$debug"
+
+        copy_if_file() {
+          src="$1" dst="$2"
+          if [ -f "$src" ]; then
+            mkdir -p "$(dirname "$dst")"
+            cp -a "$src" "$dst"
+          fi
+        }
+
+        copy_if_file "$out/REPLAY.log" "$debug/REPLAY.log"
+        copy_if_file "$out/BUILD-STATUS.txt" "$debug/BUILD-STATUS.txt"
+        copy_if_file "$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt" "$debug/STATIC-GREEN.txt"
+        copy_if_file "$RUNNER_TEMP/u7n4-build.sh" "$debug/controller/u7n4-build.sh"
+        copy_if_file "$RUNNER_TEMP/n3_replay.py" "$debug/controller/n3_replay.py"
+
+        replay_workspace="$RUNNER_TEMP/n3-state/workspace-5.4.274"
+        audit_dir="$replay_workspace/clean-gen1-p14r1-audit"
+        for name in \
+          12-u7n4-patch-diagnostic.txt \
+          12-u7n4-patch-python.log \
+          12-u7n4-preimage-open.txt \
+          12-u7n4-preimage-stat.txt \
+          12-u7n4-postimage-open.txt \
+          12-u7n4-postimage-stat.txt \
+          12-u7n4-latency-fastfail.txt \
+          12-u7n4-latency-fastfail.patch
+        do
+          copy_if_file "$audit_dir/$name" "$debug/$name"
+        done
+
+        for rel in fs/open.c fs/stat.c; do
+          src="$replay_workspace/kernel/$rel"
+          if [ -f "$src" ]; then
+            dst="$debug/source/${rel//\//-}"
+            mkdir -p "$(dirname "$dst")"
+            cp -a "$src" "$dst"
+          fi
+        done
+
+        python3 - "$replay_workspace/kernel/fs/open.c" "$replay_workspace/kernel/fs/stat.c" "$debug" <<'PYDIAG'
+        from pathlib import Path
+        import re, sys
+
+        open_path = Path(sys.argv[1])
+        stat_path = Path(sys.argv[2])
+        out = Path(sys.argv[3])
+        out.mkdir(parents=True, exist_ok=True)
+
+        def extract(path: Path, pattern: str, name: str):
+            dst = out / name
+            if not path.is_file():
+                dst.write_text("SOURCE_MISSING=YES\n", encoding="utf-8")
+                return
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            hits = [i for i, line in enumerate(lines) if re.search(pattern, line)]
+            data = [f"SOURCE={path}", f"FUNCTION_MATCH_COUNT={len(hits)}"]
+            for h in hits[:3]:
+                start=max(0,h-15); end=min(len(lines),h+120)
+                data.append(f"FUNCTION_LINE={h+1}")
+                data.extend(f"{i+1:06d}: {lines[i]}" for i in range(start,end))
+            dst.write_text("\n".join(data)+"\n", encoding="utf-8")
+
+        extract(open_path, r"^\s*(?:static\s+)?long\s+do_faccessat\s*\(", "ACTUAL-open-context.txt")
+        extract(stat_path, r"^\s*(?:static\s+)?int\s+vfs_statx\s*\(", "ACTUAL-stat-context.txt")
+        PYDIAG
+
+        replay_present=NO
+        [ -s "$out/REPLAY.log" ] && replay_present=YES
+        image_present=NO
+        [ -s "$out/Image" ] && image_present=YES
+        patch_evidence=NO
+        [ -s "$out/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.txt" ] && patch_evidence=YES
+        live_patch_diag=NO
+        [ -s "$audit_dir/12-u7n4-patch-diagnostic.txt" ] && live_patch_diag=YES
+
+        {
+          echo "N4_STEP_OUTCOME=$N4_OUTCOME"
+          echo "REPLAY_LOG_PRESENT=$replay_present"
+          echo "IMAGE_PRESENT=$image_present"
+          echo "AGGREGATED_PATCH_EVIDENCE_PRESENT=$patch_evidence"
+          echo "LIVE_PATCH_DIAGNOSTIC_PRESENT=$live_patch_diag"
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
+        } > "$debug/DIAGNOSTIC-SUMMARY.txt"
+
+        if [ -s "$out/REPLAY.log" ]; then
+          tail -n 500 "$out/REPLAY.log" > "$debug/REPLAY-tail-500.txt"
+          echo "::group::U7-N4 REPLAY.log tail 500"
+          cat "$debug/REPLAY-tail-500.txt"
+          echo "::endgroup::"
+        else
+          echo "REPLAY_LOG_MISSING=YES"
+        fi
+
+        for f in \
+          "$debug/12-u7n4-patch-diagnostic.txt" \
+          "$debug/12-u7n4-patch-python.log" \
+          "$debug/BUILD-STATUS.txt"
+        do
+          if [ -s "$f" ]; then
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          fi
+        done
+
+        debug_bytes="$(du -sb "$debug" 2>/dev/null | awk '{print $1}')"
+        echo "DEBUG_EVIDENCE_BYTES=${debug_bytes:-0}" >> "$debug/DIAGNOSTIC-SUMMARY.txt"
+        echo "U7_N4_DEBUG_EVIDENCE_BYTES=${debug_bytes:-0}"
+
+        (
+          cd "$debug"
+          find . -type f ! -name SHA256SUMS.txt -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 -r sha256sum > SHA256SUMS.txt
+        )
+
+        echo "U7_N4_FAILURE_EVIDENCE_COLLECTION=PASS"
+    - name: Finalize U7-N4 compile evidence
+      if: always()
+      shell: bash
+      env:
+        N4_OUTCOME: ${{ steps.n4.outcome }}
+      run: |
+        set -euo pipefail
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+        out="$agg/5.4.274"
+        result="$GITHUB_WORKSPACE/U7-N4-FINAL-RESULT.txt"
+        static="$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt"
+        pass=1
+        static_pass=NO
+        if [ -s "$static" ] && grep -Fxq 'STATIC_GREEN_PASS=YES' "$static"; then
+          static_pass=YES
+        else
+          pass=0
+        fi
+        [ "$N4_OUTCOME" = success ] || pass=0
+        [ -s "$out/Image" ] || pass=0
+        [ -s "$out/BUILD-STATUS.txt" ] || pass=0
+        latency="$out/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.txt"
+        patch="$out/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.patch"
+        if [ "$pass" = 1 ]; then
+          grep -Fxq 'COMPILE_PASS=YES' "$out/BUILD-STATUS.txt" || pass=0
+          grep -Fxq "RESUKISU_COMMIT=$RESUKISU_COMMIT" "$out/BUILD-STATUS.txt" || pass=0
+          grep -Fxq "RESUKISU_VERSION=$RESUKISU_VERSION" "$out/BUILD-STATUS.txt" || pass=0
+          grep -Fxq 'UAPI=4' "$out/BUILD-STATUS.txt" || pass=0
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$out/BUILD-STATUS.txt" || pass=0
+          grep -Fxq 'SUSFS_VERSION=v2.3.0' "$out/BUILD-STATUS.txt" || pass=0
+          [ -s "$latency" ] || pass=0
+          [ -s "$patch" ] || pass=0
+          if [ "$pass" = 1 ]; then
+            grep -Fxq 'U7_N4_LATENCY_FASTFAIL_PATCH=PASS' "$latency" || pass=0
+            grep -Fxq 'PATCH_SCOPE=fs/open.c,fs/stat.c' "$latency" || pass=0
+          fi
+        fi
+        {
+          echo "N4_STEP_OUTCOME=$N4_OUTCOME"
+          echo "KERNEL=5.4.274"
+          echo "RESUKISU_COMMIT=$RESUKISU_COMMIT"
+          echo "RESUKISU_VERSION=$RESUKISU_VERSION"
+          echo "UAPI=$RESUKISU_UAPI"
+          echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+          echo "SUSFS_VERSION=$SUSFS_VERSION"
+          echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+          echo "NOMOUNT_TAG=$NOMOUNT_TAG"
+          echo "TEST_DELTA=fs/open.c,fs/stat.c"
+          echo "STATIC_GREEN_PASS=$static_pass"
+          if [ -s "$GITHUB_WORKSPACE/u7-n4-debug/REPLAY.log" ]; then
+            echo "REPLAY_LOG_CAPTURED=YES"
+          else
+            echo "REPLAY_LOG_CAPTURED=NO"
+          fi
+          if [ -s "$GITHUB_WORKSPACE/u7-n4-debug/DIAGNOSTIC-SUMMARY.txt" ]; then
+            echo "FAILURE_EVIDENCE_CAPTURED=YES"
+          else
+            echo "FAILURE_EVIDENCE_CAPTURED=NO"
+          fi
+          if [ "$pass" = 1 ]; then
+            echo "VEUX_U7_N4_LATENCY_FASTFAIL_COMPILE=PASS"
+            echo "COMPILE_PASS=YES"
+          else
+            echo "VEUX_U7_N4_LATENCY_FASTFAIL_COMPILE=FAIL"
+            echo "COMPILE_PASS=NO"
+          fi
+          echo "PACKAGE_PASS=NO"
+          echo "STATIC_BOOT_PATH_PASS=NO"
+          echo "DEVICE_PASS=NO"
+        } > "$result"
+    - name: Build U7-N4 CLEAN AnyKernel3 test package
+      if: steps.n4.outcome == 'success'
+      shell: bash
+      run: |
+        set -euo pipefail
+        agg="$GITHUB_WORKSPACE/n3-aggregate"
+        image="$agg/5.4.274/Image"
+        result="$GITHUB_WORKSPACE/U7-N4-FINAL-RESULT.txt"
+        latency="$agg/5.4.274/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.txt"
+        test -s "$image"
+        test -s "$result"
+        test -s "$latency"
+        test -s "$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$result"
+        grep -Fxq 'VEUX_U7_N4_LATENCY_FASTFAIL_COMPILE=PASS' "$result"
+        grep -Fxq 'U7_N4_LATENCY_FASTFAIL_PATCH=PASS' "$latency"
+        dist="$GITHUB_WORKSPACE/u7-n4-dist"
+        ak3="$RUNNER_TEMP/AnyKernel3-U7N4"
+        rm -rf "$dist" "$ak3"
+        mkdir -p "$dist"
+        git clone -q "$AK3_REPO" "$ak3"
+        git -C "$ak3" checkout -q --detach "$AK3_COMMIT"
+        test "$(git -C "$ak3" rev-parse HEAD)" = "$AK3_COMMIT"
+        rm -f "$ak3/Image" "$ak3/Image.gz" "$ak3/Image.gz-dtb" "$ak3/dtb" "$ak3/dtbo.img"
+        cp "$image" "$ak3/Image"
+        cat > "$ak3/anykernel.sh" <<EOF
+        # AnyKernel3 Ramdisk Mod Script
+        # osm0sis @ xda-developers
+
+        properties() { '
+        kernel.string=VEUX U7-N4 TEST Linux 5.4.274 ReSukiSU 35170 UAPI4 + SUSFS 2.3 + NoMount 2.0.0
+        do.devicecheck=1
+        do.modules=0
+        do.systemless=1
+        do.cleanup=1
+        do.cleanuponabort=0
+        device.name1=veux
+        supported.versions=13
+        supported.patchlevels=
+        '; }
+
+        BLOCK=boot;
+        IS_SLOT_DEVICE=1;
+        SLOT_SELECT=active;
+        RAMDISK_COMPRESSION=auto;
+        PATCH_VBMETA_FLAG=0;
+
+        . tools/ak3-core.sh;
+        dump_boot;
+        write_boot;
+        EOF
+        chmod 0755 "$ak3/anykernel.sh"
+        rm -rf "$ak3/.git" "$ak3/.github"
+        rm -f "$ak3/README.md"
+        find "$ak3" -type f -name '*placeholder' -delete
+        find "$ak3" -maxdepth 1 -type f -name '*.txt' -delete
+        zip_name="VEUX-5.4.274-U7-N4-TEST-ReSukiSU-35170-SUSFS2.3-NoMount2.0.0-LatencyFastFail-AK3.zip"
+        (
+          cd "$ak3"
+          zip -r9 "$dist/$zip_name" . -x '.github/*' 'README.md' '*placeholder' '*.txt'
+        )
+        zip_path="$dist/$zip_name"
+        test -s "$zip_path"
+        unzip -t "$zip_path" >/dev/null
+        for required in anykernel.sh tools/ak3-core.sh Image META-INF/com/google/android/update-binary META-INF/com/google/android/updater-script; do
+          unzip -Z1 "$zip_path" | grep -Fxq "$required"
+        done
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        unzip -p "$zip_path" Image > "$tmp/Image"
+        cmp -s "$image" "$tmp/Image"
+        unzip -p "$zip_path" anykernel.sh > "$tmp/anykernel.sh"
+        bash -n "$tmp/anykernel.sh"
+        grep -Fqx 'device.name1=veux' "$tmp/anykernel.sh"
+        grep -Fqx 'supported.versions=13' "$tmp/anykernel.sh"
+        grep -Fqx 'BLOCK=boot;' "$tmp/anykernel.sh"
+        grep -Fqx 'IS_SLOT_DEVICE=1;' "$tmp/anykernel.sh"
+        grep -Fqx 'SLOT_SELECT=active;' "$tmp/anykernel.sh"
+        grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$tmp/anykernel.sh"
+        grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$tmp/anykernel.sh"
+        ! unzip -Z1 "$zip_path" | grep -Eq '(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$'
+        sha256sum "$zip_path" > "$zip_path.sha256"
+        cp "$image" "$dist/Image"
+        cp "$latency" "$dist/12-u7n4-latency-fastfail.txt"
+        cp "$agg/5.4.274/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.patch" "$dist/12-u7n4-latency-fastfail.patch"
+        sed -i 's/^PACKAGE_PASS=NO$/PACKAGE_PASS=YES/' "$result"
+        cp "$result" "$dist/FINAL-RESULT.txt"
+        cp "$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt" "$dist/STATIC-GREEN.txt"
+        {
+          echo "AK3_PIN=$AK3_COMMIT"
+          echo "AK3_IMAGE_ONLY=PASS"
+          echo "AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS"
+          echo "AK3_ZIP=$zip_name"
+          echo "AK3_SHA256=$(sha256sum "$zip_path" | awk '{print $1}')"
+        } > "$dist/AK3-RESULT.txt"
+        (
+          cd "$dist"
+          find . -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+        )
+    - name: Upload U7-N4 test kernel
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: VEUX-U7-N4V5-TEST-35170-LatencyFastFail-${{ github.run_id }}
+        path: |
+          u7-n4-dist/
+          U7-N4-FINAL-RESULT.txt
+          U7-N4-STATIC-GREEN.txt
+          u7-n4-debug/DIAGNOSTIC-SUMMARY.txt
+          u7-n4-debug/REPLAY.log
+          u7-n4-debug/REPLAY-tail-500.txt
+          u7-n4-debug/BUILD-STATUS.txt
+          u7-n4-debug/STATIC-GREEN.txt
+          u7-n4-debug/ACTUAL-open-context.txt
+          u7-n4-debug/ACTUAL-stat-context.txt
+          u7-n4-debug/12-u7n4-patch-diagnostic.txt
+          u7-n4-debug/12-u7n4-patch-python.log
+          u7-n4-debug/12-u7n4-preimage-open.txt
+          u7-n4-debug/12-u7n4-preimage-stat.txt
+          u7-n4-debug/12-u7n4-postimage-open.txt
+          u7-n4-debug/12-u7n4-postimage-stat.txt
+          u7-n4-debug/12-u7n4-latency-fastfail.txt
+          u7-n4-debug/12-u7n4-latency-fastfail.patch
+          u7-n4-debug/controller/u7n4-build.sh
+          u7-n4-debug/controller/n3_replay.py
+          u7-n4-debug/SHA256SUMS.txt
+          n3-aggregate/5.4.274/BUILD-STATUS.txt
+          n3-aggregate/5.4.274/REPLAY.log
+          n3-aggregate/5.4.274/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.txt
+          n3-aggregate/5.4.274/evidence/clean-gen1-p14r1-audit/12-u7n4-latency-fastfail.patch
+        if-no-files-found: warn
+        retention-days: 30
+        compression-level: 6
+    - name: Final real U7-N4 GREEN gate
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        result="$GITHUB_WORKSPACE/U7-N4-FINAL-RESULT.txt"
+        dist="$GITHUB_WORKSPACE/u7-n4-dist"
+        static="$GITHUB_WORKSPACE/U7-N4-STATIC-GREEN.txt"
+        test -s "$result"
+        test -s "$static"
+        test -s "$GITHUB_WORKSPACE/u7-n4-debug/DIAGNOSTIC-SUMMARY.txt"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$static"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$result"
+        grep -Fxq 'VEUX_U7_N4_LATENCY_FASTFAIL_COMPILE=PASS' "$result"
+        grep -Fxq 'COMPILE_PASS=YES' "$result"
+        grep -Fxq 'PACKAGE_PASS=YES' "$result"
+        grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$result"
+        grep -Fxq 'DEVICE_PASS=NO' "$result"
+        test -d "$dist"
+        test -s "$dist/FINAL-RESULT.txt"
+        test -s "$dist/AK3-RESULT.txt"
+        test -s "$dist/SHA256SUMS.txt"
+        test -s "$dist/STATIC-GREEN.txt"
+        grep -Fxq 'STATIC_GREEN_PASS=YES' "$dist/STATIC-GREEN.txt"
+        grep -Fxq 'AK3_IMAGE_ONLY=PASS' "$dist/AK3-RESULT.txt"
+        grep -Fxq 'AK3_ACTIVE_SLOT_UPPERCASE_CONTRACT=PASS' "$dist/AK3-RESULT.txt"
+        grep -Fxq 'U7_N4_LATENCY_FASTFAIL_PATCH=PASS' "$dist/12-u7n4-latency-fastfail.txt"
+        (
+          cd "$dist"
+          sha256sum -c SHA256SUMS.txt
+        )
+        echo 'U7_N4_REAL_GREEN_GATE=PASS'
