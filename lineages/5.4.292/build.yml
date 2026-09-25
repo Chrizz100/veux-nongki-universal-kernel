@@ -36,6 +36,6 @@ outputs:
 
 validation:
   compile: true
-  package: false
+  package: true
   static_boot: false
   device: false
