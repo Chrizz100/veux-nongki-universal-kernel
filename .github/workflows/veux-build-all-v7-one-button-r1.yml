@@ -1,0 +1,1123 @@
+name: VEUX Build All V7 R1 - One Button Compile Package Static
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: veux-build-all-v7-r1-one-button-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  V4_WORKFLOW: veux-build-all-v4-fresh-current-pins-compile-r2.yml
+  V4_PATH: .github/workflows/veux-build-all-v4-fresh-current-pins-compile-r2.yml
+  V4_BLOB: 76011ba33803b93eacd06d0f721b3a87970302ad
+
+  V5_AUTHORITY: .github/workflows/veux-build-all-v5-current-pins-package-r1.yml
+  V5_AUTHORITY_BLOB: d0651f4e0b11becde8b0aff4c839ae54a90839a8
+  V6_AUTHORITY: .github/workflows/veux-build-all-v6-current-pins-static-boot-r1.yml
+  V6_AUTHORITY_BLOB: 4f3824414df2f31a70ebda56ebc6fc7639d9aa7a
+  FLEET_CONTRACT: common/contracts/CURRENT_FLEET_V6.yml
+  FLEET_CONTRACT_BLOB: 9eeecfa5794f9bff02a580db4f63fb43c3c4e463
+
+  RS_35158: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RS_35170: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_TREE: c6af9eb7018bce852819ab1585de426a426e6806
+  AK3_ARCHIVE_EPOCH: '1733410079'
+
+  BASE_BOOT_ASSET_ID: '574681158'
+  BASE_BOOT_ASSET_NAME: VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img
+  BASE_BOOT_URL: https://github.com/Chrizz100/veux-nongki-universal-kernel/releases/download/v1.0.0-beta1/VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img
+  BASE_BOOT_SHA256: b79d121003e9abb12962eaf44ff56aa4c66588d2245ed09d8325e3c39fe67e65
+  BASE_KERNEL_SHA256: 67807748edd57e9fa714d444a39fccf54d88b95c92d54de029b4c12bc868345a
+  BASE_KERNEL_BYTES: '29911552'
+  RAW_STOCK_RAMDISK_SHA256: 0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a
+  DECODED_STOCK_RAMDISK_SHA256: d3c0e26ce76ab272a9c7bfd53ad3b0f57754e8eb9a30085abfbacf180c2638e5
+  BOOT_PARTITION_SIZE: '134217728'
+  EXPECTED_HEADER_VERSION: '3'
+  BOOT_PAGE_SIZE: '4096'
+
+  MAGISK_APK_URL: https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
+  MAGISK_APK_SHA256: e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5
+  AVB_REPO: https://android.googlesource.com/platform/external/avb
+  AVB_COMMIT: de53827b226bccef7407e4c253b0152e8d9f8e04
+
+jobs:
+  one-button:
+    name: Fresh six compile -> package -> static boot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 420
+
+    steps:
+      - name: Checkout exact V7 controller state
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install controller dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF_NAME" = main
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex git jq \
+            libelf-dev libncurses-dev libssl-dev perl python3 python3-yaml rsync unzip zip \
+            xz-utils zstd
+
+      - name: Live repository and fleet preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          check_blob() {
+            local path="$1" expected="$2"
+            test -f "$path"
+            actual="$(git hash-object "$path")"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::repo authority drift path=$path expected=$expected actual=$actual"
+              exit 20
+            fi
+          }
+
+          check_blob "$V4_PATH" "$V4_BLOB"
+          check_blob "$V5_AUTHORITY" "$V5_AUTHORITY_BLOB"
+          check_blob "$V6_AUTHORITY" "$V6_AUTHORITY_BLOB"
+          check_blob "$FLEET_CONTRACT" "$FLEET_CONTRACT_BLOB"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          expected = {
+              "5.4.274": ("35170", True, "2.0.0", True),
+              "5.4.292": ("35170", True, "2.0.0", False),
+              "5.4.293": ("35158", False, "disabled", False),
+              "5.4.300": ("35158", False, "disabled", False),
+              "5.4.301": ("35158", False, "disabled", False),
+              "5.4.302": ("35158", False, "disabled", False),
+          }
+
+          for kernel, (rs_ver, nm_enabled, nm_ver, device) in expected.items():
+              p = yaml.safe_load(
+                  (Path("lineages") / kernel / "build.yml").read_text(encoding="utf-8")
+              )
+              assert p["kernel"] == kernel
+              assert p["enabled"] is True
+              assert p["device"] == "veux"
+              assert p["platform"] == "sm6375"
+              assert p["target"] == "android13-stock-vendor"
+              assert p["outputs"]["ak3"] is True
+              assert p["outputs"]["boot_img"] is True
+
+              rs = p["features"]["resukisu"]
+              sf = p["features"]["susfs"]
+              nm = p["features"]["nomount"]
+
+              assert rs["enabled"] is True
+              assert str(rs["version"]) == rs_ver
+              assert rs["uapi"] == 4
+              assert sf["enabled"] is True
+              assert str(sf["version"]) == "2.3.0"
+              assert sf["commit"] == "04a9d713106191ba98be680bd7ad9547ab1de964"
+              assert nm["enabled"] is nm_enabled
+              assert str(nm["version"]) == nm_ver
+
+              if rs_ver == "35170":
+                  assert rs["commit"] == "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+                  assert nm["commit"] == "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+              else:
+                  assert rs["commit"] == "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+                  assert nm["commit"] == ""
+
+              assert p["validation"]["compile"] is True
+              assert p["validation"]["package"] is True
+              assert p["validation"]["static_boot"] is True
+              assert p["validation"]["device"] is device
+
+          fleet = yaml.safe_load(
+              Path("common/contracts/CURRENT_FLEET_V6.yml").read_text(encoding="utf-8")
+          )
+          assert fleet["contract"] == "CURRENT_FLEET_V6"
+          assert fleet["status"] == "static-validated"
+          assert fleet["policy"]["lineage_count"] == 6
+          assert len(fleet["lineages"]) == 6
+          assert all(v["validation"]["compile"] for v in fleet["lineages"].values())
+          assert all(v["validation"]["package"] for v in fleet["lineages"].values())
+          assert all(v["validation"]["static_boot"] for v in fleet["lineages"].values())
+          print("V7_LIVE_FLEET_PREFLIGHT=PASS")
+          PY
+
+      - name: Dispatch fresh V4 R2 compile fleet
+        id: compile_dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY$1"
+          }
+
+          branch_sha="$(api_get "/branches/$GITHUB_REF_NAME" | jq -r '.commit.sha')"
+          test "$branch_sha" = "$GITHUB_SHA"
+
+          before="$RUNNER_TEMP/v7-v4-before.txt"
+          api_get "/actions/workflows/$V4_WORKFLOW/runs?event=workflow_dispatch&branch=$GITHUB_REF_NAME&per_page=50" \
+            | jq -r '.workflow_runs[].id' > "$before"
+          since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          payload="$(jq -nc --arg ref "$GITHUB_REF_NAME" '{ref:$ref}')"
+          code="$(
+            curl -sS -o "$RUNNER_TEMP/v7-dispatch-body.txt" -w '%{http_code}' \
+              -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/$V4_WORKFLOW/dispatches" \
+              -d "$payload"
+          )"
+          if [ "$code" != 204 ]; then
+            echo "::error::V4 dispatch failed http=$code"
+            cat "$RUNNER_TEMP/v7-dispatch-body.txt" || true
+            exit 30
+          fi
+
+          child_id=""
+          for _ in $(seq 1 90); do
+            data="$(
+              api_get "/actions/workflows/$V4_WORKFLOW/runs?event=workflow_dispatch&branch=$GITHUB_REF_NAME&per_page=50"
+            )"
+            while IFS= read -r id; do
+              [ -n "$id" ] || continue
+              if ! grep -Fxq "$id" "$before"; then
+                child_id="$id"
+                break
+              fi
+            done < <(
+              printf '%s' "$data" \
+                | jq -r --arg sha "$GITHUB_SHA" --arg since "$since" \
+                  '.workflow_runs[]
+                   | select(.head_sha == $sha)
+                   | select(.created_at >= $since)
+                   | .id'
+            )
+            [ -n "$child_id" ] && break
+            sleep 2
+          done
+
+          test -n "$child_id"
+          echo "child_id=$child_id" >> "$GITHUB_OUTPUT"
+          echo "V7_FRESH_V4_RUN_ID=$child_id"
+
+      - name: Wait for exact fresh V4 R2 compile result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHILD_ID: ${{ steps.compile_dispatch.outputs.child_id }}
+        run: |
+          set -euo pipefail
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY$1"
+          }
+
+          for _ in $(seq 1 390); do
+            data="$(api_get "/actions/runs/$CHILD_ID")"
+            status="$(printf '%s' "$data" | jq -r '.status')"
+            conclusion="$(printf '%s' "$data" | jq -r '.conclusion // ""')"
+            head="$(printf '%s' "$data" | jq -r '.head_sha')"
+            path="$(printf '%s' "$data" | jq -r '.path')"
+            event="$(printf '%s' "$data" | jq -r '.event')"
+
+            test "$head" = "$GITHUB_SHA"
+            test "$path" = "$V4_PATH"
+            test "$event" = workflow_dispatch
+
+            echo "V4 child=$CHILD_ID status=$status conclusion=${conclusion:-pending}"
+
+            if [ "$status" = completed ]; then
+              test "$conclusion" = success
+              echo 'V7_FRESH_COMPILE_CHILD=SUCCESS'
+              exit 0
+            fi
+            sleep 60
+          done
+
+          echo "::error::V4 child timed out"
+          exit 31
+
+      - name: Download and authenticate exact new V4 aggregate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHILD_ID: ${{ steps.compile_dispatch.outputs.child_id }}
+        run: |
+          set -euo pipefail
+
+          SOURCE="$GITHUB_WORKSPACE/v7-source"
+          ZIP="$RUNNER_TEMP/v7-v4-source.zip"
+          META="$RUNNER_TEMP/v7-v4-artifacts.json"
+          rm -rf "$SOURCE"
+          rm -f "$ZIP" "$META"
+          mkdir -p "$SOURCE"
+
+          curl -fsS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_ID/artifacts?per_page=100" \
+            -o "$META"
+
+          prefix="VEUX-BUILD-ALL-V4-R2-FRESH-CURRENT-PINS-"
+          count="$(
+            jq --arg p "$prefix" '[.artifacts[] | select(.name | startswith($p))] | length' "$META"
+          )"
+          test "$count" = 1
+
+          artifact_id="$(
+            jq -r --arg p "$prefix" \
+              '.artifacts[] | select(.name | startswith($p)) | .id' "$META"
+          )"
+          artifact_name="$(
+            jq -r --arg p "$prefix" \
+              '.artifacts[] | select(.name | startswith($p)) | .name' "$META"
+          )"
+          artifact_digest="$(
+            jq -r --arg p "$prefix" \
+              '.artifacts[] | select(.name | startswith($p)) | .digest' "$META"
+          )"
+          test -n "$artifact_id"
+          test "$artifact_digest" != null
+          case "$artifact_digest" in sha256:*) ;; *) exit 32 ;; esac
+          expected_outer="${artifact_digest#sha256:}"
+
+          curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            -o "$ZIP"
+
+          test -s "$ZIP"
+          test "$(sha256sum "$ZIP" | awk '{print $1}')" = "$expected_outer"
+          unzip -t "$ZIP" >/dev/null
+          unzip -q "$ZIP" -d "$SOURCE"
+
+          test -s "$SOURCE/SHA256SUMS.txt"
+          (
+            cd "$SOURCE"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          grep -Fxq 'VEUX_BUILD_ALL_V4_R2_FRESH_CURRENT_PINS=PASS' "$SOURCE/FINAL-RESULT.txt"
+          grep -Fxq 'LINEAGE_COUNT=6' "$SOURCE/FINAL-RESULT.txt"
+          grep -Fxq 'ALL_SIX_COMPILE_PASS=YES' "$SOURCE/FINAL-RESULT.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            test -s "$SOURCE/$kernel/Image"
+            grep -Fq "$kernel=COMPILE_PASS " "$SOURCE/IMAGE-MATRIX.txt"
+          done
+
+          {
+            echo "V4_RUN_ID=$CHILD_ID"
+            echo "V4_ARTIFACT_ID=$artifact_id"
+            echo "V4_ARTIFACT_NAME=$artifact_name"
+            echo "V4_ARTIFACT_DIGEST=$artifact_digest"
+            echo "V4_HEAD_SHA=$GITHUB_SHA"
+          } > "$SOURCE/V7-COMPILE-PROVENANCE.txt"
+
+          echo "V7_SOURCE_DIR=$SOURCE" >> "$GITHUB_ENV"
+          echo "V7_V4_RUN_ID=$CHILD_ID" >> "$GITHUB_ENV"
+          echo "V7_V4_ARTIFACT_ID=$artifact_id" >> "$GITHUB_ENV"
+          echo "V7_V4_ARTIFACT_DIGEST=$artifact_digest" >> "$GITHUB_ENV"
+          echo 'V7_DYNAMIC_V4_ARTIFACT_AUTH=PASS'
+
+      - name: Prepare V7 aggregate and exact image matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          AGG="$GITHUB_WORKSPACE/v7-aggregate"
+          WORK="$GITHUB_WORKSPACE/.v7-work"
+          rm -rf "$AGG" "$WORK"
+          mkdir -p "$AGG/images" "$AGG/packages" "$AGG/boots" "$AGG/audit" "$WORK"
+
+          : > "$AGG/audit/IMAGE-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            src="$V7_SOURCE_DIR/$kernel/Image"
+            dst="$AGG/images/$kernel/Image"
+            mkdir -p "$(dirname "$dst")"
+            cp "$src" "$dst"
+            cmp -s "$src" "$dst"
+
+            sha="$(sha256sum "$dst" | awk '{print $1}')"
+            bytes="$(stat -c '%s' "$dst")"
+            release="$(
+              strings "$dst" \
+                | sed -n 's/^Linux version \([^ ]*\).*/\1/p' \
+                | head -n1
+            )"
+            test -n "$release"
+
+            printf '%s IMAGE_BYTES=%s IMAGE_SHA256=%s KERNELRELEASE=%s\n' \
+              "$kernel" "$bytes" "$sha" "$release" \
+              >> "$AGG/audit/IMAGE-MATRIX.txt"
+          done
+
+          cp "$V7_SOURCE_DIR/V7-COMPILE-PROVENANCE.txt" "$AGG/audit/"
+          echo "V7_AGGREGATE=$AGG" >> "$GITHUB_ENV"
+          echo "V7_WORK=$WORK" >> "$GITHUB_ENV"
+          echo 'V7_ALL_SIX_DYNAMIC_IMAGE_BINDING=PASS'
+
+      - name: Authenticate frozen AnyKernel3
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          template="$V7_WORK/AnyKernel3-template"
+          git clone -q "$AK3_REPO" "$template"
+          git -C "$template" checkout -q --detach "$AK3_COMMIT"
+          git -C "$template" reset --hard -q "$AK3_COMMIT"
+          git -C "$template" clean -fdx -q
+
+          test "$(git -C "$template" rev-parse HEAD)" = "$AK3_COMMIT"
+          test "$(git -C "$template" rev-parse 'HEAD^{tree}')" = "$AK3_TREE"
+          test -f "$template/tools/ak3-core.sh"
+          test -e "$template/META-INF/com/google/android/update-binary"
+          test -f "$template/META-INF/com/google/android/updater-script"
+
+          echo 'V7_AK3_PIN_AUTH=PASS'
+
+      - name: Package exact six freshly compiled Images
+        id: package
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          template="$V7_WORK/AnyKernel3-template"
+          : > "$V7_AGGREGATE/audit/PACKAGE-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            profile="lineages/$kernel/build.yml"
+            image="$V7_AGGREGATE/images/$kernel/Image"
+            package_dir="$V7_AGGREGATE/packages/$kernel"
+            work="$V7_WORK/ak3-$kernel"
+            status="$V7_AGGREGATE/audit/${kernel}-PACKAGE-STATUS.txt"
+            mkdir -p "$package_dir"
+            rm -rf "$work"
+            mkdir -p "$work"
+
+            eval "$(
+              python3 - "$profile" <<'PY'
+          from pathlib import Path
+          import shlex, sys, yaml
+          p = yaml.safe_load(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          rs = p['features']['resukisu']
+          sf = p['features']['susfs']
+          nm = p['features']['nomount']
+          values = {
+              'RS_VERSION': str(rs['version']),
+              'RS_COMMIT': str(rs['commit']),
+              'SUSFS_VERSION': str(sf['version']),
+              'SUSFS_COMMIT_LOCAL': str(sf['commit']),
+              'NOMOUNT_ENABLED': 'YES' if nm['enabled'] else 'NO',
+              'NOMOUNT_VERSION': str(nm['version']),
+              'NOMOUNT_COMMIT_LOCAL': str(nm['commit']),
+          }
+          for k, v in values.items():
+              print(f'{k}={shlex.quote(v)}')
+          PY
+            )"
+
+            image_sha="$(sha256sum "$image" | awk '{print $1}')"
+            image_bytes="$(stat -c '%s' "$image")"
+
+            if [ "$NOMOUNT_ENABLED" = YES ]; then
+              zip_name="VEUX-${kernel}-ReSukiSU${RS_VERSION}-SUSFS${SUSFS_VERSION}-NoMount${NOMOUNT_VERSION}-AK3.zip"
+              kernel_string="VEUX Linux $kernel ReSukiSU${RS_VERSION} UAPI4 SUSFS${SUSFS_VERSION} NoMount${NOMOUNT_VERSION}"
+            else
+              zip_name="VEUX-${kernel}-ReSukiSU${RS_VERSION}-SUSFS${SUSFS_VERSION}-AK3.zip"
+              kernel_string="VEUX Linux $kernel ReSukiSU${RS_VERSION} UAPI4 SUSFS${SUSFS_VERSION}"
+            fi
+            zip_path="$package_dir/$zip_name"
+
+            cp -a "$template/tools" "$work/tools"
+            cp -a "$template/META-INF" "$work/META-INF"
+            cp "$image" "$work/Image"
+
+            cat > "$work/anykernel.sh" <<EOF
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=$kernel_string
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+
+            chmod 0755 "$work/anykernel.sh"
+            chmod 0644 "$work/Image"
+            find "$work" -type f -name '*placeholder' -delete
+
+            if find "$work" \
+                \( -name '.git' -o -name '.github' -o -name '*.rej' -o -name '*.orig' \
+                   -o -name '*.patch' -o -name '*.diff' -o -name '*.yml' -o -name '*.yaml' \
+                   -o -name '*.log' \) -print -quit | grep -q .; then
+              echo "::error::forbidden AK3 stage payload kernel=$kernel"
+              exit 50
+            fi
+
+            find "$work" -exec touch -h -d "@$AK3_ARCHIVE_EPOCH" {} +
+
+            filelist="$V7_WORK/${kernel}-ak3-filelist.txt"
+            zip_a="$V7_WORK/${kernel}-A.zip"
+            zip_b="$V7_WORK/${kernel}-B.zip"
+            (
+              cd "$work"
+              LC_ALL=C find . -mindepth 1 -print | LC_ALL=C sort > "$filelist"
+              zip -X -9 -q "$zip_a" -@ < "$filelist"
+              zip -X -9 -q "$zip_b" -@ < "$filelist"
+            )
+
+            test -s "$zip_a"
+            test -s "$zip_b"
+            cmp -s "$zip_a" "$zip_b"
+            cp "$zip_a" "$zip_path"
+            unzip -tq "$zip_path"
+
+            entries="$V7_WORK/${kernel}-entries.txt"
+            unzip -Z1 "$zip_path" > "$entries"
+
+            for required in \
+              Image \
+              anykernel.sh \
+              tools/ak3-core.sh \
+              META-INF/com/google/android/update-binary \
+              META-INF/com/google/android/updater-script
+            do
+              test "$(grep -Fxc "$required" "$entries")" -eq 1
+            done
+
+            ! grep -Eq '(^/|(^|/)\.\.(/|$))' "$entries"
+            ! sort "$entries" | uniq -d | grep -q .
+
+            while IFS= read -r entry; do
+              case "$entry" in
+                Image|anykernel.sh|tools/|tools/*|META-INF/|META-INF/*) ;;
+                *)
+                  echo "::error::unexpected AK3 entry kernel=$kernel entry=$entry"
+                  exit 51
+                  ;;
+              esac
+            done < "$entries"
+
+            extract="$V7_WORK/extract-$kernel"
+            rm -rf "$extract"
+            mkdir -p "$extract"
+            unzip -q "$zip_path" -d "$extract"
+            cmp -s "$image" "$extract/Image"
+            bash -n "$extract/anykernel.sh"
+
+            for line in \
+              'device.name1=veux' \
+              'supported.versions=13' \
+              'BLOCK=boot;' \
+              'IS_SLOT_DEVICE=1;' \
+              'SLOT_SELECT=active;' \
+              'RAMDISK_COMPRESSION=auto;' \
+              'PATCH_VBMETA_FLAG=0;' \
+              'dump_boot;' \
+              'write_boot;'
+            do
+              grep -Fqx "$line" "$extract/anykernel.sh"
+            done
+
+            ak3_sha="$(sha256sum "$zip_path" | awk '{print $1}')"
+            ak3_bytes="$(stat -c '%s' "$zip_path")"
+
+            {
+              echo "KERNEL=$kernel"
+              echo "IMAGE_SHA256=$image_sha"
+              echo "IMAGE_BYTES=$image_bytes"
+              echo "RESUKISU_VERSION=$RS_VERSION"
+              echo "RESUKISU_COMMIT=$RS_COMMIT"
+              echo 'UAPI=4'
+              echo "SUSFS_VERSION=$SUSFS_VERSION"
+              echo "SUSFS_COMMIT=$SUSFS_COMMIT_LOCAL"
+              echo "NOMOUNT_ENABLED=$NOMOUNT_ENABLED"
+              echo "NOMOUNT_VERSION=$NOMOUNT_VERSION"
+              echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT_LOCAL"
+              echo "AK3_FILE=$zip_name"
+              echo "AK3_SHA256=$ak3_sha"
+              echo "AK3_BYTES=$ak3_bytes"
+              echo 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS'
+              echo 'IMAGE_PARITY=PASS'
+              echo 'AK3_REQUIRED_FILES=PASS'
+              echo 'AK3_FLASH_CONTRACT=PASS'
+              echo 'AK3_CLEAN_PUBLIC_PAYLOAD=PASS'
+              echo 'COMPILE_PASS=YES_FROM_V7_FRESH_V4'
+              echo 'PACKAGE_PASS=YES'
+            } > "$status"
+
+            printf '%s=PACKAGE_PASS AK3_SHA256=%s\n' "$kernel" "$ak3_sha" \
+              >> "$V7_AGGREGATE/audit/PACKAGE-MATRIX.txt"
+
+            rm -rf "$extract"
+          done
+
+          test "$(grep -c '=PACKAGE_PASS AK3_SHA256=' "$V7_AGGREGATE/audit/PACKAGE-MATRIX.txt")" -eq 6
+          test "$(find "$V7_AGGREGATE/packages" -type f -name '*.zip' | wc -l)" -eq 6
+          echo 'V7_ALL_SIX_PACKAGE=PASS'
+
+      - name: Require package stage success
+        shell: bash
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+          test "$PACKAGE_OUTCOME" = success
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$V7_AGGREGATE/audit/${kernel}-PACKAGE-STATUS.txt"
+            test -s "$status"
+            grep -Fxq 'PACKAGE_PASS=YES' "$status"
+            grep -Fxq 'IMAGE_PARITY=PASS' "$status"
+          done
+
+      - name: Initialize static-boot verification helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > "$V7_WORK/expected-size.py" <<'PY'
+          import sys
+          kernel, ramdisk, page = map(int, sys.argv[1:])
+          align = lambda n: ((n + page - 1) // page) * page
+          print(page + align(kernel) + align(ramdisk))
+          PY
+
+          cat > "$V7_WORK/base-header.py" <<'PY'
+          import struct, sys
+          path = sys.argv[1]
+          expected_ver = int(sys.argv[2])
+          expected_kernel = int(sys.argv[3])
+          page = int(sys.argv[4])
+          b = open(path, 'rb').read(page)
+          if len(b) != page or b[:8] != b'ANDROID!':
+              raise SystemExit('invalid Android boot header page')
+          kernel_size = struct.unpack_from('<I', b, 8)[0]
+          ramdisk_size = struct.unpack_from('<I', b, 12)[0]
+          header_size = struct.unpack_from('<I', b, 20)[0]
+          header_version = struct.unpack_from('<I', b, 40)[0]
+          if header_version != expected_ver:
+              raise SystemExit('header version mismatch')
+          if kernel_size != expected_kernel:
+              raise SystemExit('base kernel size mismatch')
+          if ramdisk_size <= 0 or header_size <= 0:
+              raise SystemExit('invalid boot component sizes')
+          print(f'KERNEL_SIZE={kernel_size}')
+          print(f'RAMDISK_SIZE={ramdisk_size}')
+          print(f'HEADER_SIZE={header_size}')
+          print(f'HEADER_VERSION={header_version}')
+          PY
+
+          cat > "$V7_WORK/avb-props.py" <<'PY'
+          import re, sys
+          src, dst = sys.argv[1:3]
+          props = []
+          for line in open(src, encoding='utf-8'):
+              m = re.match(r"\s*Prop:\s+(.+?)\s+->\s+'(.*)'\s*$", line.rstrip('\n'))
+              if m:
+                  props.append((m.group(1), m.group(2)))
+          if not props:
+              raise SystemExit('AVB properties missing')
+          with open(dst, 'w', encoding='utf-8') as f:
+              for key, value in sorted(props):
+                  f.write(f'{key}\t{value}\n')
+          PY
+
+          cat > "$V7_WORK/header-check.py" <<'PY'
+          import struct, sys
+          base_path, final_path = sys.argv[1], sys.argv[2]
+          expected_ver = int(sys.argv[3])
+          expected_kernel = int(sys.argv[4])
+          expected_ramdisk = int(sys.argv[5])
+          page = int(sys.argv[6])
+          base_kernel = int(sys.argv[7])
+
+          base = bytearray(open(base_path, 'rb').read(page))
+          final = bytearray(open(final_path, 'rb').read(page))
+          if len(base) != page or len(final) != page:
+              raise SystemExit('short header page')
+          if base[:8] != b'ANDROID!' or final[:8] != b'ANDROID!':
+              raise SystemExit('boot magic mismatch')
+
+          ks = struct.unpack_from('<I', final, 8)[0]
+          rs = struct.unpack_from('<I', final, 12)[0]
+          hs = struct.unpack_from('<I', final, 20)[0]
+          hv = struct.unpack_from('<I', final, 40)[0]
+          if ks != expected_kernel:
+              raise SystemExit(f'kernel size mismatch {ks} != {expected_kernel}')
+          if rs != expected_ramdisk:
+              raise SystemExit(f'ramdisk size mismatch {rs} != {expected_ramdisk}')
+          if hv != expected_ver or hs <= 0:
+              raise SystemExit('header-v3 contract mismatch')
+
+          bm = bytearray(base)
+          fm = bytearray(final)
+          bm[8:12] = b'\0' * 4
+          fm[8:12] = b'\0' * 4
+          if bm != fm:
+              diffs = [i for i, (a, b) in enumerate(zip(bm, fm)) if a != b]
+              raise SystemExit(f'unexpected header changes {diffs[:32]}')
+
+          if expected_kernel == base_kernel and base != final:
+              raise SystemExit('same-size target changed header page')
+
+          print('BOOT_MAGIC=PASS')
+          print(f'HEADER_VERSION={hv}')
+          print(f'HEADER_SIZE={hs}')
+          print(f'KERNEL_SIZE={ks}')
+          print(f'RAMDISK_SIZE={rs}')
+          print('HEADER_BYTES_EXCEPT_KERNEL_SIZE=IDENTICAL')
+          PY
+
+          python3 -m py_compile \
+            "$V7_WORK/expected-size.py" \
+            "$V7_WORK/base-header.py" \
+            "$V7_WORK/avb-props.py" \
+            "$V7_WORK/header-check.py"
+
+      - name: Install pinned MagiskBoot and AOSP avbtool
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$V7_WORK/Magisk-v30.7.apk"
+          curl --fail --location --retry 3 "$MAGISK_APK_URL" -o "$apk"
+          test "$(sha256sum "$apk" | awk '{print $1}')" = "$MAGISK_APK_SHA256"
+
+          mapfile -t candidates < <(
+            zipinfo -1 "$apk" | grep -E '^lib/x86_64/(lib)?magiskboot(\.so)?$'
+          )
+          test "${#candidates[@]}" -eq 1
+          unzip -p "$apk" "${candidates[0]}" > "$V7_WORK/magiskboot"
+          chmod 0755 "$V7_WORK/magiskboot"
+          file "$V7_WORK/magiskboot" > "$V7_AGGREGATE/audit/MAGISKBOOT-FILE.txt"
+          grep -Eq 'ELF 64-bit.*x86-64|ELF 64-bit.*x86_64' \
+            "$V7_AGGREGATE/audit/MAGISKBOOT-FILE.txt"
+
+          avb="$V7_WORK/avb"
+          git init -q "$avb"
+          git -C "$avb" remote add origin "$AVB_REPO"
+          git -C "$avb" fetch -q --depth=1 origin "$AVB_COMMIT"
+          git -C "$avb" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$avb" rev-parse HEAD)" = "$AVB_COMMIT"
+          test -s "$avb/avbtool.py"
+          python3 "$avb/avbtool.py" version > "$V7_AGGREGATE/audit/AVBTOOL-VERSION.txt"
+
+          echo 'V7_STATIC_TOOLS_AUTH=PASS'
+
+      - name: Authenticate proven Android 13 boot-v3 reference
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          base="$V7_WORK/base.img"
+          mb="$V7_WORK/magiskboot"
+          avb="$V7_WORK/avb/avbtool.py"
+          asset_json="$V7_WORK/base-asset.json"
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$BASE_BOOT_ASSET_ID" \
+            -o "$asset_json"
+
+          jq -e \
+            --arg name "$BASE_BOOT_ASSET_NAME" \
+            --arg digest "sha256:$BASE_BOOT_SHA256" \
+            --argjson id "$BASE_BOOT_ASSET_ID" \
+            --argjson size "$BOOT_PARTITION_SIZE" \
+            '.id == $id
+             and .name == $name
+             and .size == $size
+             and .state == "uploaded"
+             and .digest == $digest' \
+            "$asset_json" >/dev/null
+
+          curl --fail --location --retry 3 "$BASE_BOOT_URL" -o "$base"
+          test "$(stat -c '%s' "$base")" = "$BOOT_PARTITION_SIZE"
+          test "$(sha256sum "$base" | awk '{print $1}')" = "$BASE_BOOT_SHA256"
+
+          python3 "$V7_WORK/base-header.py" \
+            "$base" "$EXPECTED_HEADER_VERSION" "$BASE_KERNEL_BYTES" "$BOOT_PAGE_SIZE" \
+            > "$V7_AGGREGATE/audit/BASE-HEADER.txt"
+
+          ramdisk_bytes="$(
+            sed -n 's/^RAMDISK_SIZE=//p' "$V7_AGGREGATE/audit/BASE-HEADER.txt"
+          )"
+          test -n "$ramdisk_bytes"
+
+          python3 "$avb" info_image --image "$base" \
+            > "$V7_AGGREGATE/audit/BASE-AVB.txt"
+          grep -Eq '^Algorithm:[[:space:]]+NONE$' "$V7_AGGREGATE/audit/BASE-AVB.txt"
+          grep -Eq '^[[:space:]]*Partition Name:[[:space:]]+boot$' \
+            "$V7_AGGREGATE/audit/BASE-AVB.txt"
+          grep -Eq '^[[:space:]]*Hash Algorithm:[[:space:]]+sha256$' \
+            "$V7_AGGREGATE/audit/BASE-AVB.txt"
+
+          salt="$(
+            sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' \
+              "$V7_AGGREGATE/audit/BASE-AVB.txt" | head -1 | tr 'A-F' 'a-f'
+          )"
+          test -n "$salt"
+          python3 "$V7_WORK/avb-props.py" \
+            "$V7_AGGREGATE/audit/BASE-AVB.txt" \
+            "$V7_AGGREGATE/audit/BASE-AVB-PROPS.txt"
+
+          mkdir -p "$V7_WORK/base-raw" "$V7_WORK/base-decoded"
+          (
+            cd "$V7_WORK/base-raw"
+            "$mb" unpack -n -h "$base" \
+              > "$V7_AGGREGATE/audit/BASE-RAW-UNPACK.txt" 2>&1
+          )
+          (
+            cd "$V7_WORK/base-decoded"
+            "$mb" unpack -h "$base" \
+              > "$V7_AGGREGATE/audit/BASE-DECODED-UNPACK.txt" 2>&1
+          )
+
+          test "$(stat -c '%s' "$V7_WORK/base-raw/kernel")" = "$BASE_KERNEL_BYTES"
+          test "$(sha256sum "$V7_WORK/base-raw/kernel" | awk '{print $1}')" = "$BASE_KERNEL_SHA256"
+          test "$(sha256sum "$V7_WORK/base-raw/ramdisk.cpio" | awk '{print $1}')" = "$RAW_STOCK_RAMDISK_SHA256"
+          test "$(sha256sum "$V7_WORK/base-decoded/ramdisk.cpio" | awk '{print $1}')" = "$DECODED_STOCK_RAMDISK_SHA256"
+
+          echo "V7_AVB_SALT=$salt" >> "$GITHUB_ENV"
+          echo "V7_BASE_RAMDISK_BYTES=$ramdisk_bytes" >> "$GITHUB_ENV"
+          echo 'V7_BOOT_REFERENCE_AUTH=PASS'
+
+      - name: Construct and fail-closed verify six static boots
+        id: static
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mb="$V7_WORK/magiskboot"
+          avb="$V7_WORK/avb/avbtool.py"
+          base="$V7_WORK/base.img"
+          base_props="$V7_AGGREGATE/audit/BASE-AVB-PROPS.txt"
+          : > "$V7_AGGREGATE/audit/STATIC-MATRIX.txt"
+
+          prop_args=()
+          while IFS=$'\t' read -r key value; do
+            test -n "$key"
+            prop_args+=(--prop "$key:$value")
+          done < "$base_props"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$V7_AGGREGATE/audit/${kernel}-PACKAGE-STATUS.txt"
+            profile="lineages/$kernel/build.yml"
+            test -s "$status"
+
+            image="$V7_AGGREGATE/images/$kernel/Image"
+            image_sha="$(sed -n 's/^IMAGE_SHA256=//p' "$status")"
+            image_bytes="$(sed -n 's/^IMAGE_BYTES=//p' "$status")"
+            ak3_sha="$(sed -n 's/^AK3_SHA256=//p' "$status")"
+            rs_version="$(sed -n 's/^RESUKISU_VERSION=//p' "$status")"
+            rs_commit="$(sed -n 's/^RESUKISU_COMMIT=//p' "$status")"
+            nm_enabled="$(sed -n 's/^NOMOUNT_ENABLED=//p' "$status")"
+            nm_version="$(sed -n 's/^NOMOUNT_VERSION=//p' "$status")"
+
+            test "$(sha256sum "$image" | awk '{print $1}')" = "$image_sha"
+            test "$(stat -c '%s' "$image")" = "$image_bytes"
+
+            mapfile -t packages < <(
+              find "$V7_AGGREGATE/packages/$kernel" -maxdepth 1 -type f -name '*.zip' -print
+            )
+            test "${#packages[@]}" -eq 1
+            package="${packages[0]}"
+            test "$(sha256sum "$package" | awk '{print $1}')" = "$ak3_sha"
+
+            work="$V7_WORK/static-$kernel"
+            audit="$V7_AGGREGATE/audit/static-$kernel"
+            dist="$V7_AGGREGATE/boots/$kernel"
+            rm -rf "$work" "$audit" "$dist"
+            mkdir -p "$work" "$audit" "$dist"
+
+            package_image="$work/target-Image"
+            anykernel="$work/anykernel.sh"
+            unzip -p "$package" Image > "$package_image"
+            unzip -p "$package" anykernel.sh > "$anykernel"
+            cmp -s "$image" "$package_image"
+            bash -n "$anykernel"
+
+            grep -aFq '@ReSukiSU' "$package_image"
+            grep -aFq 'susfs:' "$package_image"
+
+            if [ "$nm_enabled" = YES ]; then
+              grep -aFq 'NoMount:' "$package_image"
+              boot_name="VEUX-${kernel}-ReSukiSU${rs_version}-SUSFS2.3-NoMount${nm_version}-STATIC-BOOT.img"
+            else
+              if grep -aFq 'NoMount:' "$package_image"; then
+                echo "::error::unexpected NoMount identity kernel=$kernel"
+                exit 70
+              fi
+              boot_name="VEUX-${kernel}-ReSukiSU${rs_version}-SUSFS2.3-STATIC-BOOT.img"
+            fi
+
+            build="$work/repack"
+            cp -a "$V7_WORK/base-raw" "$build"
+            cp "$package_image" "$build/kernel"
+            pre_avb="$work/pre-avb.img"
+
+            (
+              cd "$build"
+              "$mb" repack -n "$base" "$pre_avb" > "$audit/REPACK.txt" 2>&1
+            )
+
+            python3 "$avb" erase_footer --image "$pre_avb"
+            expected_original="$(
+              python3 "$V7_WORK/expected-size.py" \
+                "$image_bytes" "$V7_BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE"
+            )"
+            test "$(stat -c '%s' "$pre_avb")" = "$expected_original"
+
+            python3 "$avb" add_hash_footer \
+              --image "$pre_avb" \
+              --partition_name boot \
+              --partition_size "$BOOT_PARTITION_SIZE" \
+              --hash_algorithm sha256 \
+              --algorithm NONE \
+              --salt "$V7_AVB_SALT" \
+              "${prop_args[@]}"
+
+            final="$dist/$boot_name"
+            mv "$pre_avb" "$final"
+            test "$(stat -c '%s' "$final")" = "$BOOT_PARTITION_SIZE"
+
+            verify_dir="$work/avb-verify"
+            mkdir -p "$verify_dir"
+            ln -s "$final" "$verify_dir/boot.img"
+
+            python3 "$avb" info_image --image "$verify_dir/boot.img" \
+              > "$audit/FINAL-AVB.txt"
+            python3 "$avb" verify_image --image "$verify_dir/boot.img" \
+              > "$audit/FINAL-AVB-VERIFY.txt" 2>&1
+
+            ! grep -Fq Traceback "$audit/FINAL-AVB-VERIFY.txt"
+            grep -Fq 'Successfully verified footer' "$audit/FINAL-AVB-VERIFY.txt"
+            grep -Eq '^Algorithm:[[:space:]]+NONE$' "$audit/FINAL-AVB.txt"
+
+            final_salt="$(
+              sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' \
+                "$audit/FINAL-AVB.txt" | head -1 | tr 'A-F' 'a-f'
+            )"
+            test "$final_salt" = "$V7_AVB_SALT"
+
+            python3 "$V7_WORK/avb-props.py" \
+              "$audit/FINAL-AVB.txt" "$audit/FINAL-AVB-PROPS.txt"
+            cmp -s "$base_props" "$audit/FINAL-AVB-PROPS.txt"
+
+            mkdir -p "$work/final-raw" "$work/final-decoded"
+            (
+              cd "$work/final-raw"
+              "$mb" unpack -n -h "$final" > "$audit/FINAL-RAW-UNPACK.txt" 2>&1
+            )
+            (
+              cd "$work/final-decoded"
+              "$mb" unpack -h "$final" > "$audit/FINAL-DECODED-UNPACK.txt" 2>&1
+            )
+
+            cmp -s "$package_image" "$work/final-raw/kernel"
+            cmp -s "$package_image" "$work/final-decoded/kernel"
+            test "$(sha256sum "$work/final-raw/kernel" | awk '{print $1}')" = "$image_sha"
+            test "$(sha256sum "$work/final-decoded/kernel" | awk '{print $1}')" = "$image_sha"
+
+            cmp -s "$V7_WORK/base-raw/ramdisk.cpio" "$work/final-raw/ramdisk.cpio"
+            cmp -s "$V7_WORK/base-decoded/ramdisk.cpio" "$work/final-decoded/ramdisk.cpio"
+            test "$(sha256sum "$work/final-raw/ramdisk.cpio" | awk '{print $1}')" = "$RAW_STOCK_RAMDISK_SHA256"
+            test "$(sha256sum "$work/final-decoded/ramdisk.cpio" | awk '{print $1}')" = "$DECODED_STOCK_RAMDISK_SHA256"
+
+            python3 "$V7_WORK/header-check.py" \
+              "$base" "$final" "$EXPECTED_HEADER_VERSION" "$image_bytes" \
+              "$V7_BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE" "$BASE_KERNEL_BYTES" \
+              > "$audit/HEADER-CONTRACT.txt"
+
+            boot_sha="$(sha256sum "$final" | awk '{print $1}')"
+
+            {
+              echo "KERNEL=$kernel"
+              echo "IMAGE_SHA256=$image_sha"
+              echo "IMAGE_BYTES=$image_bytes"
+              echo "AK3_SHA256=$ak3_sha"
+              echo "BOOT_FILE=$boot_name"
+              echo "BOOT_SHA256=$boot_sha"
+              echo "BOOT_BYTES=$BOOT_PARTITION_SIZE"
+              echo "RESUKISU_VERSION=$rs_version"
+              echo "RESUKISU_COMMIT=$rs_commit"
+              echo "NOMOUNT_ENABLED=$nm_enabled"
+              echo "NOMOUNT_VERSION=$nm_version"
+              echo 'V7_AK3_TO_BOOT_KERNEL_BINDING=PASS'
+              echo 'RAW_RAMDISK_BYTE_IDENTITY=PASS'
+              echo 'DECODED_RAMDISK_BYTE_IDENTITY=PASS'
+              echo 'BOOT_HEADER_V3=PASS'
+              echo 'BOOT_HEADER_MUTATION_SCOPE=PASS'
+              echo 'AVB_VERIFY_IMAGE_EXIT_ZERO=PASS'
+              echo 'AVB_VERIFY_NO_TRACEBACK=PASS'
+              echo 'AVB_PROPERTIES_PRESERVED=PASS'
+              echo 'COMPILE_PASS=YES'
+              echo 'PACKAGE_PASS=YES'
+              echo 'STATIC_BOOT_PATH_PASS=YES'
+              echo 'DEVICE_PASS=NO_IN_V7_CHAIN'
+            } > "$audit/FINAL-RESULT.txt"
+
+            printf '%s=STATIC_BOOT_PASS BOOT_SHA256=%s\n' "$kernel" "$boot_sha" \
+              >> "$V7_AGGREGATE/audit/STATIC-MATRIX.txt"
+          done
+
+          test "$(grep -c '=STATIC_BOOT_PASS BOOT_SHA256=' "$V7_AGGREGATE/audit/STATIC-MATRIX.txt")" -eq 6
+          test "$(find "$V7_AGGREGATE/boots" -type f -name '*.img' | wc -l)" -eq 6
+          echo 'V7_ALL_SIX_STATIC_BOOT=PASS'
+
+      - name: Finalize V7 one-button aggregate
+        shell: bash
+        env:
+          STATIC_OUTCOME: ${{ steps.static.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          test "$PACKAGE_OUTCOME" = success
+          test "$STATIC_OUTCOME" = success
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            pkg="$V7_AGGREGATE/audit/${kernel}-PACKAGE-STATUS.txt"
+            sta="$V7_AGGREGATE/audit/static-$kernel/FINAL-RESULT.txt"
+            test -s "$pkg"
+            test -s "$sta"
+            grep -Fxq 'PACKAGE_PASS=YES' "$pkg"
+            grep -Fxq 'STATIC_BOOT_PATH_PASS=YES' "$sta"
+          done
+
+          {
+            echo 'VEUX_BUILD_ALL_V7_R1_ONE_BUTTON=PASS'
+            echo 'LINEAGE_COUNT=6'
+            echo 'ALL_SIX_FRESH_COMPILE_PASS=YES'
+            echo 'ALL_SIX_PACKAGE_PASS=YES'
+            echo 'ALL_SIX_STATIC_BOOT_PASS=YES'
+            echo 'CURRENT_VALIDATED_PIN_POLICY=PRESERVED'
+            echo 'UNIFIED_35170_NOMOUNT_END_STATE=NO_PENDING_293_300_301_302_PORT'
+            echo 'DEVICE_PASS=NO_IN_V7_CHAIN'
+            echo "V4_CHILD_RUN_ID=$V7_V4_RUN_ID"
+            echo "V4_CHILD_ARTIFACT_ID=$V7_V4_ARTIFACT_ID"
+            echo "V4_CHILD_ARTIFACT_DIGEST=$V7_V4_ARTIFACT_DIGEST"
+          } > "$V7_AGGREGATE/FINAL-RESULT.txt"
+
+          {
+            echo "V7_RUN_ID=$GITHUB_RUN_ID"
+            echo "V7_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "V7_HEAD_SHA=$GITHUB_SHA"
+            echo "V4_CHILD_RUN_ID=$V7_V4_RUN_ID"
+            echo "V4_CHILD_ARTIFACT_ID=$V7_V4_ARTIFACT_ID"
+            echo "V4_CHILD_ARTIFACT_DIGEST=$V7_V4_ARTIFACT_DIGEST"
+            echo "AK3_COMMIT=$AK3_COMMIT"
+            echo "AK3_TREE=$AK3_TREE"
+            echo "BASE_BOOT_SHA256=$BASE_BOOT_SHA256"
+            echo "MAGISK_APK_SHA256=$MAGISK_APK_SHA256"
+            echo "AVB_COMMIT=$AVB_COMMIT"
+          } > "$V7_AGGREGATE/audit/RUN-METADATA.txt"
+
+          (
+            cd "$V7_AGGREGATE"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'V7_AGGREGATE_FINALIZED=PASS'
+
+      - name: Upload V7 one-button aggregate
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-BUILD-ALL-V7-R1-ONE-BUTTON-${{ github.run_id }}
+          path: v7-aggregate/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final V7 GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          final="$V7_AGGREGATE/FINAL-RESULT.txt"
+          test -s "$final"
+          grep -Fxq 'VEUX_BUILD_ALL_V7_R1_ONE_BUTTON=PASS' "$final"
+          grep -Fxq 'LINEAGE_COUNT=6' "$final"
+          grep -Fxq 'ALL_SIX_FRESH_COMPILE_PASS=YES' "$final"
+          grep -Fxq 'ALL_SIX_PACKAGE_PASS=YES' "$final"
+          grep -Fxq 'ALL_SIX_STATIC_BOOT_PASS=YES' "$final"
+          grep -Fxq 'CURRENT_VALIDATED_PIN_POLICY=PRESERVED' "$final"
+          grep -Fxq 'UNIFIED_35170_NOMOUNT_END_STATE=NO_PENDING_293_300_301_302_PORT' "$final"
+          grep -Fxq 'DEVICE_PASS=NO_IN_V7_CHAIN' "$final"
+
+          test "$(grep -c '=PACKAGE_PASS AK3_SHA256=' "$V7_AGGREGATE/audit/PACKAGE-MATRIX.txt")" -eq 6
+          test "$(grep -c '=STATIC_BOOT_PASS BOOT_SHA256=' "$V7_AGGREGATE/audit/STATIC-MATRIX.txt")" -eq 6
+          test "$(find "$V7_AGGREGATE/images" -type f -name Image | wc -l)" -eq 6
+          test "$(find "$V7_AGGREGATE/packages" -type f -name '*.zip' | wc -l)" -eq 6
+          test "$(find "$V7_AGGREGATE/boots" -type f -name '*.img' | wc -l)" -eq 6
+
+          (
+            cd "$V7_AGGREGATE"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'VEUX_BUILD_ALL_V7_R1_FINAL_GREEN_GATE=PASS'
