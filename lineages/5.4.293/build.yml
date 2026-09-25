@@ -9,7 +9,7 @@ baseline:
   id: "veux-u7-n4-v7-5.4.274-full-pass-2026-09-24"
   manifest: "common/contracts/GOLDEN_BASELINE.yml"
   role: "derive"
-  port_status: "pending"
+  port_status: "candidate"
   from_kernel: "5.4.274"
 
 legacy_authority:
@@ -18,17 +18,17 @@ legacy_authority:
 features:
   resukisu:
     enabled: true
-    version: "35158"
-    commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
     uapi: 4
   susfs:
     enabled: true
     version: "2.3.0"
     commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
   nomount:
-    enabled: false
-    version: "disabled"
-    commit: ""
+    enabled: true
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
 
 outputs:
   ak3: true
