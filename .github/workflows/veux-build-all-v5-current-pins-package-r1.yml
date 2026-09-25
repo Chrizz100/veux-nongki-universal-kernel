@@ -1,0 +1,637 @@
+name: VEUX Build All V5 R1 - Package Fresh Current-Pin Images
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-build-all-v5-r1-package-current-pins-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  SOURCE_RUN_ID: '36117801648'
+  SOURCE_HEAD_SHA: c46d4fbdf1f505d0728df405ede750ca419199a5
+  SOURCE_ARTIFACT_ID: '10858545303'
+  SOURCE_ARTIFACT_NAME: VEUX-BUILD-ALL-V4-R2-FRESH-CURRENT-PINS-36117801648
+  SOURCE_ARTIFACT_SHA256: 8320d322aac634ff17333f364b1223097863f32ec234fe0617676e5f88920ad5
+
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_TREE: c6af9eb7018bce852819ab1585de426a426e6806
+  AK3_ARCHIVE_EPOCH: '1733410079'
+
+  RS_35158: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RS_35170: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+  IMAGE_SHA_274: 6702b0edee8b08ed33620c58de43f7273d67d92fef25e0301d0b1b198777216e
+  IMAGE_SHA_292: 0ca72d47913e99401bfab4ac8ef24c8aa79f815f93300943f1fe06ac1f44bb0a
+  IMAGE_SHA_293: c1061cf156e5b7fd407c0a4acd090cded7447c4ab3e383ce933983aa078b8d1b
+  IMAGE_SHA_300: d36e4833e6d2e5d7feb59f85bed2ee72f1eeecb15805809dff33eaa6896f73b8
+  IMAGE_SHA_301: bbf27867d4b8d72288d6f6a0987225d5785167eca8df82332abf7fdae88bdd1e
+  IMAGE_SHA_302: d7397a1dd8add10d5939c83e84d2a7c8c75347f3cb0603f8769b93919521aa49
+
+jobs:
+  package-all-six:
+    name: Package six exact V4-R2 Images in frozen AnyKernel3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout current project read-only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install package dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl file git jq python3 python3-yaml unzip zip binutils
+
+      - name: Validate current six profile contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          expected = {
+              '5.4.274': ('35170', '9be0f347f38e790c846915bd5f9c24b337f85c4e', True, '2.0.0', 'b8d268353b4e7ecc53c67d1816a626b7d6579201'),
+              '5.4.292': ('35170', '9be0f347f38e790c846915bd5f9c24b337f85c4e', True, '2.0.0', 'b8d268353b4e7ecc53c67d1816a626b7d6579201'),
+              '5.4.293': ('35158', '6d18926ae6eeb571a04c1ce7552c324d606fa9d8', False, 'disabled', ''),
+              '5.4.300': ('35158', '6d18926ae6eeb571a04c1ce7552c324d606fa9d8', False, 'disabled', ''),
+              '5.4.301': ('35158', '6d18926ae6eeb571a04c1ce7552c324d606fa9d8', False, 'disabled', ''),
+              '5.4.302': ('35158', '6d18926ae6eeb571a04c1ce7552c324d606fa9d8', False, 'disabled', ''),
+          }
+
+          for kernel, (rs_ver, rs_commit, nm_enabled, nm_ver, nm_commit) in expected.items():
+              path = Path('lineages') / kernel / 'build.yml'
+              doc = yaml.safe_load(path.read_text(encoding='utf-8'))
+              assert doc['kernel'] == kernel
+              assert doc['enabled'] is True
+              assert doc['device'] == 'veux'
+              assert doc['platform'] == 'sm6375'
+              assert doc['target'] == 'android13-stock-vendor'
+
+              rs = doc['features']['resukisu']
+              sf = doc['features']['susfs']
+              nm = doc['features']['nomount']
+
+              assert rs['enabled'] is True
+              assert str(rs['version']) == rs_ver
+              assert rs['commit'] == rs_commit
+              assert rs['uapi'] == 4
+              assert sf['enabled'] is True
+              assert str(sf['version']) == '2.3.0'
+              assert sf['commit'] == '04a9d713106191ba98be680bd7ad9547ab1de964'
+              assert nm['enabled'] is nm_enabled
+              assert str(nm['version']) == nm_ver
+              assert nm['commit'] == nm_commit
+              assert doc['outputs']['ak3'] is True
+              assert doc['validation']['compile'] is True
+              assert doc['validation']['package'] is True
+
+          print('CURRENT_SIX_PACKAGE_PROFILE_CONTRACT=PASS')
+          PY
+
+      - name: Authenticate exact V4 R2 GREEN run and aggregate artifact
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          root="$RUNNER_TEMP/v4-r2-source"
+          source_zip="$RUNNER_TEMP/v4-r2-source.zip"
+          run_json="$RUNNER_TEMP/v4-r2-run.json"
+          artifact_json="$RUNNER_TEMP/v4-r2-artifact.json"
+          rm -rf "$root"
+          rm -f "$source_zip" "$run_json" "$artifact_json"
+          mkdir -p "$root"
+
+          api_get() {
+            local url="$1" out="$2"
+            curl --fail --location --silent --show-error \
+              --retry 3 --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_READ_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$url" -o "$out"
+          }
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+            "$run_json"
+
+          jq -e \
+            --arg head "$SOURCE_HEAD_SHA" \
+            --arg path '.github/workflows/veux-build-all-v4-fresh-current-pins-compile-r2.yml' \
+            '.id == ($ENV.SOURCE_RUN_ID | tonumber)
+             and .head_sha == $head
+             and .path == $path
+             and .event == "workflow_dispatch"
+             and .status == "completed"
+             and .conclusion == "success"' \
+            "$run_json" >/dev/null
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID" \
+            "$artifact_json"
+
+          jq -e \
+            --arg name "$SOURCE_ARTIFACT_NAME" \
+            --arg digest "sha256:$SOURCE_ARTIFACT_SHA256" \
+            --argjson run "$SOURCE_RUN_ID" \
+            '.id == ($ENV.SOURCE_ARTIFACT_ID | tonumber)
+             and .expired == false
+             and .name == $name
+             and .digest == $digest
+             and .workflow_run.id == $run' \
+            "$artifact_json" >/dev/null
+
+          api_get \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" \
+            "$source_zip"
+
+          test -s "$source_zip"
+          test "$(sha256sum "$source_zip" | awk '{print $1}')" = "$SOURCE_ARTIFACT_SHA256"
+          unzip -t "$source_zip" >/dev/null
+          unzip -q "$source_zip" -d "$root"
+
+          test -s "$root/SHA256SUMS.txt"
+          (
+            cd "$root"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          grep -Fxq 'VEUX_BUILD_ALL_V4_R2_FRESH_CURRENT_PINS=PASS' "$root/FINAL-RESULT.txt"
+          grep -Fxq 'LINEAGE_COUNT=6' "$root/FINAL-RESULT.txt"
+          grep -Fxq 'ALL_SIX_COMPILE_PASS=YES' "$root/FINAL-RESULT.txt"
+          grep -Fxq 'CURRENT_PIN_POLICY=PRESERVED' "$root/FINAL-RESULT.txt"
+          grep -Fxq 'AUTO_PROMOTE_35158_TO_35170=NO' "$root/FINAL-RESULT.txt"
+          grep -Fxq 'PACKAGE_PASS=NO' "$root/FINAL-RESULT.txt"
+
+          grep -Fxq "CONTROLLER_RUN_ID=$SOURCE_RUN_ID" "$root/PROVENANCE.txt"
+          grep -Fxq "CONTROLLER_SHA=$SOURCE_HEAD_SHA" "$root/PROVENANCE.txt"
+
+          echo 'V4_R2_GREEN_RUN_AUTH=PASS'
+          echo 'V4_R2_ARTIFACT_OUTER_SHA256=PASS'
+          echo 'V4_R2_ARTIFACT_INTERNAL_SHA256=PASS'
+
+      - name: Verify all six exact source Images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          root="$RUNNER_TEMP/v4-r2-source"
+
+          declare -A expected_sha=(
+            [5.4.274]="$IMAGE_SHA_274"
+            [5.4.292]="$IMAGE_SHA_292"
+            [5.4.293]="$IMAGE_SHA_293"
+            [5.4.300]="$IMAGE_SHA_300"
+            [5.4.301]="$IMAGE_SHA_301"
+            [5.4.302]="$IMAGE_SHA_302"
+          )
+          declare -A expected_bytes=(
+            [5.4.274]='29846016'
+            [5.4.292]='33927680'
+            [5.4.293]='33925632'
+            [5.4.300]='29911552'
+            [5.4.301]='29911552'
+            [5.4.302]='29911552'
+          )
+          declare -A expected_release=(
+            [5.4.274]='5.4.274-qgki-g82179e362f33'
+            [5.4.292]='5.4.292-veid-veux'
+            [5.4.293]='5.4.293-veid-veux'
+            [5.4.300]='5.4.300-qgki-g82179e362f33'
+            [5.4.301]='5.4.301-qgki-g82179e362f33'
+            [5.4.302]='5.4.302-qgki-g82179e362f33'
+          )
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            image="$root/$kernel/Image"
+            test -s "$image"
+            test "$(stat -c '%s' "$image")" = "${expected_bytes[$kernel]}"
+            test "$(sha256sum "$image" | awk '{print $1}')" = "${expected_sha[$kernel]}"
+            grep -Fq "$kernel=COMPILE_PASS IMAGE_BYTES=${expected_bytes[$kernel]} IMAGE_SHA256=${expected_sha[$kernel]} KERNELRELEASE=${expected_release[$kernel]}" \
+              "$root/IMAGE-MATRIX.txt"
+            strings "$image" | grep -Fqm1 "Linux version ${expected_release[$kernel]}"
+          done
+
+          grep -Fxq "RESUKISU_COMMIT=$RS_35170" "$root/5.4.274/FINAL-RESULT.txt"
+          grep -Fxq 'RESUKISU_VERSION=35170' "$root/5.4.274/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$root/5.4.274/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$root/5.4.274/FINAL-RESULT.txt"
+
+          grep -Fxq "RESUKISU_COMMIT=$RS_35170" "$root/5.4.292/FINAL-RESULT.txt"
+          grep -Fxq 'RESUKISU_VERSION=35170' "$root/5.4.292/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$root/5.4.292/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$root/5.4.292/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$root/5.4.292/FINAL-RESULT.txt"
+
+          for kernel in 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$root/$kernel/BUILD-STATUS.txt"
+            grep -Fxq "KERNEL=$kernel" "$status"
+            grep -Fxq "RESUKISU_COMMIT=$RS_35158" "$status"
+            grep -Fxq 'RESUKISU_VERSION=35158' "$status"
+            grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$status"
+            grep -Fxq 'COMPILE_PASS=YES' "$status"
+          done
+
+          echo 'V4_R2_ALL_SIX_EXACT_IMAGE_AUTH=PASS'
+
+      - name: Authenticate frozen AnyKernel3 template
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          template="$RUNNER_TEMP/AnyKernel3-template"
+          rm -rf "$template"
+          git clone -q "$AK3_REPO" "$template"
+          git -C "$template" checkout -q --detach "$AK3_COMMIT"
+          git -C "$template" reset --hard -q "$AK3_COMMIT"
+          git -C "$template" clean -fdx -q
+
+          test "$(git -C "$template" rev-parse HEAD)" = "$AK3_COMMIT"
+          test "$(git -C "$template" rev-parse 'HEAD^{tree}')" = "$AK3_TREE"
+          test -f "$template/tools/ak3-core.sh"
+          test -e "$template/META-INF/com/google/android/update-binary"
+          test -f "$template/META-INF/com/google/android/updater-script"
+
+          echo 'AK3_PIN_AUTH=PASS'
+
+      - name: Package and audit all six current-pin Images
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_dir="$RUNNER_TEMP/v4-r2-source"
+          template="$RUNNER_TEMP/AnyKernel3-template"
+          aggregate="$GITHUB_WORKSPACE/v5-package-aggregate"
+          work_root="$RUNNER_TEMP/v5-package-work"
+          rm -rf "$aggregate" "$work_root"
+          mkdir -p "$aggregate/packages" "$aggregate/audit" "$work_root"
+
+          declare -A image_sha=(
+            [5.4.274]="$IMAGE_SHA_274"
+            [5.4.292]="$IMAGE_SHA_292"
+            [5.4.293]="$IMAGE_SHA_293"
+            [5.4.300]="$IMAGE_SHA_300"
+            [5.4.301]="$IMAGE_SHA_301"
+            [5.4.302]="$IMAGE_SHA_302"
+          )
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            expected_sha="${image_sha[$kernel]}"
+            source_image="$source_dir/$kernel/Image"
+            work="$work_root/ak3-$kernel"
+            package_dir="$aggregate/packages/$kernel"
+            audit="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+
+            case "$kernel" in
+              5.4.274|5.4.292)
+                rs_version='35170'
+                rs_commit="$RS_35170"
+                nomount_enabled='YES'
+                nomount_version='2.0.0'
+                nomount_commit="$NOMOUNT_COMMIT"
+                zip_name="VEUX-${kernel}-ReSukiSU35170-SUSFS2.3-NoMount2.0.0-AK3.zip"
+                kernel_string="VEUX Linux $kernel ReSukiSU35170 UAPI4 SUSFS2.3 NoMount2.0.0"
+                ;;
+              5.4.293|5.4.300|5.4.301|5.4.302)
+                rs_version='35158'
+                rs_commit="$RS_35158"
+                nomount_enabled='NO'
+                nomount_version='disabled'
+                nomount_commit=''
+                zip_name="VEUX-${kernel}-ReSukiSU35158-SUSFS2.3-AK3.zip"
+                kernel_string="VEUX Linux $kernel ReSukiSU35158 UAPI4 SUSFS2.3"
+                ;;
+              *)
+                echo "::error::unexpected kernel $kernel"
+                exit 70
+                ;;
+            esac
+
+            zip_path="$package_dir/$zip_name"
+            zip_a="$work_root/${kernel}-A.zip"
+            zip_b="$work_root/${kernel}-B.zip"
+            filelist="$work_root/${kernel}-filelist.txt"
+
+            test -s "$source_image"
+            test "$(sha256sum "$source_image" | awk '{print $1}')" = "$expected_sha"
+
+            rm -rf "$work"
+            mkdir -p "$work" "$package_dir"
+            cp -a "$template/tools" "$work/tools"
+            cp -a "$template/META-INF" "$work/META-INF"
+            cp "$source_image" "$work/Image"
+
+            cat > "$work/anykernel.sh" <<EOF
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=$kernel_string
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          '; }
+
+          BLOCK=boot;
+          IS_SLOT_DEVICE=1;
+          SLOT_SELECT=active;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=0;
+
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+
+            chmod 0755 "$work/anykernel.sh"
+            chmod 0644 "$work/Image"
+            find "$work" -type f -name '*placeholder' -delete
+
+            if find "$work" \
+                \( -name '.git' -o -name '.github' -o -name '*.rej' -o -name '*.orig' \
+                   -o -name '*.patch' -o -name '*.diff' -o -name '*.yml' -o -name '*.yaml' \
+                   -o -name '*.log' \) -print -quit | grep -q .; then
+              echo "::error::forbidden metadata/evidence file in AK3 stage kernel=$kernel"
+              exit 71
+            fi
+
+            find "$work" -exec touch -h -d "@$AK3_ARCHIVE_EPOCH" {} +
+            (
+              cd "$work"
+              LC_ALL=C find . -mindepth 1 -print | LC_ALL=C sort > "$filelist"
+              test -s "$filelist"
+              zip -X -9 -q "$zip_a" -@ < "$filelist"
+              zip -X -9 -q "$zip_b" -@ < "$filelist"
+            )
+
+            test -s "$zip_a"
+            test -s "$zip_b"
+            cmp -s "$zip_a" "$zip_b"
+            cp "$zip_a" "$zip_path"
+            test -s "$zip_path"
+            unzip -tq "$zip_path"
+
+            entries="$work_root/${kernel}-entries.txt"
+            unzip -Z1 "$zip_path" > "$entries"
+
+            for required in \
+              Image \
+              anykernel.sh \
+              tools/ak3-core.sh \
+              META-INF/com/google/android/update-binary \
+              META-INF/com/google/android/updater-script
+            do
+              test "$(grep -Fxc "$required" "$entries")" -eq 1
+            done
+
+            ! grep -Eq '(^/|(^|/)\.\.(/|$))' "$entries"
+            ! sort "$entries" | uniq -d | grep -q .
+
+            while IFS= read -r entry; do
+              case "$entry" in
+                Image|anykernel.sh|tools/|tools/*|META-INF/|META-INF/*) ;;
+                *)
+                  echo "::error::unexpected AK3 entry kernel=$kernel entry=$entry"
+                  exit 72
+                  ;;
+              esac
+            done < "$entries"
+
+            if grep -Eiq \
+              '(^|/)(\.git|\.github)(/|$)|\.(rej|orig|patch|diff|ya?ml|log)$|(^|/)(boot\.img|rollback_stock_boot\.img(\.gz)?|dtb|dtbo\.img|Image\.gz|Image\.gz-dtb)$' \
+              "$entries"; then
+              echo "::error::forbidden payload in AK3 zip kernel=$kernel"
+              exit 73
+            fi
+
+            extract="$work_root/extract-$kernel"
+            rm -rf "$extract"
+            mkdir -p "$extract"
+            unzip -q "$zip_path" -d "$extract"
+
+            cmp -s "$source_image" "$extract/Image"
+            test "$(sha256sum "$extract/Image" | awk '{print $1}')" = "$expected_sha"
+            bash -n "$extract/anykernel.sh"
+            grep -Fqx "kernel.string=$kernel_string" "$extract/anykernel.sh"
+            grep -Fqx 'do.devicecheck=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.modules=0' "$extract/anykernel.sh"
+            grep -Fqx 'do.systemless=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.cleanup=1' "$extract/anykernel.sh"
+            grep -Fqx 'do.cleanuponabort=0' "$extract/anykernel.sh"
+            grep -Fqx 'device.name1=veux' "$extract/anykernel.sh"
+            grep -Fqx 'supported.versions=13' "$extract/anykernel.sh"
+            grep -Fqx 'BLOCK=boot;' "$extract/anykernel.sh"
+            grep -Fqx 'IS_SLOT_DEVICE=1;' "$extract/anykernel.sh"
+            grep -Fqx 'SLOT_SELECT=active;' "$extract/anykernel.sh"
+            grep -Fqx 'RAMDISK_COMPRESSION=auto;' "$extract/anykernel.sh"
+            grep -Fqx 'PATCH_VBMETA_FLAG=0;' "$extract/anykernel.sh"
+            grep -Fqx '. tools/ak3-core.sh;' "$extract/anykernel.sh"
+            grep -Fqx 'dump_boot;' "$extract/anykernel.sh"
+            grep -Fqx 'write_boot;' "$extract/anykernel.sh"
+
+            ak3_sha="$(sha256sum "$zip_path" | awk '{print $1}')"
+            ak3_bytes="$(stat -c '%s' "$zip_path")"
+
+            {
+              echo "KERNEL=$kernel"
+              echo "SOURCE_RUN_ID=$SOURCE_RUN_ID"
+              echo "SOURCE_HEAD_SHA=$SOURCE_HEAD_SHA"
+              echo "SOURCE_ARTIFACT_ID=$SOURCE_ARTIFACT_ID"
+              echo "SOURCE_ARTIFACT_SHA256=$SOURCE_ARTIFACT_SHA256"
+              echo "IMAGE_SHA256=$expected_sha"
+              echo "RESUKISU_COMMIT=$rs_commit"
+              echo "RESUKISU_VERSION=$rs_version"
+              echo 'UAPI=4'
+              echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+              echo 'SUSFS_VERSION=2.3.0'
+              echo "NOMOUNT_ENABLED=$nomount_enabled"
+              echo "NOMOUNT_VERSION=$nomount_version"
+              echo "NOMOUNT_COMMIT=$nomount_commit"
+              echo "AK3_COMMIT=$AK3_COMMIT"
+              echo "AK3_TREE=$AK3_TREE"
+              echo "AK3_FILE=$zip_name"
+              echo "AK3_SHA256=$ak3_sha"
+              echo "AK3_BYTES=$ak3_bytes"
+              echo 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS'
+              echo 'IMAGE_PARITY=PASS'
+              echo 'AK3_REQUIRED_FILES=PASS'
+              echo 'AK3_FLASH_CONTRACT=PASS'
+              echo 'AK3_CLEAN_PUBLIC_PAYLOAD=PASS'
+              echo 'COMPILE_PASS=YES_FROM_V4_R2'
+              echo 'PACKAGE_PASS=YES'
+              echo 'STATIC_BOOT_PATH_PASS=NO'
+              echo 'DEVICE_PASS=NO'
+            } | tee "$audit"
+
+            rm -rf "$extract"
+          done
+
+          echo 'V5_ALL_SIX_PACKAGING_LOOP=PASS'
+
+      - name: Finalize compact V5 aggregate
+        if: always()
+        shell: bash
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          aggregate="$GITHUB_WORKSPACE/v5-package-aggregate"
+          mkdir -p "$aggregate/audit"
+
+          {
+            echo "PACKAGE_STEP_OUTCOME=$PACKAGE_OUTCOME"
+            echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+            echo "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+            echo "GITHUB_SHA=$GITHUB_SHA"
+            echo "SOURCE_RUN_ID=$SOURCE_RUN_ID"
+            echo "SOURCE_HEAD_SHA=$SOURCE_HEAD_SHA"
+            echo "SOURCE_ARTIFACT_ID=$SOURCE_ARTIFACT_ID"
+            echo "SOURCE_ARTIFACT_SHA256=$SOURCE_ARTIFACT_SHA256"
+            echo "AK3_COMMIT=$AK3_COMMIT"
+            echo "AK3_TREE=$AK3_TREE"
+          } > "$aggregate/audit/RUN-METADATA.txt"
+
+          all_pass=1
+          : > "$aggregate/audit/PACKAGE-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+            package_dir="$aggregate/packages/$kernel"
+
+            if [ ! -s "$status" ]; then
+              echo "$kernel=STATUS_MISSING" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            if ! grep -Fxq 'PACKAGE_PASS=YES' "$status"; then
+              echo "$kernel=PACKAGE_FAIL" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            mapfile -t zips < <(find "$package_dir" -maxdepth 1 -type f -name '*.zip' -print)
+            if [ "${#zips[@]}" -ne 1 ]; then
+              echo "$kernel=ZIP_COUNT_${#zips[@]}" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+              all_pass=0
+              continue
+            fi
+
+            zip_file="${zips[0]}"
+            actual_sha="$(sha256sum "$zip_file" | awk '{print $1}')"
+            status_sha="$(sed -n 's/^AK3_SHA256=//p' "$status")"
+            test -n "$status_sha"
+            test "$actual_sha" = "$status_sha"
+            echo "$kernel=PACKAGE_PASS AK3_SHA256=$actual_sha" >> "$aggregate/audit/PACKAGE-MATRIX.txt"
+          done
+
+          if [ "$PACKAGE_OUTCOME" != success ]; then
+            all_pass=0
+          fi
+
+          {
+            if [ "$all_pass" = 1 ]; then
+              echo 'VEUX_BUILD_ALL_V5_R1_CURRENT_PINS_PACKAGE=PASS'
+              echo 'ALL_SIX_PACKAGE_PASS=YES'
+            else
+              echo 'VEUX_BUILD_ALL_V5_R1_CURRENT_PINS_PACKAGE=FAIL'
+              echo 'ALL_SIX_PACKAGE_PASS=NO'
+            fi
+            echo 'LINEAGE_COUNT=6'
+            echo 'COMPILE_PASS=YES_FROM_V4_R2'
+            echo 'CURRENT_PIN_POLICY=PRESERVED'
+            echo 'AUTO_PROMOTE_35158_TO_35170=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$aggregate/FINAL-RESULT.txt"
+
+          (
+            cd "$aggregate"
+            rm -f SHA256SUMS.txt
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'V5_PACKAGE_AGGREGATE_FINALIZED=PASS'
+
+      - name: Upload V5 all-six package aggregate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-BUILD-ALL-V5-R1-CURRENT-PINS-AK3-${{ github.run_id }}
+          path: v5-package-aggregate/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final V5 GREEN gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aggregate="$GITHUB_WORKSPACE/v5-package-aggregate"
+          final="$aggregate/FINAL-RESULT.txt"
+          matrix="$aggregate/audit/PACKAGE-MATRIX.txt"
+
+          test -s "$final"
+          test -s "$matrix"
+          grep -Fxq 'VEUX_BUILD_ALL_V5_R1_CURRENT_PINS_PACKAGE=PASS' "$final"
+          grep -Fxq 'ALL_SIX_PACKAGE_PASS=YES' "$final"
+          grep -Fxq 'LINEAGE_COUNT=6' "$final"
+          grep -Fxq 'COMPILE_PASS=YES_FROM_V4_R2' "$final"
+          grep -Fxq 'CURRENT_PIN_POLICY=PRESERVED' "$final"
+          grep -Fxq 'AUTO_PROMOTE_35158_TO_35170=NO' "$final"
+          grep -Fxq 'STATIC_BOOT_PATH_PASS=NO' "$final"
+          grep -Fxq 'DEVICE_PASS=NO' "$final"
+
+          test "$(find "$aggregate/packages" -type f -name '*.zip' | wc -l)" -eq 6
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            status="$aggregate/audit/${kernel}-PACKAGE-STATUS.txt"
+            test -s "$status"
+            grep -Fxq 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS' "$status"
+            grep -Fxq 'IMAGE_PARITY=PASS' "$status"
+            grep -Fxq 'AK3_REQUIRED_FILES=PASS' "$status"
+            grep -Fxq 'AK3_FLASH_CONTRACT=PASS' "$status"
+            grep -Fxq 'AK3_CLEAN_PUBLIC_PAYLOAD=PASS' "$status"
+            grep -Fxq 'COMPILE_PASS=YES_FROM_V4_R2' "$status"
+            grep -Fxq 'PACKAGE_PASS=YES' "$status"
+            grep -Fq "$kernel=PACKAGE_PASS AK3_SHA256=" "$matrix"
+          done
+
+          (
+            cd "$aggregate"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'VEUX_BUILD_ALL_V5_R1_FINAL_GREEN_GATE=PASS'
