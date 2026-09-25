@@ -1,0 +1,716 @@
+name: VEUX Build All V4 R2 - Fresh Current-Pin Compile
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: veux-build-all-v4-r2-fresh-current-pins-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+  O51_AUTHORITY: .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+
+  N4_WORKFLOW: veux-u7-n4-test-v7-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml
+  N4_PATH: .github/workflows/veux-u7-n4-test-v7-5.4.274-resukisu-35170-hunter-fastfail-static-green.yml
+  N4_BLOB: 0cfd79f84eb0644ef0a143fb1ee85403fe81c423
+
+  V2_WORKFLOW: veux-build-worker-v2-5.4.292-clean-ak3.yml
+  V2_PATH: .github/workflows/veux-build-worker-v2-5.4.292-clean-ak3.yml
+  V2_BLOB: 270abcb231716b7c1d4308ef861045bba2ce7f22
+
+  RS_35158: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RS_35170: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+jobs:
+  preflight:
+    name: Current repo + authority preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      status: ${{ steps.gate.outputs.status }}
+    steps:
+      - name: Checkout exact controller commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate current repo profiles and authority blobs
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF_NAME" = "main"
+
+          test -f "$O51_AUTHORITY"
+          test -f "$N4_PATH"
+          test -f "$V2_PATH"
+
+          test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+          test "$(git hash-object "$N4_PATH")" = "$N4_BLOB"
+          test "$(git hash-object "$V2_PATH")" = "$V2_BLOB"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          expected = {
+              "5.4.274": ("35170", True, "2.0.0"),
+              "5.4.292": ("35170", True, "2.0.0"),
+              "5.4.293": ("35158", False, "disabled"),
+              "5.4.300": ("35158", False, "disabled"),
+              "5.4.301": ("35158", False, "disabled"),
+              "5.4.302": ("35158", False, "disabled"),
+          }
+
+          for kernel, (rs_ver, nm_enabled, nm_ver) in expected.items():
+              p = Path("lineages") / kernel / "build.yml"
+              doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+              assert doc["kernel"] == kernel
+              assert doc["enabled"] is True
+              assert doc["device"] == "veux"
+              assert doc["platform"] == "sm6375"
+              assert doc["target"] == "android13-stock-vendor"
+              assert doc["validation"]["compile"] is True
+
+              rs = doc["features"]["resukisu"]
+              sf = doc["features"]["susfs"]
+              nm = doc["features"]["nomount"]
+
+              assert str(rs["version"]) == rs_ver
+              assert rs["uapi"] == 4
+              assert sf["enabled"] is True
+              assert str(sf["version"]) == "2.3.0"
+              assert sf["commit"] == "04a9d713106191ba98be680bd7ad9547ab1de964"
+              assert nm["enabled"] is nm_enabled
+              assert str(nm["version"]) == nm_ver
+
+              if rs_ver == "35170":
+                  assert rs["commit"] == "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+                  assert nm["commit"] == "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+              else:
+                  assert rs["commit"] == "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+                  assert nm["commit"] == ""
+
+          print("CURRENT_SIX_PROFILE_CONTRACT=PASS")
+          PY
+
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+          echo "V4_R2_PREFLIGHT=PASS"
+
+  dispatch-35170:
+    name: Dispatch fresh 35170 builds for 274 + 292
+    needs: preflight
+    if: needs.preflight.outputs.status == 'PASS'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      n4_id: ${{ steps.dispatch.outputs.n4_id }}
+      v2_id: ${{ steps.dispatch.outputs.v2_id }}
+    steps:
+      - name: Bind exact current main and dispatch valid child workflows
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY$1"
+          }
+
+          branch_sha="$(api_get "/branches/$GITHUB_REF_NAME" | jq -r '.commit.sha')"
+          test "$branch_sha" = "$GITHUB_SHA"
+
+          snapshot_ids() {
+            local wf="$1" dest="$2"
+            api_get "/actions/workflows/$wf/runs?event=workflow_dispatch&branch=$GITHUB_REF_NAME&per_page=50" \
+              | jq -r '.workflow_runs[].id' > "$dest"
+          }
+
+          dispatch_one() {
+            local wf="$1" before="$2" since="$3"
+            snapshot_ids "$wf" "$before"
+            date -u +%Y-%m-%dT%H:%M:%SZ > "$since"
+            payload="$(jq -nc --arg ref "$GITHUB_REF_NAME" '{ref:$ref}')"
+            code="$(
+              curl -sS -o "$RUNNER_TEMP/dispatch-body.txt" -w '%{http_code}' \
+                -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/$wf/dispatches" \
+                -d "$payload"
+            )"
+            if [ "$code" != 204 ]; then
+              echo "::error::workflow dispatch failed wf=$wf http=$code"
+              cat "$RUNNER_TEMP/dispatch-body.txt" || true
+              exit 30
+            fi
+          }
+
+          wait_new_id() {
+            local wf="$1" before="$2" since_file="$3"
+            local since id data
+            since="$(cat "$since_file")"
+            for _ in $(seq 1 90); do
+              data="$(
+                api_get "/actions/workflows/$wf/runs?event=workflow_dispatch&branch=$GITHUB_REF_NAME&per_page=50"
+              )"
+              while IFS= read -r id; do
+                [ -n "$id" ] || continue
+                if ! grep -Fxq "$id" "$before"; then
+                  printf '%s\n' "$id"
+                  return 0
+                fi
+              done < <(
+                printf '%s' "$data" \
+                  | jq -r --arg sha "$GITHUB_SHA" --arg since "$since" \
+                    '.workflow_runs[]
+                     | select(.head_sha == $sha)
+                     | select(.created_at >= $since)
+                     | .id'
+              )
+              sleep 2
+            done
+            echo "::error::new child run not found for $wf" >&2
+            return 31
+          }
+
+          dispatch_one "$N4_WORKFLOW" "$RUNNER_TEMP/n4-before" "$RUNNER_TEMP/n4-since"
+          n4_id="$(wait_new_id "$N4_WORKFLOW" "$RUNNER_TEMP/n4-before" "$RUNNER_TEMP/n4-since")"
+
+          dispatch_one "$V2_WORKFLOW" "$RUNNER_TEMP/v2-before" "$RUNNER_TEMP/v2-since"
+          v2_id="$(wait_new_id "$V2_WORKFLOW" "$RUNNER_TEMP/v2-before" "$RUNNER_TEMP/v2-since")"
+
+          test -n "$n4_id"
+          test -n "$v2_id"
+          test "$n4_id" != "$v2_id"
+
+          {
+            echo "n4_id=$n4_id"
+            echo "v2_id=$v2_id"
+          } >> "$GITHUB_OUTPUT"
+
+          printf 'N4_RUN_ID=%s\nV2_RUN_ID=%s\n' "$n4_id" "$v2_id"
+
+  build-35158:
+    name: Fresh 35158 ${{ matrix.kernel }}
+    needs: preflight
+    if: needs.preflight.outputs.status == 'PASS'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        kernel:
+          - 5.4.293
+          - 5.4.300
+          - 5.4.301
+          - 5.4.302
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      KERNEL: ${{ matrix.kernel }}
+    steps:
+      - name: Checkout exact controller commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install replayer prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates git python3 python3-yaml
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test -f "$O51_AUTHORITY"
+          test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+
+      - name: Extract exact proven O51-v3 authority replayer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - "$O51_AUTHORITY" "$RUNNER_TEMP/o51_replay.py" <<'PY'
+          from pathlib import Path
+          import sys
+          import yaml
+
+          src = Path(sys.argv[1])
+          out = Path(sys.argv[2])
+
+          doc = yaml.safe_load(src.read_text(encoding="utf-8"))
+          steps = next(iter(doc["jobs"].values()))["steps"]
+          matches = [
+              s for s in steps
+              if s.get("name") == "Write and self-test fail-closed authority replayer"
+          ]
+          if len(matches) != 1:
+              raise SystemExit(f"O51 replayer step match count={len(matches)}")
+
+          run = str(matches[0]["run"])
+          start = 'cat > "$RUNNER_TEMP/o51_replay.py" <<\'PY\'\n'
+          if run.count(start) != 1:
+              raise SystemExit(f"O51 replayer start marker count={run.count(start)}")
+
+          a = run.index(start) + len(start)
+          ends = [
+              x for x in (
+                  run.find("\n          PY\n", a),
+                  run.find("\nPY\n", a),
+              )
+              if x >= 0
+          ]
+          if not ends:
+              raise SystemExit("O51 replayer end marker missing")
+
+          b = min(ends)
+          code = run[a:b]
+          lines = code.splitlines()
+          if lines and all((not x.strip()) or x.startswith("          ") for x in lines):
+              code = "\n".join(
+                  x[10:] if x.startswith("          ") else x
+                  for x in lines
+              ) + "\n"
+
+          compile(code, str(out), "exec")
+          out.write_text(code, encoding="utf-8")
+          print("O51_V3_REPLAYER_EXTRACTION=PASS")
+          PY
+
+          python3 -m py_compile "$RUNNER_TEMP/o51_replay.py"
+          python3 "$RUNNER_TEMP/o51_replay.py" --selftest
+
+      - name: Fresh rebuild exact current 35158 lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - "$KERNEL" <<'PY'
+          from pathlib import Path
+          import sys
+          import yaml
+
+          kernel = sys.argv[1]
+          p = yaml.safe_load(
+              (Path("lineages") / kernel / "build.yml").read_text(encoding="utf-8")
+          )
+          assert p["kernel"] == kernel
+          assert p["enabled"] is True
+          rs = p["features"]["resukisu"]
+          sf = p["features"]["susfs"]
+          nm = p["features"]["nomount"]
+          assert str(rs["version"]) == "35158"
+          assert rs["commit"] == "6d18926ae6eeb571a04c1ce7552c324d606fa9d8"
+          assert rs["uapi"] == 4
+          assert str(sf["version"]) == "2.3.0"
+          assert sf["commit"] == "04a9d713106191ba98be680bd7ad9547ab1de964"
+          assert nm["enabled"] is False
+          assert str(nm["version"]) == "disabled"
+          assert nm["commit"] == ""
+          print(f"PROFILE_{kernel}_35158=PASS")
+          PY
+
+          AGG="$GITHUB_WORKSPACE/v4-35158"
+          STATE="$RUNNER_TEMP/v4-o51-state"
+          rm -rf "$AGG" "$STATE"
+          mkdir -p "$AGG" "$STATE"
+
+          python3 "$RUNNER_TEMP/o51_replay.py" \
+            --kernel "$KERNEL" \
+            --project-root "$GITHUB_WORKSPACE" \
+            --aggregate "$AGG" \
+            --state-root "$STATE" \
+            --sha "$GITHUB_SHA"
+
+          status="$AGG/$KERNEL/BUILD-STATUS.txt"
+          image="$AGG/$KERNEL/Image"
+
+          test -s "$status"
+          test -s "$image"
+          grep -Fxq "KERNEL=$KERNEL" "$status"
+          grep -Fxq "RESUKISU_COMMIT=$RS_35158" "$status"
+          grep -Fxq 'RESUKISU_VERSION=35158' "$status"
+          grep -Fxq 'UAPI=4' "$status"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$status"
+          grep -Fxq 'SUSFS_VERSION=v2.3.0' "$status"
+          grep -Fxq 'MODULE_LOAD_FILTER=EXCLUDED' "$status"
+          grep -Fxq 'COMPILE_PASS=YES' "$status"
+
+          actual="$(sha256sum "$image" | awk '{print $1}')"
+          recorded="$(sed -n 's/^IMAGE_SHA256=//p' "$status")"
+          test "$actual" = "$recorded"
+
+          {
+            echo "V4_R2_FRESH_35158=PASS"
+            echo "KERNEL=$KERNEL"
+            echo "IMAGE_SHA256=$actual"
+          } > "$AGG/$KERNEL/V4-R2-RESULT.txt"
+
+          (
+            cd "$AGG/$KERNEL"
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload fresh 35158 lineage
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-V4-R2-FRESH-${{ matrix.kernel }}-35158-${{ github.run_id }}
+          path: v4-35158/${{ matrix.kernel }}/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+  assemble:
+    name: Verify and assemble all six fresh Images
+    needs:
+      - preflight
+      - dispatch-35170
+      - build-35158
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      N4_RUN_ID: ${{ needs.dispatch-35170.outputs.n4_id }}
+      V2_RUN_ID: ${{ needs.dispatch-35170.outputs.v2_id }}
+      PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+      DISPATCH_RESULT: ${{ needs.dispatch-35170.result }}
+      BUILD_35158_RESULT: ${{ needs.build-35158.result }}
+    steps:
+      - name: Require upstream jobs green
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PREFLIGHT_RESULT" = success
+          test "$DISPATCH_RESULT" = success
+          test "$BUILD_35158_RESULT" = success
+          test -n "$N4_RUN_ID"
+          test -n "$V2_RUN_ID"
+
+      - name: Install assembly dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils ca-certificates curl jq unzip
+
+      - name: Wait for fresh 274 and 292 child runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY$1"
+          }
+
+          wait_run() {
+            local id="$1" label="$2"
+            local data status conclusion head event
+            for _ in $(seq 1 270); do
+              data="$(api_get "/actions/runs/$id")"
+              status="$(printf '%s' "$data" | jq -r '.status')"
+              conclusion="$(printf '%s' "$data" | jq -r '.conclusion // ""')"
+              head="$(printf '%s' "$data" | jq -r '.head_sha')"
+              event="$(printf '%s' "$data" | jq -r '.event')"
+
+              test "$head" = "$GITHUB_SHA"
+              test "$event" = "workflow_dispatch"
+
+              echo "$label run=$id status=$status conclusion=${conclusion:-pending}"
+
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success
+                return 0
+              fi
+              sleep 60
+            done
+
+            echo "::error::$label child run timed out: run=$id"
+            return 40
+          }
+
+          wait_run "$N4_RUN_ID" "5.4.274 fresh-35170"
+          wait_run "$V2_RUN_ID" "5.4.292 fresh-35170"
+
+          echo "FRESH_35170_CHILDREN=SUCCESS"
+
+      - name: Download exact matrix and child artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE/v4-r2-input"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY$1"
+          }
+
+          download_artifact() {
+            local id="$1" zip="$2" dest="$3"
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" \
+              -o "$zip"
+            test -s "$zip"
+            unzip -t "$zip" >/dev/null
+            mkdir -p "$dest"
+            unzip -q "$zip" -d "$dest"
+          }
+
+          select_exact() {
+            local run_id="$1" name="$2"
+            local data count
+            data="$(api_get "/actions/runs/$run_id/artifacts?per_page=100")"
+            count="$(
+              printf '%s' "$data" \
+                | jq --arg n "$name" '[.artifacts[] | select(.name == $n)] | length'
+            )"
+            test "$count" = 1
+            printf '%s' "$data" \
+              | jq -r --arg n "$name" '.artifacts[] | select(.name == $n) | .id'
+          }
+
+          select_prefix() {
+            local run_id="$1" prefix="$2"
+            local data count
+            data="$(api_get "/actions/runs/$run_id/artifacts?per_page=100")"
+            count="$(
+              printf '%s' "$data" \
+                | jq --arg p "$prefix" \
+                  '[.artifacts[] | select(.name | startswith($p))] | length'
+            )"
+            test "$count" = 1
+            printf '%s' "$data" \
+              | jq -r --arg p "$prefix" \
+                '.artifacts[] | select(.name | startswith($p)) | .id'
+          }
+
+          for kernel in 5.4.293 5.4.300 5.4.301 5.4.302; do
+            name="VEUX-V4-R2-FRESH-$kernel-35158-$GITHUB_RUN_ID"
+            id="$(select_exact "$GITHUB_RUN_ID" "$name")"
+            download_artifact \
+              "$id" \
+              "$ROOT/matrix-$kernel.zip" \
+              "$ROOT/matrix-$kernel"
+          done
+
+          n4_id="$(
+            select_prefix \
+              "$N4_RUN_ID" \
+              "VEUX-U7-N4V6-TEST-35170-LatencyFastFail-"
+          )"
+          v2_id="$(
+            select_prefix \
+              "$V2_RUN_ID" \
+              "VEUX-5.4.292-ReSukiSU35170-SUSFS2.3-NoMount2.0-Compile-"
+          )"
+
+          download_artifact "$n4_id" "$ROOT/n4.zip" "$ROOT/n4"
+          download_artifact "$v2_id" "$ROOT/v2.zip" "$ROOT/v2"
+
+          {
+            echo "CONTROLLER_RUN_ID=$GITHUB_RUN_ID"
+            echo "CONTROLLER_SHA=$GITHUB_SHA"
+            echo "N4_RUN_ID=$N4_RUN_ID"
+            echo "N4_ARTIFACT_ID=$n4_id"
+            echo "V2_RUN_ID=$V2_RUN_ID"
+            echo "V2_ARTIFACT_ID=$v2_id"
+          } > "$ROOT/PROVENANCE.txt"
+
+          echo "EXACT_V4_R2_ARTIFACT_DOWNLOAD=PASS"
+
+      - name: Normalize and verify all six fresh Images
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE/v4-r2-input"
+          OUT="$GITHUB_WORKSPACE/v4-r2-current-pins"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+
+          for kernel in 5.4.293 5.4.300 5.4.301 5.4.302; do
+            src="$ROOT/matrix-$kernel"
+            mapfile -t images < <(find "$src" -type f -name Image -print)
+            mapfile -t statuses < <(find "$src" -type f -name BUILD-STATUS.txt -print)
+            test "${#images[@]}" = 1
+            test "${#statuses[@]}" = 1
+
+            mkdir -p "$OUT/$kernel"
+            cp "${images[0]}" "$OUT/$kernel/Image"
+            cp "${statuses[0]}" "$OUT/$kernel/BUILD-STATUS.txt"
+
+            grep -Fxq "KERNEL=$kernel" "$OUT/$kernel/BUILD-STATUS.txt"
+            grep -Fxq "RESUKISU_COMMIT=$RS_35158" "$OUT/$kernel/BUILD-STATUS.txt"
+            grep -Fxq 'RESUKISU_VERSION=35158' "$OUT/$kernel/BUILD-STATUS.txt"
+            grep -Fxq 'COMPILE_PASS=YES' "$OUT/$kernel/BUILD-STATUS.txt"
+          done
+
+          n4_dist="$ROOT/n4/u7-n4-dist"
+          test -d "$n4_dist"
+          (
+            cd "$n4_dist"
+            sha256sum -c SHA256SUMS.txt
+          )
+          grep -Fxq 'KERNEL=5.4.274' "$n4_dist/FINAL-RESULT.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RS_35170" "$n4_dist/FINAL-RESULT.txt"
+          grep -Fxq 'RESUKISU_VERSION=35170' "$n4_dist/FINAL-RESULT.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$n4_dist/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$n4_dist/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$n4_dist/FINAL-RESULT.txt"
+          mkdir -p "$OUT/5.4.274"
+          cp "$n4_dist/Image" "$OUT/5.4.274/Image"
+          cp "$n4_dist/FINAL-RESULT.txt" "$OUT/5.4.274/FINAL-RESULT.txt"
+
+          (
+            cd "$ROOT/v2"
+            sha256sum -c SHA256SUMS.txt
+          )
+          grep -Fxq 'KERNEL=5.4.292' "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq "RESUKISU_COMMIT=$RS_35170" "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq 'RESUKISU_VERSION=35170' "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq "SUSFS_COMMIT=$SUSFS_COMMIT" "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq "NOMOUNT_COMMIT=$NOMOUNT_COMMIT" "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_VERSION=2.0.0' "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq 'NOMOUNT_COMPILE_OBJECT=PASS' "$ROOT/v2/FINAL-RESULT.txt"
+          grep -Fxq 'COMPILE_PASS=YES' "$ROOT/v2/FINAL-RESULT.txt"
+          mkdir -p "$OUT/5.4.292"
+          cp "$ROOT/v2/Image" "$OUT/5.4.292/Image"
+          cp "$ROOT/v2/FINAL-RESULT.txt" "$OUT/5.4.292/FINAL-RESULT.txt"
+
+          declare -A expected_release=(
+            [5.4.274]='5.4.274-qgki-g82179e362f33'
+            [5.4.292]='5.4.292-veid-veux'
+            [5.4.293]='5.4.293-veid-veux'
+            [5.4.300]='5.4.300-qgki-g82179e362f33'
+            [5.4.301]='5.4.301-qgki-g82179e362f33'
+            [5.4.302]='5.4.302-qgki-g82179e362f33'
+          )
+
+          : > "$OUT/IMAGE-MATRIX.txt"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            image="$OUT/$kernel/Image"
+            test -s "$image"
+
+            strings "$image" \
+              | grep -Fqm1 "Linux version ${expected_release[$kernel]}"
+
+            sha="$(sha256sum "$image" | awk '{print $1}')"
+            bytes="$(stat -c '%s' "$image")"
+
+            printf '%s=COMPILE_PASS IMAGE_BYTES=%s IMAGE_SHA256=%s KERNELRELEASE=%s\n' \
+              "$kernel" "$bytes" "$sha" "${expected_release[$kernel]}" \
+              >> "$OUT/IMAGE-MATRIX.txt"
+          done
+
+          cp "$ROOT/PROVENANCE.txt" "$OUT/PROVENANCE.txt"
+
+          {
+            echo 'VEUX_BUILD_ALL_V4_R2_FRESH_CURRENT_PINS=PASS'
+            echo 'LINEAGE_COUNT=6'
+            echo 'FRESH_COMPILE_274=YES'
+            echo 'FRESH_COMPILE_292=YES'
+            echo 'FRESH_COMPILE_293=YES'
+            echo 'FRESH_COMPILE_300=YES'
+            echo 'FRESH_COMPILE_301=YES'
+            echo 'FRESH_COMPILE_302=YES'
+            echo 'ALL_SIX_COMPILE_PASS=YES'
+            echo 'CURRENT_PIN_POLICY=PRESERVED'
+            echo 'AUTO_PROMOTE_35158_TO_35170=NO'
+            echo 'PACKAGE_PASS=NO'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+          } > "$OUT/FINAL-RESULT.txt"
+
+          (
+            cd "$OUT"
+            find . -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo "status=PASS" >> "$GITHUB_OUTPUT"
+          echo "V4_R2_ALL_SIX_FRESH_COMPILE_GATE=PASS"
+
+      - name: Upload normalized V4 R2 result
+        if: steps.gate.outputs.status == 'PASS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: VEUX-BUILD-ALL-V4-R2-FRESH-CURRENT-PINS-${{ github.run_id }}
+          path: v4-r2-current-pins/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Final V4 R2 GREEN gate
+        shell: bash
+        env:
+          GATE_STATUS: ${{ steps.gate.outputs.status }}
+        run: |
+          set -euo pipefail
+          test "$GATE_STATUS" = PASS
+
+          final="$GITHUB_WORKSPACE/v4-r2-current-pins/FINAL-RESULT.txt"
+          matrix="$GITHUB_WORKSPACE/v4-r2-current-pins/IMAGE-MATRIX.txt"
+
+          test -s "$final"
+          test -s "$matrix"
+
+          grep -Fxq 'VEUX_BUILD_ALL_V4_R2_FRESH_CURRENT_PINS=PASS' "$final"
+          grep -Fxq 'LINEAGE_COUNT=6' "$final"
+          grep -Fxq 'ALL_SIX_COMPILE_PASS=YES' "$final"
+          grep -Fxq 'CURRENT_PIN_POLICY=PRESERVED' "$final"
+          grep -Fxq 'AUTO_PROMOTE_35158_TO_35170=NO' "$final"
+
+          for kernel in 5.4.274 5.4.292 5.4.293 5.4.300 5.4.301 5.4.302; do
+            grep -Fq "$kernel=COMPILE_PASS " "$matrix"
+            test -s "$GITHUB_WORKSPACE/v4-r2-current-pins/$kernel/Image"
+          done
+
+          (
+            cd "$GITHUB_WORKSPACE/v4-r2-current-pins"
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'VEUX_BUILD_ALL_V4_R2_FINAL_GREEN_GATE=PASS'
