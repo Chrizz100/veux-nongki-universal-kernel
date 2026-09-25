@@ -1,0 +1,7 @@
+VEUX V6 CONTRACT SYNC
+Repo observed main: fa41707f202e7162ae08dcb43a413f83c1b93370
+Purpose: synchronize 5.4.292 static status and freeze V4->V5->V6 fleet evidence.
+
+2e56bc24408317d1478f607e07a26a4b3b400991b5f02e76ffc7449cdad837d2  lineages/5.4.292/build.yml
+89e236b3162396e1ca4644a981691ad2d108423f7a7187c102308cb9ab172e8c  common/contracts/CANDIDATE_5.4.292.yml
+e3823d6e8ede83730d95af3940ee8ba9dc63ec08f50a7758abee24f49443195a  common/contracts/CURRENT_FLEET_V6.yml
