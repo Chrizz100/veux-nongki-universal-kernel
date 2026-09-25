@@ -1,0 +1,64 @@
+schema: 1
+kernel: "5.4.293"
+status: "candidate"
+
+profile:
+  path: "lineages/5.4.293/build.yml"
+  expected_blob: "b1dc6916ac389def4db298fbb7b82055dbbd3a80"
+
+evidence_workflow:
+  path: ".github/workflows/veux-port-5.4.293-35170-nomount-r1.yml"
+  blob: "38514a0ec2986a919de6a4330b07e61993898c32"
+  run_id: 36159758307
+  run_head_sha: "9cd8700489c61acd346b16253e15e7e0d462193e"
+  conclusion: "success"
+
+artifact:
+  id: 10875923670
+  name: "Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount"
+  size_bytes: 16969116
+  digest: "sha256:223a83b9448d4f0698e9059cdf5e5e383ea7714d60f6f5b5f07d484042cb2084"
+  expires_at: "2026-12-24T16:17:03Z"
+
+components:
+  resukisu:
+    version: "35170"
+    commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e"
+    uapi: 4
+  susfs:
+    version: "2.3.0"
+    commit: "04a9d713106191ba98be680bd7ad9547ab1de964"
+  nomount:
+    enabled: true
+    version: "2.0.0"
+    commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
+
+image:
+  kernelrelease: "5.4.293-veid-veux"
+  bytes: 33927680
+  sha256: "5afa8246724aba7bc6b73c4d66a74266f5044fa47757c548a7bd983b8b8d5981"
+
+package:
+  file: "Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount.zip"
+  bytes: 16965882
+  sha256: "133e5213f7ba51715365978da65e200e53a04471b5e4eb5398c32d018c6eba57"
+
+static_boot:
+  file: "Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount_STATIC_BOOT.img"
+  bytes: 134217728
+  sha256: "f4610e0e0540fec540afd13869adc00a39712e0113ed01b50357c7a1b1b64011"
+
+status_metadata:
+  r1_package_status_duplicate_detected: true
+  duplicated_key: "PACKAGE_PASS"
+  technical_build_result_affected: false
+  normalization_workflow: ".github/workflows/veux-port-5.4.293-35170-nomount-r2-status-normalized.yml"
+  normalization_workflow_expected_blob: "51445256cff6de37c61b31801ab1ec91b83e64b6"
+  normalization_run_status: "pending"
+  note: "R1 is retained as immutable build evidence; R2 authenticates that artifact, normalizes PACKAGE-STATUS, and enforces exactly-one status keys without rebuilding the kernel."
+
+validation:
+  compile_pass: true
+  package_pass: true
+  static_boot_path_pass: true
+  device_pass: false
