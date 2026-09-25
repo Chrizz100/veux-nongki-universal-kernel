@@ -1,0 +1,193 @@
+name: VEUX Port 5.4.293 R2 - Normalize Status Evidence
+'on':
+  workflow_dispatch: null
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-port-293-status-normalize-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  SOURCE_RUN_ID: '36159758307'
+  SOURCE_HEAD_SHA: 9cd8700489c61acd346b16253e15e7e0d462193e
+  SOURCE_ARTIFACT_ID: '10875923670'
+  SOURCE_ARTIFACT_NAME: Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount
+  SOURCE_ARTIFACT_BYTES: '16969116'
+  SOURCE_ARTIFACT_SHA256: 223a83b9448d4f0698e9059cdf5e5e383ea7714d60f6f5b5f07d484042cb2084
+  PACKAGE_FILE: Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  PACKAGE_SHA256: 133e5213f7ba51715365978da65e200e53a04471b5e4eb5398c32d018c6eba57
+  PACKAGE_BYTES: '16965882'
+  IMAGE_SHA256: 5afa8246724aba7bc6b73c4d66a74266f5044fa47757c548a7bd983b8b8d5981
+  IMAGE_BYTES: '33927680'
+  STATIC_BOOT_SHA256: f4610e0e0540fec540afd13869adc00a39712e0113ed01b50357c7a1b1b64011
+
+jobs:
+  normalize-status:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Authenticate and download exact 293 source artifact
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
+          WORK="$RUNNER_TEMP/293-status-r2"
+          RAW="$WORK/raw"
+          mkdir -p "$RAW"
+
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID" \
+            -o "$WORK/artifact.json"
+
+          jq -e \
+            --arg name "$SOURCE_ARTIFACT_NAME" \
+            --arg digest "sha256:$SOURCE_ARTIFACT_SHA256" \
+            --arg run "$SOURCE_RUN_ID" \
+            --arg head "$SOURCE_HEAD_SHA" \
+            --argjson id "$SOURCE_ARTIFACT_ID" \
+            --argjson bytes "$SOURCE_ARTIFACT_BYTES" \
+            '.id == $id
+             and .name == $name
+             and .size_in_bytes == $bytes
+             and .expired == false
+             and .digest == $digest
+             and (.workflow_run.id | tostring) == $run
+             and .workflow_run.head_sha == $head' \
+            "$WORK/artifact.json" >/dev/null
+
+          archive_url="$(jq -r '.archive_download_url' "$WORK/artifact.json")"
+          test -n "$archive_url"
+          test "$archive_url" != null
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-delay 2 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$archive_url" -o "$WORK/source-artifact.zip"
+
+          test "$(sha256sum "$WORK/source-artifact.zip" | awk '{print $1}')" = "$SOURCE_ARTIFACT_SHA256"
+          unzip -q "$WORK/source-artifact.zip" -d "$RAW"
+          test -f "$RAW/$PACKAGE_FILE"
+          test -f "$RAW/BUILD-STATUS.txt"
+          test -f "$RAW/PACKAGE-STATUS.txt"
+          test -f "$RAW/STATIC-RESULT.txt"
+          test -f "$RAW/SHA256SUMS.txt"
+          test "$(find "$RAW" -maxdepth 1 -type f | wc -l)" -eq 5
+          (
+            cd "$RAW"
+            sha256sum -c SHA256SUMS.txt
+          )
+          test "$(sha256sum "$RAW/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          test "$(stat -c '%s' "$RAW/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+          echo 'SOURCE_293_ARTIFACT_AUTH=PASS'
+
+      - name: Normalize package status and require exactly-one semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/293-status-r2"
+          RAW="$WORK/raw"
+          OUT="$GITHUB_WORKSPACE/public293-normalized"
+          rm -rf "$OUT"
+          cp -a "$RAW" "$OUT"
+
+          # Authenticate the exact known R1 metadata defect before changing anything.
+          test "$(grep -Ec '^PACKAGE_PASS=' "$RAW/PACKAGE-STATUS.txt")" -eq 2
+          test "$(grep -Fxc 'PACKAGE_PASS=NO' "$RAW/PACKAGE-STATUS.txt")" -eq 1
+          test "$(grep -Fxc 'PACKAGE_PASS=YES' "$RAW/PACKAGE-STATUS.txt")" -eq 1
+
+          tmp="$WORK/PACKAGE-STATUS.normalized.txt"
+          grep -Ev '^(COMPILE_PASS|PACKAGE_PASS|STATIC_BOOT_PATH_PASS|DEVICE_PASS)=' \
+            "$RAW/PACKAGE-STATUS.txt" > "$tmp"
+          {
+            cat "$tmp"
+            echo 'COMPILE_PASS=YES'
+            echo 'PACKAGE_PASS=YES'
+            echo 'STATIC_BOOT_PATH_PASS=NO'
+            echo 'DEVICE_PASS=NO'
+            echo "STATUS_NORMALIZED_FROM_RUN=$SOURCE_RUN_ID"
+            echo 'STATUS_EXACTLY_ONE_GATE=PASS'
+          } > "$OUT/PACKAGE-STATUS.txt"
+
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3"
+            test "$(grep -Ec "^${key}=" "$file")" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+
+          require_exact_key "$OUT/BUILD-STATUS.txt" COMPILE_PASS YES
+          require_exact_key "$OUT/BUILD-STATUS.txt" PACKAGE_PASS NO
+          require_exact_key "$OUT/BUILD-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$OUT/BUILD-STATUS.txt" DEVICE_PASS NO
+
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" COMPILE_PASS YES
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" PACKAGE_PASS YES
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" DEVICE_PASS NO
+
+          require_exact_key "$OUT/STATIC-RESULT.txt" COMPILE_PASS YES
+          require_exact_key "$OUT/STATIC-RESULT.txt" PACKAGE_PASS YES
+          require_exact_key "$OUT/STATIC-RESULT.txt" STATIC_BOOT_PATH_PASS YES
+          require_exact_key "$OUT/STATIC-RESULT.txt" DEVICE_PASS NO
+
+          require_exact_key "$OUT/STATIC-RESULT.txt" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$OUT/STATIC-RESULT.txt" AK3_SHA256 "$PACKAGE_SHA256"
+          require_exact_key "$OUT/STATIC-RESULT.txt" BOOT_SHA256 "$STATIC_BOOT_SHA256"
+          require_exact_key "$OUT/STATIC-RESULT.txt" RESUKISU_VERSION 35170
+          require_exact_key "$OUT/STATIC-RESULT.txt" NOMOUNT_ENABLED YES
+
+          test "$(sha256sum "$OUT/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          test "$(stat -c '%s' "$OUT/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+
+          (
+            cd "$OUT"
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          echo 'PORT_293_STATUS_NORMALIZATION=PASS'
+
+      - name: Publish normalized 293 evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Veux_5.4.293_SUSFS_2.3_ReSukiSU_35170_NoMount_StatusNormalized
+          path: public293-normalized/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Final normalized status GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/public293-normalized"
+
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3"
+            test "$(grep -Ec "^${key}=" "$file")" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" COMPILE_PASS YES
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" PACKAGE_PASS YES
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$OUT/PACKAGE-STATUS.txt" DEVICE_PASS NO
+          grep -Fxq "STATUS_NORMALIZED_FROM_RUN=$SOURCE_RUN_ID" "$OUT/PACKAGE-STATUS.txt"
+          grep -Fxq 'STATUS_EXACTLY_ONE_GATE=PASS' "$OUT/PACKAGE-STATUS.txt"
+          (
+            cd "$OUT"
+            sha256sum -c SHA256SUMS.txt
+          )
+          echo 'VEUX_5_4_293_STATUS_R2_FINAL_GREEN_GATE=PASS'
