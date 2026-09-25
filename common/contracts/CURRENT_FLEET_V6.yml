@@ -1,0 +1,117 @@
+schema: 1
+contract: "CURRENT_FLEET_V6"
+status: "static-validated"
+device: "veux"
+platform: "sm6375"
+target: "android13-stock-vendor"
+
+repository:
+  branch: "main"
+  observed_head_sha: "fa41707f202e7162ae08dcb43a413f83c1b93370"
+  observed_at_utc: "2026-09-25T11:03:01Z"
+
+policy:
+  lineage_count: 6
+  current_pin_policy_preserved: true
+  auto_promote_35158_to_35170: false
+  device_pass_is_never_inferred_from_static: true
+
+pipeline:
+  compile:
+    workflow_path: ".github/workflows/veux-build-all-v4-fresh-current-pins-compile-r2.yml"
+    run_id: 36117801648
+    run_head_sha: "c46d4fbdf1f505d0728df405ede750ca419199a5"
+    artifact_id: 10858545303
+    artifact_name: "VEUX-BUILD-ALL-V4-R2-FRESH-CURRENT-PINS-36117801648"
+    artifact_digest: "sha256:8320d322aac634ff17333f364b1223097863f32ec234fe0617676e5f88920ad5"
+    result: "PASS"
+  package:
+    workflow_path: ".github/workflows/veux-build-all-v5-current-pins-package-r1.yml"
+    run_id: 36125125071
+    run_head_sha: "76ac5570d4e9e4c87a686c2185c137441c853803"
+    artifact_id: 10858883212
+    artifact_name: "VEUX-BUILD-ALL-V5-R1-CURRENT-PINS-AK3-36125125071"
+    artifact_digest: "sha256:de875e4c50b7b509628170bf7cf177c3aed1b7bc3a661e7fa62489a163aa2336"
+    result: "PASS"
+  static_boot:
+    workflow_path: ".github/workflows/veux-build-all-v6-current-pins-static-boot-r1.yml"
+    workflow_blob: "4f3824414df2f31a70ebda56ebc6fc7639d9aa7a"
+    run_id: 36127294906
+    run_head_sha: "fa41707f202e7162ae08dcb43a413f83c1b93370"
+    artifact_id: 10860471936
+    artifact_name: "VEUX-BUILD-ALL-V6-R1-CURRENT-PINS-STATIC-BOOT-36127294906"
+    artifact_size_bytes: 202281348
+    artifact_digest: "sha256:46e014e189854f4e356e28176859a47ee0fc114c6ac16f7d14cfe7ade1781eb1"
+    result: "PASS"
+
+lineages:
+  "5.4.274":
+    resukisu: {version: "35170", commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: true, version: "2.0.0", commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"}
+    image: {bytes: 29846016, sha256: "6702b0edee8b08ed33620c58de43f7273d67d92fef25e0301d0b1b198777216e"}
+    package_sha256: "8096f515181af2ee765a8cb5dcad7d5fbf9191f783b0e120486fc46ab53a1a49"
+    static_boot_sha256: "0d07b05de396c278535fd7dbbf3178b7736a4cde083f17110c052ccfcd1e5cc7"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+  "5.4.292":
+    resukisu: {version: "35170", commit: "9be0f347f38e790c846915bd5f9c24b337f85c4e", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: true, version: "2.0.0", commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"}
+    image: {bytes: 33927680, sha256: "0ca72d47913e99401bfab4ac8ef24c8aa79f815f93300943f1fe06ac1f44bb0a"}
+    package_sha256: "ffc014d26ed87aa869fd017e996c98b06f0a7c4d52b4c9fc3db918ac4097f1e7"
+    static_boot_sha256: "62489fc853fabb294702a5dbc76895931f698ac0d465b582db0ee4132f62f066"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+  "5.4.293":
+    resukisu: {version: "35158", commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: false, version: "disabled", commit: ""}
+    image: {bytes: 33925632, sha256: "c1061cf156e5b7fd407c0a4acd090cded7447c4ab3e383ce933983aa078b8d1b"}
+    package_sha256: "9219f4880a75a0c572b9b25c0d5472997ff617812177b2ee48533c24c17bf56f"
+    static_boot_sha256: "52a3951d161af174a7b205ba9d7b7d6d5002b5f73170557f313d942e1f01f397"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+  "5.4.300":
+    resukisu: {version: "35158", commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: false, version: "disabled", commit: ""}
+    image: {bytes: 29911552, sha256: "d36e4833e6d2e5d7feb59f85bed2ee72f1eeecb15805809dff33eaa6896f73b8"}
+    package_sha256: "211fcece707875016715dfaef3b6edbbc1ef6e601421e76d8f8a19368c59bd4e"
+    static_boot_sha256: "f97fc6120c8bf568a8334f87176b98402d4d6e45b802181318695bbe3511cd08"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+  "5.4.301":
+    resukisu: {version: "35158", commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: false, version: "disabled", commit: ""}
+    image: {bytes: 29911552, sha256: "bbf27867d4b8d72288d6f6a0987225d5785167eca8df82332abf7fdae88bdd1e"}
+    package_sha256: "901f8b8f61130b88b47f375d6437d768825cc05af1ea211f73d41a3b452a72db"
+    static_boot_sha256: "feff1d2a6c8fbfc8ee3009a4d74f0a12da1caf50d47d015688dc95ee6c97ba04"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+  "5.4.302":
+    resukisu: {version: "35158", commit: "6d18926ae6eeb571a04c1ce7552c324d606fa9d8", uapi: 4}
+    susfs: {version: "2.3.0", commit: "04a9d713106191ba98be680bd7ad9547ab1de964"}
+    nomount: {enabled: false, version: "disabled", commit: ""}
+    image: {bytes: 29911552, sha256: "d7397a1dd8add10d5939c83e84d2a7c8c75347f3cb0603f8769b93919521aa49"}
+    package_sha256: "d13888705e297eae1662236610ccfda95c90b477c439c3dc4213727303642c01"
+    static_boot_sha256: "b82002acc7064f27bc50e2fa5ee6b0e06cac8e26bdc6203a94d64b4bababb1bb"
+    validation: {compile: true, package: true, static_boot: true, device_in_v6_chain: false}
+
+external_device_evidence:
+  "5.4.274":
+    recorded: true
+    scope: "external-full-pass"
+    contract: "common/contracts/GOLDEN_BASELINE.yml"
+    note: "Not promoted into the V6 chain DEVICE_PASS marker; retained as separate Golden evidence."
+  other_five:
+    recorded: false
+
+cleanup_protection:
+  keep_until_v7_replacement:
+    - "common/contracts/GOLDEN_BASELINE.yml"
+    - "common/contracts/CANDIDATE_5.4.292.yml"
+    - ".github/workflows/veux-build-all-v4-fresh-current-pins-compile-r2.yml"
+    - ".github/workflows/veux-build-all-v5-current-pins-package-r1.yml"
+    - ".github/workflows/veux-build-all-v6-current-pins-static-boot-r1.yml"
+    - ".github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml"
+    - ".github/workflows/veux-u6-o53-v1-all-six-resukisu-35158-static-boot-audit.yml"
+    - ".github/workflows/veux-u6-o53-v2-all-six-resukisu-35158-static-boot-failclosed-recheck.yml"
+    - ".github/workflows/veux-build-worker-v2-5.4.292-clean-ak3.yml"
+    - ".github/workflows/veux-build-worker-v3-5.4.292-static-boot-v2.yml"

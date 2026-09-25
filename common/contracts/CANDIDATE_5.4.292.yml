@@ -27,8 +27,34 @@ components:
     version: "2.0.0"
     commit: "b8d268353b4e7ecc53c67d1816a626b7d6579201"
 
+current_pipeline:
+  compile:
+    workflow_path: ".github/workflows/veux-build-all-v4-fresh-current-pins-compile-r2.yml"
+    run_id: 36117801648
+    run_head_sha: "c46d4fbdf1f505d0728df405ede750ca419199a5"
+    artifact_id: 10858545303
+    artifact_digest: "sha256:8320d322aac634ff17333f364b1223097863f32ec234fe0617676e5f88920ad5"
+    image_sha256: "0ca72d47913e99401bfab4ac8ef24c8aa79f815f93300943f1fe06ac1f44bb0a"
+    image_bytes: 33927680
+  package:
+    workflow_path: ".github/workflows/veux-build-all-v5-current-pins-package-r1.yml"
+    run_id: 36125125071
+    run_head_sha: "76ac5570d4e9e4c87a686c2185c137441c853803"
+    artifact_id: 10858883212
+    artifact_digest: "sha256:de875e4c50b7b509628170bf7cf177c3aed1b7bc3a661e7fa62489a163aa2336"
+    ak3_sha256: "ffc014d26ed87aa869fd017e996c98b06f0a7c4d52b4c9fc3db918ac4097f1e7"
+  static_boot:
+    workflow_path: ".github/workflows/veux-build-all-v6-current-pins-static-boot-r1.yml"
+    run_id: 36127294906
+    run_head_sha: "fa41707f202e7162ae08dcb43a413f83c1b93370"
+    artifact_id: 10860471936
+    artifact_digest: "sha256:46e014e189854f4e356e28176859a47ee0fc114c6ac16f7d14cfe7ade1781eb1"
+    boot_file: "VEUX-5.4.292-ReSukiSU35170-SUSFS2.3-NoMount2.0.0-STATIC-BOOT.img"
+    boot_sha256: "62489fc853fabb294702a5dbc76895931f698ac0d465b582db0ee4132f62f066"
+    boot_bytes: 134217728
+
 validation:
   compile_pass: true
   package_pass: true
-  static_boot_path_pass: false
+  static_boot_path_pass: true
   device_pass: false
