@@ -3,17 +3,17 @@ kernel: "5.4.292"
 status: "candidate"
 
 workflow:
-  path: ".github/workflows/veux-auto-v3-5.4.292-golden-candidate-compile.yml"
-  blob: "a3871d70312ef0e21cb2935c4153e80038316e45"
-  run_id: 36024141602
-  run_head_sha: "58970a8b9446513cd1a9f96cff07097af7f4a5a9"
+  path: ".github/workflows/veux-build-worker-v2-5.4.292-clean-ak3.yml"
+  blob: "270abcb231716b7c1d4308ef861045bba2ce7f22"
+  run_id: 36102777445
+  run_head_sha: "69c62045689c9fa095576072e3c5659f0a51329e"
   conclusion: "success"
 
 artifact:
-  id: 10819847016
-  name: "VEUX-V3-5.4.292-GOLDEN-CANDIDATE-COMPILE-36024141602"
-  size_bytes: 14475439
-  digest: "sha256:cd51b683de90105f2fc97c69048845c09205bfd40ef496f52e0af8d9ea08bc2b"
+  id: 10850137307
+  name: "VEUX-5.4.292-ReSukiSU35170-SUSFS2.3-NoMount2.0-Compile-36102777445"
+  size_bytes: 14422935
+  digest: "sha256:3d9aebdf9264646419e53c6a2c98d9aafad5bf7b98c4332c459e0360c28251a6"
 
 components:
   resukisu:
@@ -29,6 +29,6 @@ components:
 
 validation:
   compile_pass: true
-  package_pass: false
+  package_pass: true
   static_boot_path_pass: false
   device_pass: false
