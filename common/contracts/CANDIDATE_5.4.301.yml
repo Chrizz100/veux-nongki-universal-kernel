@@ -1,0 +1,72 @@
+schema: 1
+kernel: 5.4.301
+status: candidate
+profile:
+  path: lineages/5.4.301/build.yml
+  previous_blob: e80b6a3918c46d5845fa4d3e9f589ad6e245ef8d
+  expected_blob: d4199afe050268a9921bafbcac63407df18f1318
+evidence_workflow:
+  path: .github/workflows/veux-port-5.4.301-35170-nomount-r2-clang-transport-fallback.yml
+  blob: 7fc9a876dae7b120f80eba74e26bd6f60ff54347
+  run_id: 36256030400
+  run_head_sha: e925d983f205c13d08d5d3be8f04be7e67bc1102
+  conclusion: success
+artifact:
+  id: 10911103108
+  name: Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount
+  size_bytes: 15413098
+  digest: sha256:dfb5cb92a90ead89515d605f7193287f5dca76ef7ced103168bd223c06ea26a5
+  expires_at: '2026-12-25T16:36:02Z'
+components:
+  resukisu:
+    version: '35170'
+    commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+    uapi: 4
+  susfs:
+    version: 2.3.0
+    commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+  nomount:
+    enabled: true
+    version: 2.0.0
+    commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+image:
+  kernelrelease: 5.4.301-qgki-g82179e362f33
+  bytes: 29911552
+  sha256: 6a8219d5689473adbc91dd64344611aa691c191e7e78308fa54d6a498ce9970d
+  dtb_sha256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+package:
+  file: Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  bytes: 15409464
+  sha256: ea5273ff8e8b73c497f18e25593c74aa4a04888ec3afba3e4131493f840b4cf8
+static_boot:
+  file: Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount_STATIC_BOOT.img
+  bytes: 134217728
+  sha256: 4cf5ad98c0fc610d0f5123894bda15ad2b55945521c513096da8aa7d6aa5a68b
+status_metadata:
+  staged_status_chain: true
+  build_status:
+    compile_pass: true
+    package_pass: false
+    static_boot_path_pass: false
+    device_pass: false
+  package_status:
+    compile_pass: true
+    package_pass: true
+    static_boot_path_pass: false
+    device_pass: false
+  static_result:
+    compile_pass: true
+    package_pass: true
+    static_boot_path_pass: true
+    device_pass: false
+  warning_regression_gate: pass
+  topology_binding_gate: pass
+  ksu_dual_path_binding: pass
+  ksu_build_path_binding: pass
+  generic_audit_ksu_dir2_classified: pass
+  note: R2 is retained as immutable build evidence. Its public artifact deliberately records staged BUILD, PACKAGE, and STATIC status transitions; DEVICE_PASS remains NO throughout.
+validation:
+  compile_pass: true
+  package_pass: true
+  static_boot_path_pass: true
+  device_pass: false
