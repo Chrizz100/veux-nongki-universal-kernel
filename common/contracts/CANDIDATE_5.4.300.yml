@@ -1,0 +1,54 @@
+schema: 1
+kernel: 5.4.300
+status: candidate
+profile:
+  path: lineages/5.4.300/build.yml
+  expected_blob: 103ff42d28347eaaeb6e3c847a5a7bba122b6d83
+evidence_workflow:
+  path: .github/workflows/veux-port-5.4.300-35170-nomount-r9-topology-binding-fix.yml
+  blob: 3deea2fb8b2394d81536eaf5f1f4a1923e665b02
+  run_id: 36238891515
+  run_head_sha: 6ed011a0b9290c5773fb5bfcaa9ac61673c8b6a7
+  conclusion: success
+artifact:
+  id: 10905870737
+  name: Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount
+  size_bytes: 15412775
+  digest: sha256:f9896fa083da24adffd413fb3c0ab24e67be9b0a31bc5cc8f20ec9d1ee955c1f
+  expires_at: '2026-12-25T11:27:49Z'
+components:
+  resukisu:
+    version: '35170'
+    commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+    uapi: 4
+  susfs:
+    version: 2.3.0
+    commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+  nomount:
+    enabled: true
+    version: 2.0.0
+    commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+image:
+  kernelrelease: 5.4.300-qgki-g82179e362f33
+  bytes: 29911552
+  sha256: 703ef5763cb8a10de3113493fbc7cce64f0599ede644963fe33e8214928d2cee
+package:
+  file: Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  bytes: 15409141
+  sha256: 1260765c0d08e8ca8b42389feaf1a7a611ed57b455978647ed8cc3b5bd7677c8
+static_boot:
+  file: Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount_STATIC_BOOT.img
+  bytes: 134217728
+  sha256: 0b3e316dd1aebbe644853f9b7fc272321abf6756127232213cd3b0499e574b0f
+status_metadata:
+  source_status_exactly_one: true
+  topology_binding_gate: pass
+  ksu_dual_path_binding: pass
+  ksu_build_path_binding: pass
+  generic_audit_ksu_dir2_classified: pass
+  note: R9 is retained as immutable build evidence. Its public artifact already carries exactly-one status keys and proves compile, package, static boot, and the 5.4.300 KernelSU topology binding without a second normalization rebuild.
+validation:
+  compile_pass: true
+  package_pass: true
+  static_boot_path_pass: true
+  device_pass: false

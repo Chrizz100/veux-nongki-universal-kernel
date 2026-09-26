@@ -1,0 +1,199 @@
+schema: 1
+contract: CURRENT_FLEET_V8
+status: 300-candidate-complete-static-validated
+device: veux
+platform: sm6375
+target: android13-stock-vendor
+repository:
+  branch: main
+  source_observed_head_sha: 6ed011a0b9290c5773fb5bfcaa9ac61673c8b6a7
+  previous_contract: common/contracts/CURRENT_FLEET_V7.yml
+  previous_contract_blob: 2643820a62ad915b8bd892f2e5a65d7a7bfd9259
+policy:
+  lineage_count: 6
+  explicit_35170_nomount_promotions:
+  - 5.4.274
+  - 5.4.292
+  - 5.4.293
+  - 5.4.300
+  remaining_35158_nomount_disabled:
+  - 5.4.301
+  - 5.4.302
+  auto_promote_35158_to_35170: false
+  device_pass_is_never_inferred_from_static: true
+lineages:
+  5.4.274:
+    profile_blob: 69533f627c0c198362fdf203988edf881171b382
+    resukisu:
+      version: '35170'
+      commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: true
+      version: 2.0.0
+      commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+    image:
+      bytes: 29846016
+      sha256: 6702b0edee8b08ed33620c58de43f7273d67d92fef25e0301d0b1b198777216e
+    package_sha256: 8096f515181af2ee765a8cb5dcad7d5fbf9191f783b0e120486fc46ab53a1a49
+    static_boot_sha256: 0d07b05de396c278535fd7dbbf3178b7736a4cde083f17110c052ccfcd1e5cc7
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: true
+  5.4.292:
+    profile_blob: 607eaee2eeab008b587b612efcba33ff3798dc93
+    candidate_contract: common/contracts/CANDIDATE_5.4.292.yml
+    resukisu:
+      version: '35170'
+      commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: true
+      version: 2.0.0
+      commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+    image:
+      bytes: 33927680
+      sha256: 0ca72d47913e99401bfab4ac8ef24c8aa79f815f93300943f1fe06ac1f44bb0a
+    package_sha256: ffc014d26ed87aa869fd017e996c98b06f0a7c4d52b4c9fc3db918ac4097f1e7
+    static_boot_sha256: 62489fc853fabb294702a5dbc76895931f698ac0d465b582db0ee4132f62f066
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: false
+  5.4.293:
+    profile_blob: b1dc6916ac389def4db298fbb7b82055dbbd3a80
+    candidate_contract: common/contracts/CANDIDATE_5.4.293.yml
+    resukisu:
+      version: '35170'
+      commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: true
+      version: 2.0.0
+      commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+    image:
+      bytes: 33927680
+      sha256: 5afa8246724aba7bc6b73c4d66a74266f5044fa47757c548a7bd983b8b8d5981
+    package_sha256: 133e5213f7ba51715365978da65e200e53a04471b5e4eb5398c32d018c6eba57
+    static_boot_sha256: f4610e0e0540fec540afd13869adc00a39712e0113ed01b50357c7a1b1b64011
+    evidence_run_id: 36159758307
+    evidence_artifact_id: 10875923670
+    status_normalization: success
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: false
+    normalization_run_id: 36167620067
+    normalization_run_head_sha: 6845dc51dd1831485f059fdf6104e521d641b9ef
+    normalization_artifact_id: 10878440334
+    normalization_artifact_digest: sha256:f1b4d5dab5058683cee87d43b45df9e92fed8df8c578d199281c1d6a1b2f5f25
+    normalization_exactly_one_gate: true
+  5.4.300:
+    profile_blob: 103ff42d28347eaaeb6e3c847a5a7bba122b6d83
+    candidate_contract: common/contracts/CANDIDATE_5.4.300.yml
+    candidate_contract_blob: fbe1abb0cc090bb73e8e50627279dad5d66d360f
+    resukisu:
+      version: '35170'
+      commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: true
+      version: 2.0.0
+      commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+    image:
+      bytes: 29911552
+      sha256: 703ef5763cb8a10de3113493fbc7cce64f0599ede644963fe33e8214928d2cee
+    package_sha256: 1260765c0d08e8ca8b42389feaf1a7a611ed57b455978647ed8cc3b5bd7677c8
+    static_boot_sha256: 0b3e316dd1aebbe644853f9b7fc272321abf6756127232213cd3b0499e574b0f
+    evidence_run_id: 36238891515
+    evidence_run_head_sha: 6ed011a0b9290c5773fb5bfcaa9ac61673c8b6a7
+    evidence_artifact_id: 10905870737
+    evidence_artifact_digest: sha256:f9896fa083da24adffd413fb3c0ab24e67be9b0a31bc5cc8f20ec9d1ee955c1f
+    topology_binding: success
+    status_exactly_one: true
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: false
+  5.4.301:
+    profile_blob: e80b6a3918c46d5845fa4d3e9f589ad6e245ef8d
+    resukisu:
+      version: '35158'
+      commit: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: false
+      version: disabled
+      commit: ''
+    image:
+      bytes: 29911552
+      sha256: bbf27867d4b8d72288d6f6a0987225d5785167eca8df82332abf7fdae88bdd1e
+    package_sha256: 901f8b8f61130b88b47f375d6437d768825cc05af1ea211f73d41a3b452a72db
+    static_boot_sha256: feff1d2a6c8fbfc8ee3009a4d74f0a12da1caf50d47d015688dc95ee6c97ba04
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: false
+  5.4.302:
+    profile_blob: 6988c68b9356e90ddd69b70d427fcadb32092703
+    resukisu:
+      version: '35158'
+      commit: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+      uapi: 4
+    susfs:
+      version: 2.3.0
+      commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+    nomount:
+      enabled: false
+      version: disabled
+      commit: ''
+    image:
+      bytes: 29911552
+      sha256: d7397a1dd8add10d5939c83e84d2a7c8c75347f3cb0603f8769b93919521aa49
+    package_sha256: d13888705e297eae1662236610ccfda95c90b477c439c3dc4213727303642c01
+    static_boot_sha256: b82002acc7064f27bc50e2fa5ee6b0e06cac8e26bdc6203a94d64b4bababb1bb
+    validation:
+      compile: true
+      package: true
+      static_boot: true
+      device: false
+external_device_evidence:
+  5.4.274:
+    recorded: true
+    scope: external-full-pass
+    contract: common/contracts/GOLDEN_BASELINE.yml
+  other_five:
+    recorded: false
+cleanup_protection:
+  keep:
+  - common/contracts/GOLDEN_BASELINE.yml
+  - common/contracts/CANDIDATE_5.4.292.yml
+  - common/contracts/CANDIDATE_5.4.293.yml
+  - common/contracts/CANDIDATE_5.4.300.yml
+  - common/contracts/CURRENT_FLEET_V6.yml
+  - common/contracts/CURRENT_FLEET_V7.yml
+  - common/contracts/CURRENT_FLEET_V8.yml
+  - .github/workflows/veux-port-5.4.293-35170-nomount-r1.yml
+  - .github/workflows/veux-port-5.4.293-35170-nomount-r2-status-normalized.yml
+  - .github/workflows/veux-port-5.4.300-35170-nomount-r9-topology-binding-fix.yml
