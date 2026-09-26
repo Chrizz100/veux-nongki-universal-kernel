@@ -1,0 +1,402 @@
+name: VEUX 5.4.302 Status Promotion V10 R1 - Verify R2 Normalized Evidence
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-302-status-promotion-v10-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  PROFILE: lineages/5.4.302/build.yml
+  PROFILE_BLOB: 81bc186ecd3a021c455769d3a61ef0a46b6b1b73
+  PREVIOUS_PROFILE_BLOB: 6988c68b9356e90ddd69b70d427fcadb32092703
+  CANDIDATE: common/contracts/CANDIDATE_5.4.302.yml
+  CANDIDATE_BLOB: 517ab43b6852d3f1dee53bd09a76619ccbd8655c
+  PREVIOUS_FLEET: common/contracts/CURRENT_FLEET_V9.yml
+  PREVIOUS_FLEET_BLOB: 3fcfb1833ef4b81c62e6a79895d0f9aaad681fa3
+  FLEET: common/contracts/CURRENT_FLEET_V10.yml
+  FLEET_BLOB: a051e7dd90cbf08c195087e785277847511c0017
+  R2_WORKFLOW: .github/workflows/veux-port-5.4.302-35170-nomount-r2-status-normalized.yml
+  R2_WORKFLOW_BLOB: 183dd49cb714c900fbb827b8f908a051f7e7660d
+  R2_RUN_ID: '36270805847'
+  R2_HEAD_SHA: c04d81a9067511eccffc934f6fd76502fc963727
+  R2_JOB_NAME: Normalize exact R1 evidence and rerun full final gate
+  R2_ARTIFACT_ID: '10915213794'
+  R2_ARTIFACT_NAME: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount_StatusNormalized
+  R2_ARTIFACT_BYTES: '15413019'
+  R2_ARTIFACT_SHA256: 699f4ddec2fca13a7e90a537c9f7147487953aa41f7bdb7766f90af48db0dea1
+  PACKAGE_FILE: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  PACKAGE_BYTES: '15409356'
+  PACKAGE_SHA256: 5666ab43c17e112b63778bcb02de1759919e74aa498d10d6eca11f4994ab4de3
+  IMAGE_BYTES: '29911552'
+  IMAGE_SHA256: d6a4aa5da2b7bf77dd3e4ac28deea4427df548cffe4e1a0fd8e02b54c6506f3b
+  EXPECTED_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+  STATIC_BOOT_BYTES: '134217728'
+  STATIC_BOOT_SHA256: 44a0743c92c52a445ba01316c4633c947a90fc0ba6ec3c55f55e91103951a5d2
+  BUILD_STATUS_SHA256: 28ec635f4be98a06e81c7b0421cc3c5ae173cd76cecbe45282d84555ce525ea8
+  PACKAGE_STATUS_SHA256: 27a098a55877679cb3bcb24a272637c034142e17cc3a7662edb0750af6efc37b
+  STATIC_RESULT_SHA256: ad695cccdc445f112071fb1214ccb9f5571457a3e7bd29fa4ca3a16a03da5d32
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+jobs:
+  verify-promotion:
+    name: Verify 5.4.302 R2 evidence and Fleet V10 promotion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install verification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl git jq python3 python3-yaml unzip
+
+      - name: Pin exact 5.4.302 promotion contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          for f in "$PROFILE" "$CANDIDATE" "$PREVIOUS_FLEET" "$FLEET" "$R2_WORKFLOW"; do
+            test -f "$f"
+          done
+          test "$(git hash-object "$PROFILE")" = "$PROFILE_BLOB"
+          test "$(git hash-object "$CANDIDATE")" = "$CANDIDATE_BLOB"
+          test "$(git hash-object "$PREVIOUS_FLEET")" = "$PREVIOUS_FLEET_BLOB"
+          test "$(git hash-object "$FLEET")" = "$FLEET_BLOB"
+          test "$(git hash-object "$R2_WORKFLOW")" = "$R2_WORKFLOW_BLOB"
+          echo 'PROMOTION_CONTRACT_BLOBS=PASS'
+          echo 'CONTRACT_BLOBS_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Verify profile candidate and Fleet V10 semantic chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYVERIFYCHAIN'
+          from pathlib import Path
+          import copy, os, yaml
+
+          profile=yaml.safe_load(Path(os.environ['PROFILE']).read_text(encoding='utf-8'))
+          candidate=yaml.safe_load(Path(os.environ['CANDIDATE']).read_text(encoding='utf-8'))
+          old=yaml.safe_load(Path(os.environ['PREVIOUS_FLEET']).read_text(encoding='utf-8'))
+          new=yaml.safe_load(Path(os.environ['FLEET']).read_text(encoding='utf-8'))
+
+          assert profile == {
+            'schema':1, 'kernel':'5.4.302', 'enabled':True, 'device':'veux', 'platform':'sm6375',
+            'target':'android13-stock-vendor',
+            'baseline':{'id':'veux-u7-n4-v7-5.4.274-full-pass-2026-09-24','manifest':'common/contracts/GOLDEN_BASELINE.yml','role':'derive','port_status':'candidate','from_kernel':'5.4.274'},
+            'legacy_authority':{'workflow':'.github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml'},
+            'features':{
+              'resukisu':{'enabled':True,'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+              'susfs':{'enabled':True,'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+              'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+            },
+            'outputs':{'ak3':True,'boot_img':True},
+            'validation':{'compile':True,'package':True,'static_boot':True,'device':False},
+          }
+
+          assert candidate['schema'] == 1 and candidate['kernel'] == '5.4.302' and candidate['status'] == 'candidate'
+          assert candidate['profile'] == {'path':os.environ['PROFILE'],'previous_blob':os.environ['PREVIOUS_PROFILE_BLOB'],'expected_blob':os.environ['PROFILE_BLOB']}
+          assert candidate['evidence_workflow'] == {
+            'path':os.environ['R2_WORKFLOW'],'blob':os.environ['R2_WORKFLOW_BLOB'],
+            'run_id':int(os.environ['R2_RUN_ID']),'run_head_sha':os.environ['R2_HEAD_SHA'],'conclusion':'success'
+          }
+          assert candidate['artifact']['id'] == int(os.environ['R2_ARTIFACT_ID'])
+          assert candidate['artifact']['name'] == os.environ['R2_ARTIFACT_NAME']
+          assert candidate['artifact']['size_bytes'] == int(os.environ['R2_ARTIFACT_BYTES'])
+          assert candidate['artifact']['digest'] == 'sha256:'+os.environ['R2_ARTIFACT_SHA256']
+          assert candidate['components'] == {
+            'resukisu':{'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+            'susfs':{'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+            'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+          }
+          assert candidate['image'] == {
+            'kernelrelease':'5.4.302-qgki-g82179e362f33','bytes':int(os.environ['IMAGE_BYTES']),
+            'sha256':os.environ['IMAGE_SHA256'],'dtb_sha256':os.environ['EXPECTED_DTB_SHA256']
+          }
+          assert candidate['package'] == {'file':os.environ['PACKAGE_FILE'],'bytes':int(os.environ['PACKAGE_BYTES']),'sha256':os.environ['PACKAGE_SHA256']}
+          assert candidate['static_boot']['bytes'] == int(os.environ['STATIC_BOOT_BYTES'])
+          assert candidate['static_boot']['sha256'] == os.environ['STATIC_BOOT_SHA256']
+
+          sm=candidate['status_metadata']
+          assert sm['source_build_workflow'] == '.github/workflows/veux-port-5.4.302-35170-nomount-r1.yml'
+          assert sm['source_build_workflow_blob'] == 'fb4d5afd2f308d15c446928b8b1625f2d439a59c'
+          assert sm['source_run_id'] == 36263837437
+          assert sm['source_run_head_sha'] == '734767487c6973c54d221d0a11ae48c85f015c24'
+          assert sm['source_artifact_id'] == 10914176645
+          assert sm['source_artifact_digest'] == 'sha256:26bff8f49db0e18c0fbbcc1d0827206cf02bf6cea2035143242c545454899e96'
+          assert sm['source_final_gate_failure'] is True
+          assert sm['source_missing_key'] == 'O44_302_SOURCE_CONTRACT'
+          assert sm['technical_build_result_affected'] is False
+          assert sm['normalization_workflow'] == os.environ['R2_WORKFLOW']
+          assert sm['normalization_workflow_blob'] == os.environ['R2_WORKFLOW_BLOB']
+          assert sm['normalization_run_status'] == 'success'
+          assert sm['normalization_run_id'] == int(os.environ['R2_RUN_ID'])
+          assert sm['normalization_run_head_sha'] == os.environ['R2_HEAD_SHA']
+          na=sm['normalization_artifact']
+          assert na['id'] == int(os.environ['R2_ARTIFACT_ID'])
+          assert na['name'] == os.environ['R2_ARTIFACT_NAME']
+          assert na['size_bytes'] == int(os.environ['R2_ARTIFACT_BYTES'])
+          assert na['digest'] == 'sha256:'+os.environ['R2_ARTIFACT_SHA256']
+          assert sm['single_line_status_normalization'] is True
+          assert sm['staged_status_chain'] is True
+          assert sm['build_status'] == {'compile_pass':True,'package_pass':False,'static_boot_path_pass':False,'device_pass':False}
+          assert sm['package_status'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':False,'device_pass':False}
+          assert sm['static_result'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':True,'device_pass':False}
+          for k in ('warning_regression_gate','o44_source_contract','ksu_dual_path_binding','ksu_build_path_binding','generic_audit_ksu_dir2_classified'):
+            assert sm[k] == 'pass'
+          assert candidate['validation'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':True,'device_pass':False}
+
+          expected=copy.deepcopy(old)
+          expected['contract']='CURRENT_FLEET_V10'
+          expected['status']='all-six-35170-nomount-complete-static-validated'
+          expected['repository']={'branch':'main','source_observed_head_sha':os.environ['R2_HEAD_SHA'],'previous_contract':os.environ['PREVIOUS_FLEET'],'previous_contract_blob':os.environ['PREVIOUS_FLEET_BLOB']}
+          expected['policy']['explicit_35170_nomount_promotions']=['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          expected['policy']['remaining_35158_nomount_disabled']=[]
+          expected['lineages']['5.4.302']={
+            'profile_blob':os.environ['PROFILE_BLOB'],
+            'candidate_contract':os.environ['CANDIDATE'],'candidate_contract_blob':os.environ['CANDIDATE_BLOB'],
+            'resukisu':{'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+            'susfs':{'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+            'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+            'image':{'bytes':int(os.environ['IMAGE_BYTES']),'sha256':os.environ['IMAGE_SHA256']},
+            'package_sha256':os.environ['PACKAGE_SHA256'],'static_boot_sha256':os.environ['STATIC_BOOT_SHA256'],
+            'evidence_run_id':int(os.environ['R2_RUN_ID']),'evidence_run_head_sha':os.environ['R2_HEAD_SHA'],
+            'evidence_artifact_id':int(os.environ['R2_ARTIFACT_ID']),'evidence_artifact_digest':'sha256:'+os.environ['R2_ARTIFACT_SHA256'],
+            'source_build_run_id':36263837437,'status_normalization':'success','normalization_single_line_gate':True,
+            'o44_source_contract':'success','topology_binding':'success','status_staged_chain':True,
+            'validation':{'compile':True,'package':True,'static_boot':True,'device':False},
+          }
+          for item in [
+            'common/contracts/CANDIDATE_5.4.302.yml','common/contracts/CURRENT_FLEET_V10.yml',
+            '.github/workflows/veux-port-5.4.302-35170-nomount-r1.yml',
+            '.github/workflows/veux-port-5.4.302-35170-nomount-r2-status-normalized.yml',
+            '.github/workflows/veux-5.4.302-status-promotion-v10-verify-r1.yml']:
+            if item not in expected['cleanup_protection']['keep']:
+              expected['cleanup_protection']['keep'].append(item)
+          assert new == expected, 'Fleet V10 contains drift outside the exact 302 promotion mutation'
+          for k in ('5.4.274','5.4.292','5.4.293','5.4.300','5.4.301'):
+            assert new['lineages'][k] == old['lineages'][k], k
+          assert new['external_device_evidence'] == old['external_device_evidence']
+          print('PROFILE_CANDIDATE_FLEET_V10_CHAIN=PASS')
+          PYVERIFYCHAIN
+          echo 'SEMANTIC_CHAIN_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Authenticate exact green R2 run and normalized artifact
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/302-status-promotion-v10-r1"
+          rm -rf "$WORK"
+          mkdir -p "$WORK/raw"
+          api_get() {
+            local url="$1" out="$2"
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer $GH_READ_TOKEN" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$url" -o "$out"
+          }
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID" "$WORK/run.json"
+          jq -e --arg head "$R2_HEAD_SHA" --arg path "$R2_WORKFLOW" --argjson id "$R2_RUN_ID" \
+            '.id == $id and .head_sha == $head and .path == $path and .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success" and .run_attempt == 1' \
+            "$WORK/run.json" >/dev/null
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID/jobs?per_page=100" "$WORK/jobs.json"
+          python3 - "$WORK/jobs.json" <<'PYJOBS'
+          import json, os, sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert d['total_count'] == 1 and len(d['jobs']) == 1
+          j=d['jobs'][0]
+          assert j['name'] == os.environ['R2_JOB_NAME']
+          assert j['status'] == 'completed' and j['conclusion'] == 'success'
+          by={s['name']:s['conclusion'] for s in j['steps']}
+          required=[
+            'Authenticate exact R1 workflow, run and failed-final-gate shape',
+            'Download and authenticate exact R1 artifact',
+            'Prove exact source-status defect and preserve DEVICE_PASS=NO',
+            'Normalize only missing O44 status line and rebuild manifest',
+            'Run complete original R1 final gate against normalized evidence',
+            'Publish exactly one normalized 5.4.302 evidence artifact',
+            'Final R2 normalization green gate']
+          for n in required: assert by.get(n) == 'success', (n,by.get(n))
+          assert sum(1 for s in j['steps'] if s['conclusion'] == 'failure') == 0
+          print('R2_REQUIRED_STEPS=PASS')
+          PYJOBS
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID/artifacts?per_page=100" "$WORK/artifacts.json"
+          jq -e --arg name "$R2_ARTIFACT_NAME" --arg digest "sha256:$R2_ARTIFACT_SHA256" \
+            --argjson id "$R2_ARTIFACT_ID" --argjson bytes "$R2_ARTIFACT_BYTES" --argjson runid "$R2_RUN_ID" \
+            '.total_count == 1 and (.artifacts|length) == 1 and .artifacts[0].id == $id and .artifacts[0].name == $name and .artifacts[0].size_in_bytes == $bytes and .artifacts[0].digest == $digest and .artifacts[0].expired == false and .artifacts[0].workflow_run.id == $runid' \
+            "$WORK/artifacts.json" >/dev/null
+          jq -e --arg head "$R2_HEAD_SHA" '.artifacts[0].workflow_run.head_sha == $head' "$WORK/artifacts.json" >/dev/null
+
+          curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_READ_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$R2_ARTIFACT_ID/zip" \
+            -o "$WORK/artifact.zip"
+          test "$(stat -c '%s' "$WORK/artifact.zip")" = "$R2_ARTIFACT_BYTES"
+          test "$(sha256sum "$WORK/artifact.zip" | awk '{print $1}')" = "$R2_ARTIFACT_SHA256"
+          unzip -q "$WORK/artifact.zip" -d "$WORK/raw"
+          test "$(find "$WORK/raw" -mindepth 1 -maxdepth 1 | wc -l)" -eq 5
+          test "$(find "$WORK/raw" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+          for f in BUILD-STATUS.txt PACKAGE-STATUS.txt STATIC-RESULT.txt SHA256SUMS.txt "$PACKAGE_FILE"; do
+            test -f "$WORK/raw/$f"
+          done
+          (cd "$WORK/raw" && sha256sum -c SHA256SUMS.txt)
+          test "$(sha256sum "$WORK/raw/BUILD-STATUS.txt" | awk '{print $1}')" = "$BUILD_STATUS_SHA256"
+          test "$(sha256sum "$WORK/raw/PACKAGE-STATUS.txt" | awk '{print $1}')" = "$PACKAGE_STATUS_SHA256"
+          test "$(sha256sum "$WORK/raw/STATIC-RESULT.txt" | awk '{print $1}')" = "$STATIC_RESULT_SHA256"
+          test "$(stat -c '%s' "$WORK/raw/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+          test "$(sha256sum "$WORK/raw/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          unzip -tq "$WORK/raw/$PACKAGE_FILE"
+          unzip -p "$WORK/raw/$PACKAGE_FILE" Image > "$WORK/Image"
+          test "$(stat -c '%s' "$WORK/Image")" = "$IMAGE_BYTES"
+          test "$(sha256sum "$WORK/Image" | awk '{print $1}')" = "$IMAGE_SHA256"
+          grep -aFq '@ReSukiSU' "$WORK/Image"
+          grep -aFq 'susfs:' "$WORK/Image"
+          grep -aFq 'NoMount:' "$WORK/Image"
+          echo "R2_WORK=$WORK" >> "$GITHUB_ENV"
+          echo 'R2_RUN_AND_ARTIFACT_AUTH=PASS'
+          echo 'R2_AUTH_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Verify normalized BUILD PACKAGE STATIC evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          RAW="$R2_WORK/raw"
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3"
+            test "$(grep -Ec "^${key}=" "$file")" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+          b="$RAW/BUILD-STATUS.txt"
+          p="$RAW/PACKAGE-STATUS.txt"
+          s="$RAW/STATIC-RESULT.txt"
+
+          require_exact_key "$b" KERNEL 5.4.302
+          require_exact_key "$b" KERNELRELEASE 5.4.302-qgki-g82179e362f33
+          require_exact_key "$b" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$b" IMAGE_BYTES "$IMAGE_BYTES"
+          require_exact_key "$b" DTB_SHA256 "$EXPECTED_DTB_SHA256"
+          require_exact_key "$b" WARNING_REGRESSION_GATE PASS
+          require_exact_key "$b" O44_302_SOURCE_CONTRACT PASS
+          require_exact_key "$b" RESUKISU_COMMIT "$RESUKISU_COMMIT"
+          require_exact_key "$b" RESUKISU_VERSION 35170
+          require_exact_key "$b" UAPI 4
+          require_exact_key "$b" SUSFS_COMMIT "$SUSFS_COMMIT"
+          require_exact_key "$b" SUSFS_VERSION 2.3.0
+          require_exact_key "$b" NOMOUNT_ENABLED YES
+          require_exact_key "$b" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$b" NOMOUNT_COMMIT "$NOMOUNT_COMMIT"
+          require_exact_key "$b" MODULE_LOAD_FILTER EXCLUDED
+          require_exact_key "$b" KSU_DUAL_PATH_BINDING PASS
+          require_exact_key "$b" GENERIC_AUDIT_KSU_DIR2_CLASSIFIED PASS
+          require_exact_key "$b" KSU_BUILD_PATH_BINDING PASS
+          require_exact_key "$b" COMPILE_PASS YES
+          require_exact_key "$b" PACKAGE_PASS NO
+          require_exact_key "$b" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$b" DEVICE_PASS NO
+
+          require_exact_key "$p" KERNEL 5.4.302
+          require_exact_key "$p" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$p" IMAGE_BYTES "$IMAGE_BYTES"
+          require_exact_key "$p" DTB_SHA256 "$EXPECTED_DTB_SHA256"
+          require_exact_key "$p" RESUKISU_VERSION 35170
+          require_exact_key "$p" UAPI 4
+          require_exact_key "$p" SUSFS_VERSION 2.3.0
+          require_exact_key "$p" NOMOUNT_ENABLED YES
+          require_exact_key "$p" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$p" MODULE_LOAD_FILTER EXCLUDED
+          require_exact_key "$p" KSU_DUAL_PATH_BINDING PASS
+          require_exact_key "$p" GENERIC_AUDIT_KSU_DIR2_CLASSIFIED PASS
+          require_exact_key "$p" KSU_BUILD_PATH_BINDING PASS
+          require_exact_key "$p" AK3_FILE "$PACKAGE_FILE"
+          require_exact_key "$p" AK3_SHA256 "$PACKAGE_SHA256"
+          require_exact_key "$p" AK3_BYTES "$PACKAGE_BYTES"
+          require_exact_key "$p" AK3_DETERMINISTIC_ZIP_A_B_GATE PASS
+          require_exact_key "$p" IMAGE_PARITY PASS
+          require_exact_key "$p" AK3_FLASH_CONTRACT PASS
+          require_exact_key "$p" COMPILE_PASS YES
+          require_exact_key "$p" PACKAGE_PASS YES
+          require_exact_key "$p" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$p" DEVICE_PASS NO
+
+          require_exact_key "$s" KERNEL 5.4.302
+          require_exact_key "$s" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$s" AK3_SHA256 "$PACKAGE_SHA256"
+          require_exact_key "$s" BOOT_SHA256 "$STATIC_BOOT_SHA256"
+          require_exact_key "$s" RESUKISU_VERSION 35170
+          require_exact_key "$s" RESUKISU_COMMIT "$RESUKISU_COMMIT"
+          require_exact_key "$s" SUSFS_VERSION 2.3.0
+          require_exact_key "$s" SUSFS_COMMIT "$SUSFS_COMMIT"
+          require_exact_key "$s" NOMOUNT_ENABLED YES
+          require_exact_key "$s" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$s" NOMOUNT_COMMIT "$NOMOUNT_COMMIT"
+          require_exact_key "$s" AK3_TO_BOOT_KERNEL_BINDING PASS
+          require_exact_key "$s" RAW_RAMDISK_BYTE_IDENTITY PASS
+          require_exact_key "$s" DECODED_RAMDISK_BYTE_IDENTITY PASS
+          require_exact_key "$s" BOOT_HEADER_V3 PASS
+          require_exact_key "$s" BOOT_HEADER_MUTATION_SCOPE PASS
+          require_exact_key "$s" AVB_VERIFY_IMAGE_EXIT_ZERO PASS
+          require_exact_key "$s" AVB_PROPERTIES_PRESERVED PASS
+          require_exact_key "$s" COMPILE_PASS YES
+          require_exact_key "$s" PACKAGE_PASS YES
+          require_exact_key "$s" STATIC_BOOT_PATH_PASS YES
+          require_exact_key "$s" DEVICE_PASS NO
+          ! grep -R -Fq 'DEVICE_PASS=YES' "$RAW"
+          echo 'R2_NORMALIZED_STAGED_EVIDENCE=PASS'
+          echo 'R2_EVIDENCE_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Final Fleet V10 promotion green gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONTRACT_BLOBS_PASS" = YES
+          test "$SEMANTIC_CHAIN_PASS" = YES
+          test "$R2_AUTH_PASS" = YES
+          test "$R2_EVIDENCE_PASS" = YES
+          python3 - <<'PYFINAL'
+          from pathlib import Path
+          import os, yaml
+          fleet=yaml.safe_load(Path(os.environ['FLEET']).read_text(encoding='utf-8'))
+          assert fleet['contract'] == 'CURRENT_FLEET_V10'
+          assert fleet['status'] == 'all-six-35170-nomount-complete-static-validated'
+          assert fleet['policy']['explicit_35170_nomount_promotions'] == ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          assert fleet['policy']['remaining_35158_nomount_disabled'] == []
+          assert set(fleet['lineages']) == {'5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302'}
+          for k,v in fleet['lineages'].items():
+            assert v['resukisu']['version'] == '35170', k
+            assert v['resukisu']['uapi'] == 4, k
+            assert v['susfs']['version'] == '2.3.0', k
+            assert v['nomount']['enabled'] is True and v['nomount']['version'] == '2.0.0', k
+            assert v['validation']['compile'] is True and v['validation']['package'] is True and v['validation']['static_boot'] is True, k
+          assert fleet['lineages']['5.4.274']['validation']['device'] is True
+          for k in ('5.4.292','5.4.293','5.4.300','5.4.301','5.4.302'):
+            assert fleet['lineages'][k]['validation']['device'] is False, k
+          print('FLEET_V10_ALL_SIX_PROMOTION=PASS')
+          PYFINAL
+          echo 'COMPILE_PASS=YES'
+          echo 'PACKAGE_PASS=YES'
+          echo 'STATIC_BOOT_PATH_PASS=YES'
+          echo 'DEVICE_PASS=NO_FOR_5.4.302'
+          echo 'VEUX_5_4_302_FLEET_V10_PROMOTION_FINAL_GREEN_GATE=PASS'
