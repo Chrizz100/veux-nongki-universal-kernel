@@ -1,0 +1,1002 @@
+name: VEUX Port 5.4.300 R8 - ReSukiSU 35170 + NoMount
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-port-300-35170-nomount-r8-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  MAKEFLAGS: --output-sync=target
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  PROFILE: lineages/5.4.300/build.yml
+  O51_AUTHORITY: 
+    .github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml
+  O51_AUTHORITY_BLOB: 6413bd99fa38a5aa030403bb60a5935980dca32d
+  RESUKISU_BASE_COMMIT: 6d18926ae6eeb571a04c1ce7552c324d606fa9d8
+  RESUKISU_TARGET_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+  AK3_REPO: https://github.com/osm0sis/AnyKernel3.git
+  AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  AK3_TREE: c6af9eb7018bce852819ab1585de426a426e6806
+  AK3_ARCHIVE_EPOCH: '1733410079'
+  BASE_BOOT_ASSET_ID: '574681158'
+  BASE_BOOT_ASSET_NAME: 
+    VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img
+  BASE_BOOT_URL: 
+    https://github.com/Chrizz100/veux-nongki-universal-kernel/releases/download/v1.0.0-beta1/VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img
+  BASE_BOOT_SHA256: 
+    b79d121003e9abb12962eaf44ff56aa4c66588d2245ed09d8325e3c39fe67e65
+  BASE_KERNEL_SHA256: 
+    67807748edd57e9fa714d444a39fccf54d88b95c92d54de029b4c12bc868345a
+  BASE_KERNEL_BYTES: '29911552'
+  RAW_STOCK_RAMDISK_SHA256: 
+    0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a
+  DECODED_STOCK_RAMDISK_SHA256: 
+    d3c0e26ce76ab272a9c7bfd53ad3b0f57754e8eb9a30085abfbacf180c2638e5
+  BOOT_PARTITION_SIZE: '134217728'
+  EXPECTED_HEADER_VERSION: '3'
+  BOOT_PAGE_SIZE: '4096'
+  MAGISK_APK_URL: 
+    https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
+  MAGISK_APK_SHA256: 
+    e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5
+  AVB_REPO: https://android.googlesource.com/platform/external/avb
+  AVB_COMMIT: de53827b226bccef7407e4c253b0152e8d9f8e04
+  COMPLETED_293_CONTRACT: common/contracts/CANDIDATE_5.4.293.yml
+  COMPLETED_293_CONTRACT_BLOB: b3259ca83e498f2001f95409764ef7c209a7dfc7
+  FLEET_V7_CONTRACT: common/contracts/CURRENT_FLEET_V7.yml
+  FLEET_V7_CONTRACT_BLOB: 2643820a62ad915b8bd892f2e5a65d7a7bfd9259
+  EXPECTED_300_PROFILE_BLOB: 72a6dfb8959248c9935cd59c5f760ea2ba043c8b
+  CLANG_PREBUILT_COMMIT: aa2e4a514a6c85eebcc4a27149eaf9244e951a1e
+  KBUILD_BUILD_USER: builder
+  KBUILD_BUILD_HOST: pangu-build-component-vendor-345942-54r9t-tw0tk-tq90c
+  KBUILD_BUILD_TIMESTAMP: Thu Dec 5 14:47:59 UTC 2024
+  KBUILD_BUILD_VERSION: '1'
+  SOURCE_DATE_EPOCH: '1733410079'
+  KBUILD_FIXED_SCM_SUFFIX: -g82179e362f33
+  EFFECTIVE_KCFLAGS: -D__ANDROID_COMMON_KERNEL__
+  EXPECTED_RELEASE_300: 5.4.300-qgki-g82179e362f33
+  EXPECTED_DTB_SHA256: 
+    42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+  EXPECTED_WARNING_COUNT: '3'
+  PORT300_STAGE_HELPER: lineages/5.4.300/LOCAL_TARGET_5.4.300_V2.py
+  PORT300_STAGE_HELPER_SHA256: 
+    ab74b277653f4822de60cc030730bae1ec1977d595b8901bd7f23df7e9e5b4fd
+jobs:
+  port-300:
+    name: 5.4.300 -> 35170 + NoMount compile/package/static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+    - name: Checkout project
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Install dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-yaml rsync unzip zip xz-utils zstd
+    - name: Fail-fast 300 baseline and local snapshot preflight
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+        test -f "$PROFILE"
+        test -f "$O51_AUTHORITY"
+        test "$(git hash-object "$O51_AUTHORITY")" = "$O51_AUTHORITY_BLOB"
+        test "$(git hash-object "$PROFILE")" = "$EXPECTED_300_PROFILE_BLOB"
+        test -f "$PORT300_STAGE_HELPER"
+        test "$(sha256sum "$PORT300_STAGE_HELPER" | awk '{print $1}')" = "$PORT300_STAGE_HELPER_SHA256"
+        test -f "$COMPLETED_293_CONTRACT"
+        test -f "$FLEET_V7_CONTRACT"
+        test "$(git hash-object "$COMPLETED_293_CONTRACT")" = "$COMPLETED_293_CONTRACT_BLOB"
+        test "$(git hash-object "$FLEET_V7_CONTRACT")" = "$FLEET_V7_CONTRACT_BLOB"
+
+        python3 - "$PROFILE" <<'PY'
+        from pathlib import Path
+        import sys, yaml
+        p = yaml.safe_load(Path(sys.argv[1]).read_text(encoding='utf-8'))
+        assert p['kernel'] == '5.4.300'
+        assert p['enabled'] is True
+        assert p['device'] == 'veux'
+        assert p['platform'] == 'sm6375'
+        assert p['target'] == 'android13-stock-vendor'
+        assert p['baseline']['port_status'] == 'pending'
+        rs = p['features']['resukisu']
+        sf = p['features']['susfs']
+        nm = p['features']['nomount']
+        assert rs == {
+            'enabled': True,
+            'version': '35158',
+            'commit': '6d18926ae6eeb571a04c1ce7552c324d606fa9d8',
+            'uapi': 4,
+        }
+        assert sf['enabled'] is True
+        assert str(sf['version']) == '2.3.0'
+        assert sf['commit'] == '04a9d713106191ba98be680bd7ad9547ab1de964'
+        assert nm == {'enabled': False, 'version': 'disabled', 'commit': ''}
+        assert p['validation']['compile'] is True
+        assert p['validation']['package'] is True
+        assert p['validation']['static_boot'] is True
+        assert p['validation']['device'] is False
+        print('PROFILE_300_BASELINE_CONTRACT=PASS')
+        PY
+
+        python3 -m py_compile "$PORT300_STAGE_HELPER"
+        python3 "$PORT300_STAGE_HELPER" selftest
+        python3 common/scripts/verify_local_snapshots.py --repo-root "$GITHUB_WORKSPACE"
+
+        echo 'PORT_300_PREFLIGHT=PASS'
+
+        python3 - <<'PY'
+        from pathlib import Path
+        import yaml
+
+        candidate = yaml.safe_load(Path("common/contracts/CANDIDATE_5.4.293.yml").read_text(encoding="utf-8"))
+        sm = candidate["status_metadata"]
+        assert sm["normalization_run_status"] == "success"
+        assert sm["normalization_run_id"] == 36167620067
+        assert sm["normalization_run_head_sha"] == "6845dc51dd1831485f059fdf6104e521d641b9ef"
+        assert sm["normalization_artifact"]["id"] == 10878440334
+        assert sm["normalization_artifact"]["digest"] == "sha256:f1b4d5dab5058683cee87d43b45df9e92fed8df8c578d199281c1d6a1b2f5f25"
+        assert sm["exactly_one_status_gate"] is True
+
+        fleet = yaml.safe_load(Path("common/contracts/CURRENT_FLEET_V7.yml").read_text(encoding="utf-8"))
+        f293 = fleet["lineages"]["5.4.293"]
+        assert f293["status_normalization"] == "success"
+        assert f293["normalization_run_id"] == 36167620067
+        assert f293["normalization_artifact_id"] == 10878440334
+        assert f293["normalization_exactly_one_gate"] is True
+        assert fleet["lineages"]["5.4.300"]["resukisu"]["version"] == "35158"
+        assert fleet["lineages"]["5.4.300"]["nomount"]["enabled"] is False
+        print("PREVIOUS_293_COMPLETION_CONTRACT=PASS")
+        PY
+    - name: Extract exact O51 baseline replayer
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - "$O51_AUTHORITY" "$RUNNER_TEMP/o51_replay.py" <<'PY'
+        from pathlib import Path
+        import sys, yaml
+        src = Path(sys.argv[1])
+        out = Path(sys.argv[2])
+        doc = yaml.safe_load(src.read_text(encoding='utf-8'))
+        steps = next(iter(doc['jobs'].values()))['steps']
+        matches = [s for s in steps if s.get('name') == 'Write and self-test fail-closed authority replayer']
+        if len(matches) != 1:
+            raise SystemExit(f'O51 replayer step match count={len(matches)}')
+        run = str(matches[0]['run'])
+        start = 'cat > "$RUNNER_TEMP/o51_replay.py" <<\'PY\'\n'
+        if run.count(start) != 1:
+            raise SystemExit(f'O51 replayer start marker count={run.count(start)}')
+        a = run.index(start) + len(start)
+        ends = [x for x in (run.find('\n          PY\n', a), run.find('\nPY\n', a)) if x >= 0]
+        if not ends:
+            raise SystemExit('O51 replayer end marker missing')
+        b = min(ends)
+        code = run[a:b]
+        lines = code.splitlines()
+        if lines and all((not x.strip()) or x.startswith('          ') for x in lines):
+            code = '\n'.join(x[10:] if x.startswith('          ') else x for x in lines) + '\n'
+        compile(code, str(out), 'exec')
+        out.write_text(code, encoding='utf-8')
+        print('O51_REPLAYER_EXTRACTION=PASS')
+        PY
+        python3 -m py_compile "$RUNNER_TEMP/o51_replay.py"
+        python3 "$RUNNER_TEMP/o51_replay.py" --selftest
+    - name: Reconstruct proven 5.4.300 35158 baseline workspace
+      id: baseline
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        BASE="$GITHUB_WORKSPACE/port300-baseline"
+        STATE="$RUNNER_TEMP/port300-state"
+        EVID="$GITHUB_WORKSPACE/port300-evidence"
+        rm -rf "$BASE" "$STATE" "$EVID"
+        mkdir -p "$BASE" "$STATE" "$EVID"
+
+        set +e
+        python3 "$RUNNER_TEMP/o51_replay.py" \
+          --kernel 5.4.300 \
+          --project-root "$GITHUB_WORKSPACE" \
+          --aggregate "$BASE" \
+          --state-root "$STATE" \
+          --sha "$GITHUB_SHA" \
+          > >(tee "$EVID/o51-replay.stdout.log") \
+          2> >(tee "$EVID/o51-replay.stderr.log" >&2)
+        rc=$?
+        set -e
+        printf '%s\n' "$rc" > "$EVID/o51-replay.exit.txt"
+
+        if [ -s "$BASE/5.4.300/REPLAY.log" ]; then
+          cp "$BASE/5.4.300/REPLAY.log" "$EVID/O51-REPLAY.log"
+        fi
+        if [ "$rc" -ne 0 ]; then
+          echo "::error::5.4.300 baseline authority replay failed rc=$rc"
+          [ -s "$EVID/O51-REPLAY.log" ] && tail -n 500 "$EVID/O51-REPLAY.log" || true
+          exit "$rc"
+        fi
+
+        test -s "$BASE/5.4.300/Image"
+        test -s "$BASE/5.4.300/BUILD-STATUS.txt"
+        grep -Fxq 'KERNEL=5.4.300' "$BASE/5.4.300/BUILD-STATUS.txt"
+        grep -Fxq "RESUKISU_COMMIT=$RESUKISU_BASE_COMMIT" "$BASE/5.4.300/BUILD-STATUS.txt"
+        grep -Fxq 'RESUKISU_VERSION=35158' "$BASE/5.4.300/BUILD-STATUS.txt"
+        grep -Fxq 'COMPILE_PASS=YES' "$BASE/5.4.300/BUILD-STATUS.txt"
+
+        SRC="$STATE/workspace-5.4.300/kernel-5.4.300"
+        TC="$STATE/workspace-5.4.300/toolchains/clang-r416183b"
+        test -e "$SRC/.git"
+        test "$(git -C "$SRC" rev-parse --is-inside-work-tree)" = 'true'
+        git -C "$SRC" rev-parse --git-dir >/dev/null
+        test -x "$TC/bin/clang"
+        test -x "$TC/bin/ld.lld"
+        test "$(make -s -C "$SRC" kernelversion)" = '5.4.300'
+        "$TC/bin/clang" --version | tee "$EVID/baseline-clang-version.txt"
+
+        # Authenticate the actual O43/O51 5.4.300 KernelSU layout.
+        python3 "$PORT300_STAGE_HELPER" verify-baseline --src "$SRC" \
+          | tee "$EVID/300-native-baseline-contract.txt"
+
+        echo "PORT300_SRC=$SRC" >> "$GITHUB_ENV"
+        echo "PORT300_TC=$TC" >> "$GITHUB_ENV"
+        echo "PORT300_EVID=$EVID" >> "$GITHUB_ENV"
+        echo 'PORT_300_BASELINE_RECONSTRUCTION=PASS'
+    - name: Upload baseline diagnostics only on failure
+      if: steps.baseline.outcome != 'success'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: DIAGNOSTIC_5.4.300_Baseline_${{ github.run_id }}
+        path: port300-evidence/
+        if-no-files-found: error
+        retention-days: 1
+        compression-level: 6
+    - name: Require baseline reconstruction green
+      if: always()
+      shell: bash
+      env:
+        BASELINE_OUTCOME: ${{ steps.baseline.outcome }}
+      run: |
+        set -euo pipefail
+        test "$BASELINE_OUTCOME" = success
+    - name: Stage ReSukiSU 35170 + NoMount and compile 5.4.300
+      id: compile
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+        SRC="$PORT300_SRC"
+        TC="$PORT300_TC"
+        EVID="$PORT300_EVID"
+        OUT="$RUNNER_TEMP/port300-out-35170-nomount"
+        rm -rf "$OUT"
+        mkdir -p "$OUT"
+        exec > >(tee "$EVID/port-compile.log") 2>&1
+
+        python3 "$PORT300_STAGE_HELPER" stage \
+          --src "$SRC" \
+          --resukisu "$GITHUB_WORKSPACE/third_party/resukisu" \
+          --nomount "$GITHUB_WORKSPACE/third_party/nomount" \
+          | tee "$EVID/local-300-target-stage.txt"
+
+        python3 "$PORT300_STAGE_HELPER" verify-target --src "$SRC" \
+          | tee "$EVID/300-target-verify-after-stage.txt"
+
+        # 300-specific semantic checks before spending compile time.
+        test -d "$SRC/fs/nomount"
+        test -f "$SRC/fs/nomount/nomount.c"
+        grep -Fqx 'source "fs/nomount/Kconfig"' "$SRC/fs/Kconfig"
+        grep -Fqx 'obj-$(CONFIG_NOMOUNT) += nomount/' "$SRC/fs/Makefile"
+        grep -Fq 'KSU_VERSION := 35170' "$SRC/KernelSU/kernel/Kbuild"
+        grep -Fq 'KSU_COMMIT_SHA := 9be0f347' "$SRC/KernelSU/kernel/Kbuild"
+        if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+          echo 'reject/orig files found before compile' >&2
+          exit 71
+        fi
+
+        bash common/scripts/identity_guard.sh \
+          snapshot "$SRC" veux_defconfig "$EVID/identity-before-build.sha256"
+
+        export PATH="$TC/bin:$PATH"
+        export ARCH=arm64
+        export KBUILD_BUILD_USER KBUILD_BUILD_HOST KBUILD_BUILD_TIMESTAMP KBUILD_BUILD_VERSION SOURCE_DATE_EPOCH KBUILD_FIXED_SCM_SUFFIX
+        clang --version | tee "$EVID/clang-version.txt"
+        ld.lld --version | tee "$EVID/lld-version.txt"
+
+        make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="$EFFECTIVE_KCFLAGS" \
+          veux_defconfig 2>&1 | tee "$EVID/defconfig.log"
+        test -f "$OUT/.config"
+        test -x "$SRC/scripts/config"
+
+        "$SRC/scripts/config" --file "$OUT/.config" \
+          --enable KSU \
+          --disable KSU_TRACEPOINT_HOOK \
+          --disable KSU_MANUAL_HOOK \
+          --disable KSU_MANUAL_HOOK_AUTO_SETUID_HOOK \
+          --disable KSU_MANUAL_HOOK_AUTO_INITRC_HOOK \
+          --disable KSU_MANUAL_HOOK_AUTO_INPUT_HOOK \
+          --enable KSU_SUSFS \
+          --enable KSU_SUSFS_SUS_PATH \
+          --enable KSU_SUSFS_SUS_MOUNT \
+          --enable KSU_SUSFS_SUS_KSTAT \
+          --enable KSU_SUSFS_SPOOF_UNAME \
+          --enable KSU_SUSFS_ENABLE_LOG \
+          --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+          --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+          --enable KSU_SUSFS_OPEN_REDIRECT \
+          --enable KSU_SUSFS_SUS_MAP \
+          --enable THREAD_INFO_IN_TASK \
+          --enable NOMOUNT
+
+        make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="$EFFECTIVE_KCFLAGS" \
+          olddefconfig 2>&1 | tee "$EVID/olddefconfig.log"
+
+        for expected in \
+          'CONFIG_KSU=y' \
+          'CONFIG_KSU_SUSFS=y' \
+          'CONFIG_KSU_SUSFS_SUS_PATH=y' \
+          'CONFIG_KSU_SUSFS_SUS_MOUNT=y' \
+          'CONFIG_KSU_SUSFS_SUS_KSTAT=y' \
+          'CONFIG_KSU_SUSFS_SPOOF_UNAME=y' \
+          'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
+          'CONFIG_KSU_SUSFS_SUS_MAP=y' \
+          'CONFIG_THREAD_INFO_IN_TASK=y' \
+          'CONFIG_NOMOUNT=y' \
+          'CONFIG_64BIT=y'
+        do
+          grep -Fxq "$expected" "$OUT/.config"
+        done
+        grep -Fxq '# CONFIG_KSU_TRACEPOINT_HOOK is not set' "$OUT/.config"
+        grep -Fxq '# CONFIG_KSU_MANUAL_HOOK is not set' "$OUT/.config"
+
+        make -C "$SRC" -j"$(nproc)" O="$OUT" \
+          ARCH=arm64 \
+          CC=clang \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          LD=ld.lld \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          KCFLAGS="$EFFECTIVE_KCFLAGS" \
+          Image dtbs 2>&1 | tee "$EVID/compile.log"
+
+        IMAGE="$OUT/arch/arm64/boot/Image"
+        DTB="$OUT/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+        test -s "$IMAGE"
+        test -s "$DTB"
+        test "$(sha256sum "$DTB" | awk '{print $1}')" = "$EXPECTED_DTB_SHA256"
+
+        python3 - "$EVID/compile.log" "$EXPECTED_WARNING_COUNT" <<'PY'
+        from pathlib import Path
+        import re, sys
+        lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+        got = []
+        for line in lines:
+            if "warning:" not in line.lower():
+                continue
+            m = re.search(r"((?:drivers|fs)/[^:]+:\d+:\d+: warning: .*)$", line)
+            got.append(m.group(1) if m else line.strip())
+        expected = [
+            "drivers/clk/qcom/clk-rpmh.c:283:14: warning: comparison of distinct pointer types ('typeof (cmd_state) *' (aka 'unsigned int *') and 'typeof (16383) *' (aka 'int *')) [-Wcompare-distinct-pointer-types]",
+            "fs/namei.c:3320:12: warning: unused function 'atomic_open' [-Wunused-function]",
+            "drivers/cpufreq/qcom-cpufreq-hw.c:551:23: warning: unused variable 'c' [-Wunused-variable]",
+        ]
+        if len(got) != int(sys.argv[2]) or sorted(got) != sorted(expected):
+            raise SystemExit("warning regression: " + repr(got))
+        print("WARNING_REGRESSION_GATE=PASS")
+        PY
+        test -s "$OUT/fs/susfs.o"
+        test -s "$OUT/fs/nomount/nomount.o"
+        grep -aFq '@ReSukiSU' "$IMAGE"
+        grep -aFq 'susfs:' "$IMAGE"
+        grep -aFq 'NoMount:' "$IMAGE"
+
+        if find "$SRC" -type f \( -name '*.rej' -o -name '*.orig' \) -print -quit | grep -q .; then
+          echo 'reject/orig files found after compile' >&2
+          exit 72
+        fi
+
+        bash common/scripts/audit_existing_integration.sh "$SRC" \
+          | tee "$EVID/post-build-integration-audit.txt"
+        bash common/scripts/identity_guard.sh \
+          verify "$SRC" veux_defconfig "$EVID/identity-before-build.sha256" \
+          | tee "$EVID/identity-after-build.txt"
+        python3 "$PORT300_STAGE_HELPER" verify-target --src "$SRC" \
+          | tee "$EVID/300-target-verify-post-build.txt"
+
+        release="$(make -s -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="$EFFECTIVE_KCFLAGS" kernelrelease)"
+        test "$release" = "$EXPECTED_RELEASE_300"
+
+        DIST="$GITHUB_WORKSPACE/port300-dist"
+        rm -rf "$DIST"
+        mkdir -p "$DIST"
+        cp "$IMAGE" "$DIST/Image"
+        sha="$(sha256sum "$DIST/Image" | awk '{print $1}')"
+        bytes="$(stat -c '%s' "$DIST/Image")"
+        {
+          echo 'KERNEL=5.4.300'
+          echo "KERNELRELEASE=$release"
+          echo "IMAGE_SHA256=$sha"
+          echo "IMAGE_BYTES=$bytes"
+          echo "DTB_SHA256=$EXPECTED_DTB_SHA256"
+          echo "WARNING_REGRESSION_GATE=PASS"
+          echo "RESUKISU_COMMIT=$RESUKISU_TARGET_COMMIT"
+          echo 'RESUKISU_VERSION=35170'
+          echo 'UAPI=4'
+          echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+          echo 'SUSFS_VERSION=2.3.0'
+          echo 'NOMOUNT_ENABLED=YES'
+          echo 'NOMOUNT_VERSION=2.0.0'
+          echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+          echo 'MODULE_LOAD_FILTER=EXCLUDED'
+          echo 'COMPILE_PASS=YES'
+          echo 'PACKAGE_PASS=NO'
+          echo 'STATIC_BOOT_PATH_PASS=NO'
+          echo 'DEVICE_PASS=NO'
+        } > "$DIST/BUILD-STATUS.txt"
+
+        echo "PORT300_IMAGE_SHA256=$sha" >> "$GITHUB_ENV"
+        echo "PORT300_IMAGE_BYTES=$bytes" >> "$GITHUB_ENV"
+        echo 'PORT_300_35170_NOMOUNT_COMPILE=PASS'
+    - name: Upload compile diagnostics only on failure
+      if: steps.compile.outcome != 'success'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: DIAGNOSTIC_5.4.300_35170_NoMount_${{ github.run_id }}
+        path: port300-evidence/
+        if-no-files-found: error
+        retention-days: 1
+        compression-level: 6
+    - name: Require 35170 + NoMount compile green
+      if: always() && steps.baseline.outcome == 'success'
+      shell: bash
+      env:
+        COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+      run: |
+        set -euo pipefail
+        test "$COMPILE_OUTCOME" = success
+    - name: Build deterministic clean AK3 package
+      shell: bash
+      run: |
+        set -euo pipefail
+        DIST="$GITHUB_WORKSPACE/port300-dist"
+        IMAGE="$DIST/Image"
+        AK3="$RUNNER_TEMP/AnyKernel3"
+        STAGE="$RUNNER_TEMP/ak3-stage-300"
+        rm -rf "$AK3" "$STAGE"
+
+        for attempt in 1 2 3; do
+          if git clone -q "$AK3_REPO" "$AK3"; then break; fi
+          rm -rf "$AK3"
+          [ "$attempt" -eq 3 ] && exit 80
+          sleep $((attempt * 5))
+        done
+        git -C "$AK3" checkout -q --detach "$AK3_COMMIT"
+        git -C "$AK3" reset --hard -q "$AK3_COMMIT"
+        git -C "$AK3" clean -fdx -q
+        test "$(git -C "$AK3" rev-parse HEAD)" = "$AK3_COMMIT"
+        test "$(git -C "$AK3" rev-parse 'HEAD^{tree}')" = "$AK3_TREE"
+
+        mkdir -p "$STAGE"
+        cp -a "$AK3/tools" "$STAGE/tools"
+        cp -a "$AK3/META-INF" "$STAGE/META-INF"
+        cp "$IMAGE" "$STAGE/Image"
+        cat > "$STAGE/anykernel.sh" <<'EOF'
+        # AnyKernel3 Ramdisk Mod Script
+        # osm0sis @ xda-developers
+
+        properties() { '
+        kernel.string=VEUX Linux 5.4.300 ReSukiSU35170 UAPI4 SUSFS2.3.0 NoMount2.0.0
+        do.devicecheck=1
+        do.modules=0
+        do.systemless=1
+        do.cleanup=1
+        do.cleanuponabort=0
+        device.name1=veux
+        supported.versions=13
+        supported.patchlevels=
+        '; }
+
+        BLOCK=boot;
+        IS_SLOT_DEVICE=1;
+        SLOT_SELECT=active;
+        RAMDISK_COMPRESSION=auto;
+        PATCH_VBMETA_FLAG=0;
+
+        . tools/ak3-core.sh;
+        dump_boot;
+        write_boot;
+        EOF
+        chmod 0755 "$STAGE/anykernel.sh"
+        chmod 0644 "$STAGE/Image"
+        find "$STAGE" -type f -name '*placeholder' -delete
+
+        if find "$STAGE" \( -name '.git' -o -name '.github' -o -name '*.rej' -o -name '*.orig' -o -name '*.patch' -o -name '*.diff' -o -name '*.yml' -o -name '*.yaml' -o -name '*.log' \) -print -quit | grep -q .; then
+          echo 'forbidden AK3 stage payload' >&2
+          exit 81
+        fi
+
+        find "$STAGE" -exec touch -h -d "@$AK3_ARCHIVE_EPOCH" {} +
+        FILELIST="$RUNNER_TEMP/ak3-300-filelist.txt"
+        ZIP_A="$RUNNER_TEMP/300-A.zip"
+        ZIP_B="$RUNNER_TEMP/300-B.zip"
+        (
+          cd "$STAGE"
+          LC_ALL=C find . -mindepth 1 -print | LC_ALL=C sort > "$FILELIST"
+          zip -X -9 -q "$ZIP_A" -@ < "$FILELIST"
+          zip -X -9 -q "$ZIP_B" -@ < "$FILELIST"
+        )
+        cmp -s "$ZIP_A" "$ZIP_B"
+        PACKAGE="$DIST/Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount.zip"
+        cp "$ZIP_A" "$PACKAGE"
+        unzip -tq "$PACKAGE"
+
+        ENTRIES="$RUNNER_TEMP/300-entries.txt"
+        unzip -Z1 "$PACKAGE" > "$ENTRIES"
+        for required in Image anykernel.sh tools/ak3-core.sh META-INF/com/google/android/update-binary META-INF/com/google/android/updater-script; do
+          test "$(grep -Fxc "$required" "$ENTRIES")" -eq 1
+        done
+        ! grep -Eq '(^/|(^|/)\.\.(/|$))' "$ENTRIES"
+        ! sort "$ENTRIES" | uniq -d | grep -q .
+        while IFS= read -r entry; do
+          case "$entry" in Image|anykernel.sh|tools/|tools/*|META-INF/|META-INF/*) ;; *) echo "unexpected AK3 entry=$entry" >&2; exit 82 ;; esac
+        done < "$ENTRIES"
+
+        EXTRACT="$RUNNER_TEMP/ak3-extract-300"
+        rm -rf "$EXTRACT"; mkdir -p "$EXTRACT"
+        unzip -q "$PACKAGE" -d "$EXTRACT"
+        cmp -s "$IMAGE" "$EXTRACT/Image"
+        bash -n "$EXTRACT/anykernel.sh"
+        for line in 'device.name1=veux' 'supported.versions=13' 'BLOCK=boot;' 'IS_SLOT_DEVICE=1;' 'SLOT_SELECT=active;' 'RAMDISK_COMPRESSION=auto;' 'PATCH_VBMETA_FLAG=0;' 'dump_boot;' 'write_boot;'; do
+          grep -Fqx "$line" "$EXTRACT/anykernel.sh"
+        done
+
+        pkg_sha="$(sha256sum "$PACKAGE" | awk '{print $1}')"
+        pkg_bytes="$(stat -c '%s' "$PACKAGE")"
+        tmp_status="$RUNNER_TEMP/300-package-base.txt"
+        grep -Ev '^(COMPILE_PASS|PACKAGE_PASS|STATIC_BOOT_PATH_PASS|DEVICE_PASS)='   "$DIST/BUILD-STATUS.txt" > "$tmp_status"
+        {
+          cat "$tmp_status"
+          echo "AK3_FILE=$(basename "$PACKAGE")"
+          echo "AK3_SHA256=$pkg_sha"
+          echo "AK3_BYTES=$pkg_bytes"
+          echo "AK3_COMMIT=$AK3_COMMIT"
+          echo "AK3_TREE=$AK3_TREE"
+          echo 'AK3_DETERMINISTIC_ZIP_A_B_GATE=PASS'
+          echo 'IMAGE_PARITY=PASS'
+          echo 'AK3_FLASH_CONTRACT=PASS'
+          echo 'COMPILE_PASS=YES'
+          echo 'PACKAGE_PASS=YES'
+          echo 'STATIC_BOOT_PATH_PASS=NO'
+          echo 'DEVICE_PASS=NO'
+        } > "$DIST/PACKAGE-STATUS.txt"
+
+        require_exact_key() {
+          local file="$1" key="$2" expected="$3"
+          test "$(grep -Ec "^${key}=" "$file")" -eq 1
+          grep -Fxq "${key}=${expected}" "$file"
+        }
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" COMPILE_PASS YES
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" PACKAGE_PASS YES
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" DEVICE_PASS NO
+
+        echo "PORT300_PACKAGE=$PACKAGE" >> "$GITHUB_ENV"
+        echo "PORT300_PACKAGE_SHA256=$pkg_sha" >> "$GITHUB_ENV"
+        echo 'PORT_300_PACKAGE=PASS'
+    - name: Initialize static workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+        WORK="$GITHUB_WORKSPACE/.port300-static"
+        AGG="$GITHUB_WORKSPACE/.port300-static-aggregate"
+        rm -rf "$WORK" "$AGG"
+        mkdir -p "$WORK" "$AGG/audit" "$AGG/boots/5.4.300"
+        echo "V7_WORK=$WORK" >> "$GITHUB_ENV"
+        echo "V7_AGGREGATE=$AGG" >> "$GITHUB_ENV"
+    - name: Initialize static-boot verification helpers
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        cat > "$V7_WORK/expected-size.py" <<'PY'
+        import sys
+        kernel, ramdisk, page = map(int, sys.argv[1:])
+        align = lambda n: ((n + page - 1) // page) * page
+        print(page + align(kernel) + align(ramdisk))
+        PY
+
+        cat > "$V7_WORK/base-header.py" <<'PY'
+        import struct, sys
+        path = sys.argv[1]
+        expected_ver = int(sys.argv[2])
+        expected_kernel = int(sys.argv[3])
+        page = int(sys.argv[4])
+        b = open(path, 'rb').read(page)
+        if len(b) != page or b[:8] != b'ANDROID!':
+            raise SystemExit('invalid Android boot header page')
+        kernel_size = struct.unpack_from('<I', b, 8)[0]
+        ramdisk_size = struct.unpack_from('<I', b, 12)[0]
+        header_size = struct.unpack_from('<I', b, 20)[0]
+        header_version = struct.unpack_from('<I', b, 40)[0]
+        if header_version != expected_ver:
+            raise SystemExit('header version mismatch')
+        if kernel_size != expected_kernel:
+            raise SystemExit('base kernel size mismatch')
+        if ramdisk_size <= 0 or header_size <= 0:
+            raise SystemExit('invalid boot component sizes')
+        print(f'KERNEL_SIZE={kernel_size}')
+        print(f'RAMDISK_SIZE={ramdisk_size}')
+        print(f'HEADER_SIZE={header_size}')
+        print(f'HEADER_VERSION={header_version}')
+        PY
+
+        cat > "$V7_WORK/avb-props.py" <<'PY'
+        import re, sys
+        src, dst = sys.argv[1:3]
+        props = []
+        for line in open(src, encoding='utf-8'):
+            m = re.match(r"\s*Prop:\s+(.+?)\s+->\s+'(.*)'\s*$", line.rstrip('\n'))
+            if m:
+                props.append((m.group(1), m.group(2)))
+        if not props:
+            raise SystemExit('AVB properties missing')
+        with open(dst, 'w', encoding='utf-8') as f:
+            for key, value in sorted(props):
+                f.write(f'{key}\t{value}\n')
+        PY
+
+        cat > "$V7_WORK/header-check.py" <<'PY'
+        import struct, sys
+        base_path, final_path = sys.argv[1], sys.argv[2]
+        expected_ver = int(sys.argv[3])
+        expected_kernel = int(sys.argv[4])
+        expected_ramdisk = int(sys.argv[5])
+        page = int(sys.argv[6])
+        base_kernel = int(sys.argv[7])
+
+        base = bytearray(open(base_path, 'rb').read(page))
+        final = bytearray(open(final_path, 'rb').read(page))
+        if len(base) != page or len(final) != page:
+            raise SystemExit('short header page')
+        if base[:8] != b'ANDROID!' or final[:8] != b'ANDROID!':
+            raise SystemExit('boot magic mismatch')
+
+        ks = struct.unpack_from('<I', final, 8)[0]
+        rs = struct.unpack_from('<I', final, 12)[0]
+        hs = struct.unpack_from('<I', final, 20)[0]
+        hv = struct.unpack_from('<I', final, 40)[0]
+        if ks != expected_kernel:
+            raise SystemExit(f'kernel size mismatch {ks} != {expected_kernel}')
+        if rs != expected_ramdisk:
+            raise SystemExit(f'ramdisk size mismatch {rs} != {expected_ramdisk}')
+        if hv != expected_ver or hs <= 0:
+            raise SystemExit('header-v3 contract mismatch')
+
+        bm = bytearray(base)
+        fm = bytearray(final)
+        bm[8:12] = b'\0' * 4
+        fm[8:12] = b'\0' * 4
+        if bm != fm:
+            diffs = [i for i, (a, b) in enumerate(zip(bm, fm)) if a != b]
+            raise SystemExit(f'unexpected header changes {diffs[:32]}')
+
+        if expected_kernel == base_kernel and base != final:
+            raise SystemExit('same-size target changed header page')
+
+        print('BOOT_MAGIC=PASS')
+        print(f'HEADER_VERSION={hv}')
+        print(f'HEADER_SIZE={hs}')
+        print(f'KERNEL_SIZE={ks}')
+        print(f'RAMDISK_SIZE={rs}')
+        print('HEADER_BYTES_EXCEPT_KERNEL_SIZE=IDENTICAL')
+        PY
+
+        python3 -m py_compile \
+          "$V7_WORK/expected-size.py" \
+          "$V7_WORK/base-header.py" \
+          "$V7_WORK/avb-props.py" \
+          "$V7_WORK/header-check.py"
+    - name: Install pinned MagiskBoot and AOSP avbtool
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        apk="$V7_WORK/Magisk-v30.7.apk"
+        curl --fail --location --retry 3 "$MAGISK_APK_URL" -o "$apk"
+        test "$(sha256sum "$apk" | awk '{print $1}')" = "$MAGISK_APK_SHA256"
+
+        mapfile -t candidates < <(
+          zipinfo -1 "$apk" | grep -E '^lib/x86_64/(lib)?magiskboot(\.so)?$'
+        )
+        test "${#candidates[@]}" -eq 1
+        unzip -p "$apk" "${candidates[0]}" > "$V7_WORK/magiskboot"
+        chmod 0755 "$V7_WORK/magiskboot"
+        file "$V7_WORK/magiskboot" > "$V7_AGGREGATE/audit/MAGISKBOOT-FILE.txt"
+        grep -Eq 'ELF 64-bit.*x86-64|ELF 64-bit.*x86_64' \
+          "$V7_AGGREGATE/audit/MAGISKBOOT-FILE.txt"
+
+        avb="$V7_WORK/avb"
+        git init -q "$avb"
+        git -C "$avb" remote add origin "$AVB_REPO"
+        fetch_ok=0
+                  for attempt in 1 2 3; do
+                    if git -C "$avb" fetch -q --depth=1 origin "$AVB_COMMIT"; then
+                      fetch_ok=1
+                      break
+                    fi
+                    sleep $((attempt * 5))
+                  done
+                  test "$fetch_ok" = 1
+        git -C "$avb" checkout -q --detach FETCH_HEAD
+        test "$(git -C "$avb" rev-parse HEAD)" = "$AVB_COMMIT"
+        test -s "$avb/avbtool.py"
+        python3 "$avb/avbtool.py" version > "$V7_AGGREGATE/audit/AVBTOOL-VERSION.txt"
+
+        echo 'V7_STATIC_TOOLS_AUTH=PASS'
+    - name: Authenticate proven Android 13 boot-v3 reference
+      shell: bash
+      env:
+        GH_READ_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        base="$V7_WORK/base.img"
+        mb="$V7_WORK/magiskboot"
+        avb="$V7_WORK/avb/avbtool.py"
+        asset_json="$V7_WORK/base-asset.json"
+
+        curl --fail --location --silent --show-error \
+          --retry 3 --retry-delay 2 \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer $GH_READ_TOKEN" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$BASE_BOOT_ASSET_ID" \
+          -o "$asset_json"
+
+        jq -e \
+          --arg name "$BASE_BOOT_ASSET_NAME" \
+          --arg digest "sha256:$BASE_BOOT_SHA256" \
+          --argjson id "$BASE_BOOT_ASSET_ID" \
+          --argjson size "$BOOT_PARTITION_SIZE" \
+          '.id == $id
+           and .name == $name
+           and .size == $size
+           and .state == "uploaded"
+           and .digest == $digest' \
+          "$asset_json" >/dev/null
+
+        curl --fail --location --retry 3 "$BASE_BOOT_URL" -o "$base"
+        test "$(stat -c '%s' "$base")" = "$BOOT_PARTITION_SIZE"
+        test "$(sha256sum "$base" | awk '{print $1}')" = "$BASE_BOOT_SHA256"
+
+        python3 "$V7_WORK/base-header.py" \
+          "$base" "$EXPECTED_HEADER_VERSION" "$BASE_KERNEL_BYTES" "$BOOT_PAGE_SIZE" \
+          > "$V7_AGGREGATE/audit/BASE-HEADER.txt"
+
+        ramdisk_bytes="$(
+          sed -n 's/^RAMDISK_SIZE=//p' "$V7_AGGREGATE/audit/BASE-HEADER.txt"
+        )"
+        test -n "$ramdisk_bytes"
+
+        python3 "$avb" info_image --image "$base" \
+          > "$V7_AGGREGATE/audit/BASE-AVB.txt"
+        grep -Eq '^Algorithm:[[:space:]]+NONE$' "$V7_AGGREGATE/audit/BASE-AVB.txt"
+        grep -Eq '^[[:space:]]*Partition Name:[[:space:]]+boot$' \
+          "$V7_AGGREGATE/audit/BASE-AVB.txt"
+        grep -Eq '^[[:space:]]*Hash Algorithm:[[:space:]]+sha256$' \
+          "$V7_AGGREGATE/audit/BASE-AVB.txt"
+
+        salt="$(
+          sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' \
+            "$V7_AGGREGATE/audit/BASE-AVB.txt" | sed -n '1p' | tr 'A-F' 'a-f'
+        )"
+        test -n "$salt"
+        python3 "$V7_WORK/avb-props.py" \
+          "$V7_AGGREGATE/audit/BASE-AVB.txt" \
+          "$V7_AGGREGATE/audit/BASE-AVB-PROPS.txt"
+
+        mkdir -p "$V7_WORK/base-raw" "$V7_WORK/base-decoded"
+        (
+          cd "$V7_WORK/base-raw"
+          "$mb" unpack -n -h "$base" \
+            > "$V7_AGGREGATE/audit/BASE-RAW-UNPACK.txt" 2>&1
+        )
+        (
+          cd "$V7_WORK/base-decoded"
+          "$mb" unpack -h "$base" \
+            > "$V7_AGGREGATE/audit/BASE-DECODED-UNPACK.txt" 2>&1
+        )
+
+        test "$(stat -c '%s' "$V7_WORK/base-raw/kernel")" = "$BASE_KERNEL_BYTES"
+        test "$(sha256sum "$V7_WORK/base-raw/kernel" | awk '{print $1}')" = "$BASE_KERNEL_SHA256"
+        test "$(sha256sum "$V7_WORK/base-raw/ramdisk.cpio" | awk '{print $1}')" = "$RAW_STOCK_RAMDISK_SHA256"
+        test "$(sha256sum "$V7_WORK/base-decoded/ramdisk.cpio" | awk '{print $1}')" = "$DECODED_STOCK_RAMDISK_SHA256"
+
+        echo "V7_AVB_SALT=$salt" >> "$GITHUB_ENV"
+        echo "V7_BASE_RAMDISK_BYTES=$ramdisk_bytes" >> "$GITHUB_ENV"
+        echo 'V7_BOOT_REFERENCE_AUTH=PASS'
+    - name: Construct and verify 5.4.300 static boot
+      shell: bash
+      run: |
+        set -euo pipefail
+        mb="$V7_WORK/magiskboot"
+        avb="$V7_WORK/avb/avbtool.py"
+        base="$V7_WORK/base.img"
+        base_props="$V7_AGGREGATE/audit/BASE-AVB-PROPS.txt"
+        DIST="$GITHUB_WORKSPACE/port300-dist"
+        IMAGE="$DIST/Image"
+        PACKAGE="$PORT300_PACKAGE"
+        AUDIT="$V7_AGGREGATE/audit/static-5.4.300"
+        BOOTDIR="$V7_AGGREGATE/boots/5.4.300"
+        rm -rf "$AUDIT"; mkdir -p "$AUDIT" "$BOOTDIR"
+
+        image_sha="$(sha256sum "$IMAGE" | awk '{print $1}')"
+        image_bytes="$(stat -c '%s' "$IMAGE")"
+        test "$image_sha" = "$PORT300_IMAGE_SHA256"
+        test "$image_bytes" = "$PORT300_IMAGE_BYTES"
+        test "$(sha256sum "$PACKAGE" | awk '{print $1}')" = "$PORT300_PACKAGE_SHA256"
+
+        PKG_IMAGE="$V7_WORK/target-Image"
+        unzip -p "$PACKAGE" Image > "$PKG_IMAGE"
+        cmp -s "$IMAGE" "$PKG_IMAGE"
+        grep -aFq '@ReSukiSU' "$PKG_IMAGE"
+        grep -aFq 'susfs:' "$PKG_IMAGE"
+        grep -aFq 'NoMount:' "$PKG_IMAGE"
+
+        prop_args=()
+        while IFS=$'\t' read -r key value; do
+          test -n "$key"
+          prop_args+=(--prop "$key:$value")
+        done < "$base_props"
+
+        BUILD="$V7_WORK/repack-300"
+        cp -a "$V7_WORK/base-raw" "$BUILD"
+        cp "$PKG_IMAGE" "$BUILD/kernel"
+        PRE="$V7_WORK/pre-avb-300.img"
+        (
+          cd "$BUILD"
+          "$mb" repack -n "$base" "$PRE" > "$AUDIT/REPACK.txt" 2>&1
+        )
+        python3 "$avb" erase_footer --image "$PRE"
+        expected_original="$(python3 "$V7_WORK/expected-size.py" "$image_bytes" "$V7_BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE")"
+        test "$(stat -c '%s' "$PRE")" = "$expected_original"
+        python3 "$avb" add_hash_footer \
+          --image "$PRE" \
+          --partition_name boot \
+          --partition_size "$BOOT_PARTITION_SIZE" \
+          --hash_algorithm sha256 \
+          --algorithm NONE \
+          --salt "$V7_AVB_SALT" \
+          "${prop_args[@]}"
+
+        FINAL="$BOOTDIR/Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount_STATIC_BOOT.img"
+        mv "$PRE" "$FINAL"
+        test "$(stat -c '%s' "$FINAL")" = "$BOOT_PARTITION_SIZE"
+
+        VERIFY="$V7_WORK/avb-verify-300"; mkdir -p "$VERIFY"; ln -sf "$FINAL" "$VERIFY/boot.img"
+        python3 "$avb" info_image --image "$VERIFY/boot.img" > "$AUDIT/FINAL-AVB.txt"
+        python3 "$avb" verify_image --image "$VERIFY/boot.img" > "$AUDIT/FINAL-AVB-VERIFY.txt" 2>&1
+        ! grep -Fq Traceback "$AUDIT/FINAL-AVB-VERIFY.txt"
+        grep -Fq 'Successfully verified footer' "$AUDIT/FINAL-AVB-VERIFY.txt"
+        grep -Eq '^Algorithm:[[:space:]]+NONE$' "$AUDIT/FINAL-AVB.txt"
+
+        final_salt="$(sed -n 's/^[[:space:]]*Salt:[[:space:]]*//p' "$AUDIT/FINAL-AVB.txt" | sed -n '1p' | tr 'A-F' 'a-f')"
+        test "$final_salt" = "$V7_AVB_SALT"
+        python3 "$V7_WORK/avb-props.py" "$AUDIT/FINAL-AVB.txt" "$AUDIT/FINAL-AVB-PROPS.txt"
+        cmp -s "$base_props" "$AUDIT/FINAL-AVB-PROPS.txt"
+
+        mkdir -p "$V7_WORK/final-raw-300" "$V7_WORK/final-decoded-300"
+        (cd "$V7_WORK/final-raw-300"; "$mb" unpack -n -h "$FINAL" > "$AUDIT/FINAL-RAW-UNPACK.txt" 2>&1)
+        (cd "$V7_WORK/final-decoded-300"; "$mb" unpack -h "$FINAL" > "$AUDIT/FINAL-DECODED-UNPACK.txt" 2>&1)
+        cmp -s "$PKG_IMAGE" "$V7_WORK/final-raw-300/kernel"
+        cmp -s "$PKG_IMAGE" "$V7_WORK/final-decoded-300/kernel"
+        cmp -s "$V7_WORK/base-raw/ramdisk.cpio" "$V7_WORK/final-raw-300/ramdisk.cpio"
+        cmp -s "$V7_WORK/base-decoded/ramdisk.cpio" "$V7_WORK/final-decoded-300/ramdisk.cpio"
+
+        python3 "$V7_WORK/header-check.py" \
+          "$base" "$FINAL" "$EXPECTED_HEADER_VERSION" "$image_bytes" \
+          "$V7_BASE_RAMDISK_BYTES" "$BOOT_PAGE_SIZE" "$BASE_KERNEL_BYTES" \
+          > "$AUDIT/HEADER-CONTRACT.txt"
+
+        boot_sha="$(sha256sum "$FINAL" | awk '{print $1}')"
+        {
+          echo 'KERNEL=5.4.300'
+          echo "IMAGE_SHA256=$image_sha"
+          echo "AK3_SHA256=$PORT300_PACKAGE_SHA256"
+          echo "BOOT_SHA256=$boot_sha"
+          echo 'RESUKISU_VERSION=35170'
+          echo "RESUKISU_COMMIT=$RESUKISU_TARGET_COMMIT"
+          echo 'SUSFS_VERSION=2.3.0'
+          echo "SUSFS_COMMIT=$SUSFS_COMMIT"
+          echo 'NOMOUNT_ENABLED=YES'
+          echo 'NOMOUNT_VERSION=2.0.0'
+          echo "NOMOUNT_COMMIT=$NOMOUNT_COMMIT"
+          echo 'AK3_TO_BOOT_KERNEL_BINDING=PASS'
+          echo 'RAW_RAMDISK_BYTE_IDENTITY=PASS'
+          echo 'DECODED_RAMDISK_BYTE_IDENTITY=PASS'
+          echo 'BOOT_HEADER_V3=PASS'
+          echo 'BOOT_HEADER_MUTATION_SCOPE=PASS'
+          echo 'AVB_VERIFY_IMAGE_EXIT_ZERO=PASS'
+          echo 'AVB_PROPERTIES_PRESERVED=PASS'
+          echo 'COMPILE_PASS=YES'
+          echo 'PACKAGE_PASS=YES'
+          echo 'STATIC_BOOT_PATH_PASS=YES'
+          echo 'DEVICE_PASS=NO'
+        } > "$DIST/STATIC-RESULT.txt"
+
+        echo 'PORT_300_STATIC_BOOT=PASS'
+    - name: Prepare lightweight public 5.4.300 artifact
+      shell: bash
+      run: |
+        set -euo pipefail
+        DIST="$GITHUB_WORKSPACE/port300-dist"
+        PUBLIC="$GITHUB_WORKSPACE/public300"
+        rm -rf "$PUBLIC"; mkdir -p "$PUBLIC"
+        cp "$PORT300_PACKAGE" "$PUBLIC/"
+        cp "$DIST/BUILD-STATUS.txt" "$PUBLIC/BUILD-STATUS.txt"
+        cp "$DIST/PACKAGE-STATUS.txt" "$PUBLIC/PACKAGE-STATUS.txt"
+        cp "$DIST/STATIC-RESULT.txt" "$PUBLIC/STATIC-RESULT.txt"
+        test "$(find "$PUBLIC" -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+        test "$(find "$PUBLIC" -maxdepth 1 -type f -name '*.img' | wc -l)" -eq 0
+        (
+          cd "$PUBLIC"
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+        )
+        echo 'PORT_300_PUBLIC_ARTIFACT_READY=PASS'
+    - name: Publish Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.300_SUSFS_2.3_ReSukiSU_35170_NoMount
+        path: public300/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Final 300 port GREEN gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        DIST="$GITHUB_WORKSPACE/port300-dist"
+        PUBLIC="$GITHUB_WORKSPACE/public300"
+
+        require_exact_key() {
+          local file="$1" key="$2" expected="$3"
+          test "$(grep -Ec "^${key}=" "$file")" -eq 1
+          grep -Fxq "${key}=${expected}" "$file"
+        }
+
+        require_exact_key "$DIST/BUILD-STATUS.txt" COMPILE_PASS YES
+        require_exact_key "$DIST/BUILD-STATUS.txt" PACKAGE_PASS NO
+        require_exact_key "$DIST/BUILD-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+        require_exact_key "$DIST/BUILD-STATUS.txt" DEVICE_PASS NO
+
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" COMPILE_PASS YES
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" PACKAGE_PASS YES
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" STATIC_BOOT_PATH_PASS NO
+        require_exact_key "$DIST/PACKAGE-STATUS.txt" DEVICE_PASS NO
+
+        require_exact_key "$DIST/STATIC-RESULT.txt" COMPILE_PASS YES
+        require_exact_key "$DIST/STATIC-RESULT.txt" PACKAGE_PASS YES
+        require_exact_key "$DIST/STATIC-RESULT.txt" STATIC_BOOT_PATH_PASS YES
+        require_exact_key "$DIST/STATIC-RESULT.txt" DEVICE_PASS NO
+        require_exact_key "$DIST/STATIC-RESULT.txt" RESUKISU_VERSION 35170
+        require_exact_key "$DIST/STATIC-RESULT.txt" NOMOUNT_ENABLED YES
+
+        grep -Fxq "DTB_SHA256=$EXPECTED_DTB_SHA256" "$DIST/BUILD-STATUS.txt"
+        grep -Fxq 'WARNING_REGRESSION_GATE=PASS' "$DIST/BUILD-STATUS.txt"
+
+        (
+          cd "$PUBLIC"
+          sha256sum -c SHA256SUMS.txt
+        )
+        echo 'VEUX_5_4_300_35170_NOMOUNT_PORT_FINAL_GREEN_GATE=PASS'
