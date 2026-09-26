@@ -1,0 +1,310 @@
+name: VEUX 5.4.301 Status Promotion V9 R1 - Verify R2 Evidence
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-301-status-promotion-v9-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  PROFILE: lineages/5.4.301/build.yml
+  PROFILE_BLOB: d4199afe050268a9921bafbcac63407df18f1318
+  PREVIOUS_PROFILE_BLOB: e80b6a3918c46d5845fa4d3e9f589ad6e245ef8d
+  CANDIDATE: common/contracts/CANDIDATE_5.4.301.yml
+  CANDIDATE_BLOB: d898ee7c0d0dd61196594f817954b860b3cc2673
+  PREVIOUS_FLEET: common/contracts/CURRENT_FLEET_V8.yml
+  PREVIOUS_FLEET_BLOB: 9d3433f918a673705dddabe76730f4f33c771e9f
+  FLEET: common/contracts/CURRENT_FLEET_V9.yml
+  FLEET_BLOB: 3fcfb1833ef4b81c62e6a79895d0f9aaad681fa3
+  R2_WORKFLOW: .github/workflows/veux-port-5.4.301-35170-nomount-r2-clang-transport-fallback.yml
+  R2_WORKFLOW_BLOB: 7fc9a876dae7b120f80eba74e26bd6f60ff54347
+  R2_RUN_ID: '36256030400'
+  R2_HEAD_SHA: e925d983f205c13d08d5d3be8f04be7e67bc1102
+  R2_ARTIFACT_ID: '10911103108'
+  R2_ARTIFACT_NAME: Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount
+  R2_ARTIFACT_BYTES: '15413098'
+  R2_ARTIFACT_SHA256: dfb5cb92a90ead89515d605f7193287f5dca76ef7ced103168bd223c06ea26a5
+  PACKAGE_FILE: Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  PACKAGE_BYTES: '15409464'
+  PACKAGE_SHA256: ea5273ff8e8b73c497f18e25593c74aa4a04888ec3afba3e4131493f840b4cf8
+  IMAGE_BYTES: '29911552'
+  IMAGE_SHA256: 6a8219d5689473adbc91dd64344611aa691c191e7e78308fa54d6a498ce9970d
+  EXPECTED_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+  STATIC_BOOT_BYTES: '134217728'
+  STATIC_BOOT_SHA256: 4cf5ad98c0fc610d0f5123894bda15ad2b55945521c513096da8aa7d6aa5a68b
+  RESUKISU_COMMIT: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+  SUSFS_COMMIT: 04a9d713106191ba98be680bd7ad9547ab1de964
+  NOMOUNT_COMMIT: b8d268353b4e7ecc53c67d1816a626b7d6579201
+
+jobs:
+  verify-promotion:
+    name: Verify 5.4.301 R2 evidence and Fleet V9 promotion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install verification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl git jq python3 python3-yaml unzip
+
+      - name: Pin exact 5.4.301 promotion contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          for f in "$PROFILE" "$CANDIDATE" "$PREVIOUS_FLEET" "$FLEET" "$R2_WORKFLOW"; do
+            test -f "$f"
+          done
+          test "$(git hash-object "$PROFILE")" = "$PROFILE_BLOB"
+          test "$(git hash-object "$CANDIDATE")" = "$CANDIDATE_BLOB"
+          test "$(git hash-object "$PREVIOUS_FLEET")" = "$PREVIOUS_FLEET_BLOB"
+          test "$(git hash-object "$FLEET")" = "$FLEET_BLOB"
+          test "$(git hash-object "$R2_WORKFLOW")" = "$R2_WORKFLOW_BLOB"
+          echo 'PROMOTION_CONTRACT_BLOBS=PASS'
+          echo 'CONTRACT_BLOBS_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Verify profile candidate and Fleet V9 semantic chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYVERIFYCHAIN'
+          from pathlib import Path
+          import copy, os, yaml
+
+          profile=yaml.safe_load(Path(os.environ['PROFILE']).read_text(encoding='utf-8'))
+          candidate=yaml.safe_load(Path(os.environ['CANDIDATE']).read_text(encoding='utf-8'))
+          old=yaml.safe_load(Path(os.environ['PREVIOUS_FLEET']).read_text(encoding='utf-8'))
+          new=yaml.safe_load(Path(os.environ['FLEET']).read_text(encoding='utf-8'))
+
+          assert profile == {
+            'schema':1, 'kernel':'5.4.301', 'enabled':True, 'device':'veux', 'platform':'sm6375',
+            'target':'android13-stock-vendor',
+            'baseline':{'id':'veux-u7-n4-v7-5.4.274-full-pass-2026-09-24','manifest':'common/contracts/GOLDEN_BASELINE.yml','role':'derive','port_status':'candidate','from_kernel':'5.4.274'},
+            'legacy_authority':{'workflow':'.github/workflows/veux-u6-o51-v3-resukisu-35158-repair-274-293-complete-all-six.yml'},
+            'features':{
+              'resukisu':{'enabled':True,'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+              'susfs':{'enabled':True,'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+              'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+            },
+            'outputs':{'ak3':True,'boot_img':True},
+            'validation':{'compile':True,'package':True,'static_boot':True,'device':False},
+          }
+
+          assert candidate['schema'] == 1 and candidate['kernel'] == '5.4.301' and candidate['status'] == 'candidate'
+          assert candidate['profile'] == {'path':os.environ['PROFILE'],'previous_blob':os.environ['PREVIOUS_PROFILE_BLOB'],'expected_blob':os.environ['PROFILE_BLOB']}
+          assert candidate['evidence_workflow'] == {
+            'path':os.environ['R2_WORKFLOW'],'blob':os.environ['R2_WORKFLOW_BLOB'],
+            'run_id':int(os.environ['R2_RUN_ID']),'run_head_sha':os.environ['R2_HEAD_SHA'],'conclusion':'success'
+          }
+          assert candidate['artifact']['id'] == int(os.environ['R2_ARTIFACT_ID'])
+          assert candidate['artifact']['name'] == os.environ['R2_ARTIFACT_NAME']
+          assert candidate['artifact']['size_bytes'] == int(os.environ['R2_ARTIFACT_BYTES'])
+          assert candidate['artifact']['digest'] == 'sha256:'+os.environ['R2_ARTIFACT_SHA256']
+          assert candidate['components'] == {
+            'resukisu':{'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+            'susfs':{'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+            'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+          }
+          assert candidate['image'] == {'kernelrelease':'5.4.301-qgki-g82179e362f33','bytes':int(os.environ['IMAGE_BYTES']),'sha256':os.environ['IMAGE_SHA256'],'dtb_sha256':os.environ['EXPECTED_DTB_SHA256']}
+          assert candidate['package'] == {'file':os.environ['PACKAGE_FILE'],'bytes':int(os.environ['PACKAGE_BYTES']),'sha256':os.environ['PACKAGE_SHA256']}
+          assert candidate['static_boot']['bytes'] == int(os.environ['STATIC_BOOT_BYTES'])
+          assert candidate['static_boot']['sha256'] == os.environ['STATIC_BOOT_SHA256']
+          sm=candidate['status_metadata']
+          assert sm['staged_status_chain'] is True
+          assert sm['build_status'] == {'compile_pass':True,'package_pass':False,'static_boot_path_pass':False,'device_pass':False}
+          assert sm['package_status'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':False,'device_pass':False}
+          assert sm['static_result'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':True,'device_pass':False}
+          for k in ('warning_regression_gate','topology_binding_gate','ksu_dual_path_binding','ksu_build_path_binding','generic_audit_ksu_dir2_classified'):
+            assert sm[k] == 'pass'
+          assert candidate['validation'] == {'compile_pass':True,'package_pass':True,'static_boot_path_pass':True,'device_pass':False}
+
+          expected=copy.deepcopy(old)
+          expected['contract']='CURRENT_FLEET_V9'
+          expected['status']='301-candidate-complete-static-validated'
+          expected['repository']={'branch':'main','source_observed_head_sha':os.environ['R2_HEAD_SHA'],'previous_contract':os.environ['PREVIOUS_FLEET'],'previous_contract_blob':os.environ['PREVIOUS_FLEET_BLOB']}
+          expected['policy']['explicit_35170_nomount_promotions']=['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301']
+          expected['policy']['remaining_35158_nomount_disabled']=['5.4.302']
+          expected['lineages']['5.4.301']={
+            'profile_blob':os.environ['PROFILE_BLOB'],'candidate_contract':os.environ['CANDIDATE'],'candidate_contract_blob':os.environ['CANDIDATE_BLOB'],
+            'resukisu':{'version':'35170','commit':os.environ['RESUKISU_COMMIT'],'uapi':4},
+            'susfs':{'version':'2.3.0','commit':os.environ['SUSFS_COMMIT']},
+            'nomount':{'enabled':True,'version':'2.0.0','commit':os.environ['NOMOUNT_COMMIT']},
+            'image':{'bytes':int(os.environ['IMAGE_BYTES']),'sha256':os.environ['IMAGE_SHA256']},
+            'package_sha256':os.environ['PACKAGE_SHA256'],'static_boot_sha256':os.environ['STATIC_BOOT_SHA256'],
+            'evidence_run_id':int(os.environ['R2_RUN_ID']),'evidence_run_head_sha':os.environ['R2_HEAD_SHA'],
+            'evidence_artifact_id':int(os.environ['R2_ARTIFACT_ID']),'evidence_artifact_digest':'sha256:'+os.environ['R2_ARTIFACT_SHA256'],
+            'topology_binding':'success','status_staged_chain':True,
+            'validation':{'compile':True,'package':True,'static_boot':True,'device':False},
+          }
+          for item in [
+            'common/contracts/CANDIDATE_5.4.301.yml','common/contracts/CURRENT_FLEET_V9.yml',
+            '.github/workflows/veux-port-5.4.301-35170-nomount-r2-clang-transport-fallback.yml',
+            '.github/workflows/veux-5.4.301-status-promotion-v9-verify-r1.yml']:
+            if item not in expected['cleanup_protection']['keep']:
+              expected['cleanup_protection']['keep'].append(item)
+          assert new == expected, 'Fleet V9 contains drift outside the exact 301 promotion mutation'
+          assert new['lineages']['5.4.274'] == old['lineages']['5.4.274']
+          assert new['lineages']['5.4.302'] == old['lineages']['5.4.302']
+          assert new['external_device_evidence'] == old['external_device_evidence']
+          print('PROFILE_CANDIDATE_FLEET_V9_CHAIN=PASS')
+          PYVERIFYCHAIN
+          echo 'SEMANTIC_CHAIN_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Authenticate exact green R2 run and single public artifact
+        shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/301-status-promotion-v9-r1"
+          rm -rf "$WORK"
+          mkdir -p "$WORK/raw"
+          api_get() {
+            local url="$1" out="$2"
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2               -H 'Accept: application/vnd.github+json'               -H "Authorization: Bearer $GH_READ_TOKEN"               -H 'X-GitHub-Api-Version: 2022-11-28'               "$url" -o "$out"
+          }
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID" "$WORK/run.json"
+          jq -e --arg head "$R2_HEAD_SHA" --arg path "$R2_WORKFLOW" --argjson id "$R2_RUN_ID"             '.id == $id and .head_sha == $head and .path == $path and .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success" and .run_attempt == 1'             "$WORK/run.json" >/dev/null
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID/jobs?per_page=100" "$WORK/jobs.json"
+          python3 - "$WORK/jobs.json" <<'PYJOBS'
+          import json, sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert d['total_count'] == 1 and len(d['jobs']) == 1
+          j=d['jobs'][0]
+          assert j['name'] == '5.4.301 -> 35170 + NoMount compile/package/static'
+          assert j['status'] == 'completed' and j['conclusion'] == 'success'
+          by={s['name']:s['conclusion'] for s in j['steps']}
+          required=[
+            'Fail-fast 301 baseline and local snapshot preflight','Extract exact O51 baseline replayer',
+            'Prepare authenticated clang-r416183b replay transport','Reconstruct proven 5.4.301 35158 baseline workspace',
+            'Require baseline reconstruction green','Stage ReSukiSU 35170 + NoMount and compile 5.4.301',
+            'Require 35170 + NoMount compile green','Build deterministic clean AK3 package',
+            'Initialize static workspace','Initialize static-boot verification helpers',
+            'Install pinned MagiskBoot and AOSP avbtool','Authenticate proven Android 13 boot-v3 reference',
+            'Construct and verify 5.4.301 static boot','Prepare lightweight public 5.4.301 artifact',
+            'Publish Veux_5.4.301_SUSFS_2.3_ReSukiSU_35170_NoMount','Final 301 port GREEN gate']
+          for n in required: assert by.get(n) == 'success', (n,by.get(n))
+          assert by.get('Upload baseline diagnostics only on failure') == 'skipped'
+          assert by.get('Upload compile diagnostics only on failure') == 'skipped'
+          print('R2_REQUIRED_STEPS=PASS')
+          PYJOBS
+
+          api_get "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$R2_RUN_ID/artifacts?per_page=100" "$WORK/artifacts.json"
+          jq -e --arg name "$R2_ARTIFACT_NAME" --arg digest "sha256:$R2_ARTIFACT_SHA256" --arg head "$R2_HEAD_SHA"             --argjson id "$R2_ARTIFACT_ID" --argjson bytes "$R2_ARTIFACT_BYTES" --argjson run "$R2_RUN_ID"             '.total_count == 1 and (.artifacts|length) == 1 and .artifacts[0].id == $id and .artifacts[0].name == $name and .artifacts[0].size_in_bytes == $bytes and .artifacts[0].expired == false and .artifacts[0].digest == $digest and .artifacts[0].workflow_run.id == $run and .artifacts[0].workflow_run.head_sha == $head'             "$WORK/artifacts.json" >/dev/null
+          cp "$WORK/artifacts.json" "$WORK/artifact-list-auth.json"
+          artifact_url="$(jq -r '.artifacts[0].archive_download_url' "$WORK/artifacts.json")"
+          test -n "$artifact_url" && test "$artifact_url" != null
+          curl --fail --location --silent --show-error --retry 3 --retry-delay 2             -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer $GH_READ_TOKEN" -H 'X-GitHub-Api-Version: 2022-11-28'             "$artifact_url" -o "$WORK/r2-artifact.zip"
+          test "$(stat -c '%s' "$WORK/r2-artifact.zip")" = "$R2_ARTIFACT_BYTES"
+          test "$(sha256sum "$WORK/r2-artifact.zip" | awk '{print $1}')" = "$R2_ARTIFACT_SHA256"
+          python3 - "$WORK/r2-artifact.zip" "$PACKAGE_FILE" <<'PYZIP'
+          import sys, zipfile
+          p,pkg=sys.argv[1:]
+          expected={'BUILD-STATUS.txt','PACKAGE-STATUS.txt','STATIC-RESULT.txt','SHA256SUMS.txt',pkg}
+          with zipfile.ZipFile(p) as z:
+            names=z.namelist()
+            assert len(names)==len(set(names)), 'duplicate artifact entries'
+            assert set(names)==expected, (set(names),expected)
+            for n in names:
+              assert not n.startswith('/') and '..' not in n.split('/')
+          print('R2_PUBLIC_EVIDENCE_EXACTLY_ONE=PASS')
+          PYZIP
+          unzip -q "$WORK/r2-artifact.zip" -d "$WORK/raw"
+          echo "PROMOTION_WORK=$WORK" >> "$GITHUB_ENV"
+          echo 'R2_AUTH_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Verify staged R2 evidence package and static result
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$PROMOTION_WORK"
+          python3 - "$WORK/raw" <<'PYEVIDENCE'
+          from pathlib import Path
+          import hashlib, os, sys, zipfile
+          root=Path(sys.argv[1])
+          def kv(path):
+            out={}
+            for raw in path.read_text(encoding='utf-8').splitlines():
+              if not raw.strip(): continue
+              assert '=' in raw, raw
+              k,v=raw.split('=',1)
+              assert k not in out, f'duplicate key {k} in {path.name}'
+              out[k]=v
+            return out
+          b=kv(root/'BUILD-STATUS.txt'); p=kv(root/'PACKAGE-STATUS.txt'); s=kv(root/'STATIC-RESULT.txt')
+          common={
+            'KERNEL':'5.4.301','RESUKISU_VERSION':'35170','RESUKISU_COMMIT':os.environ['RESUKISU_COMMIT'],
+            'SUSFS_VERSION':'2.3.0','SUSFS_COMMIT':os.environ['SUSFS_COMMIT'],
+            'NOMOUNT_ENABLED':'YES','NOMOUNT_VERSION':'2.0.0','NOMOUNT_COMMIT':os.environ['NOMOUNT_COMMIT'],
+          }
+          for d in (b,p,s):
+            for k,v in common.items(): assert d[k]==v,(k,d[k],v)
+          for d in (b,p):
+            assert d['KERNELRELEASE']=='5.4.301-qgki-g82179e362f33'
+            assert d['IMAGE_SHA256']==os.environ['IMAGE_SHA256']
+            assert d['IMAGE_BYTES']==os.environ['IMAGE_BYTES']
+            assert d['DTB_SHA256']==os.environ['EXPECTED_DTB_SHA256']
+            assert d['WARNING_REGRESSION_GATE']=='PASS'
+            assert d['UAPI']=='4' and d['MODULE_LOAD_FILTER']=='EXCLUDED'
+            assert d['KSU_DUAL_PATH_BINDING']=='PASS' and d['KSU_BUILD_PATH_BINDING']=='PASS'
+            assert d['GENERIC_AUDIT_KSU_DIR2_CLASSIFIED']=='PASS'
+          assert (b['COMPILE_PASS'],b['PACKAGE_PASS'],b['STATIC_BOOT_PATH_PASS'],b['DEVICE_PASS']) == ('YES','NO','NO','NO')
+          assert (p['COMPILE_PASS'],p['PACKAGE_PASS'],p['STATIC_BOOT_PATH_PASS'],p['DEVICE_PASS']) == ('YES','YES','NO','NO')
+          assert p['AK3_FILE']==os.environ['PACKAGE_FILE'] and p['AK3_SHA256']==os.environ['PACKAGE_SHA256'] and p['AK3_BYTES']==os.environ['PACKAGE_BYTES']
+          assert p['AK3_DETERMINISTIC_ZIP_A_B_GATE']=='PASS' and p['IMAGE_PARITY']=='PASS' and p['AK3_FLASH_CONTRACT']=='PASS'
+          assert s['IMAGE_SHA256']==os.environ['IMAGE_SHA256'] and s['AK3_SHA256']==os.environ['PACKAGE_SHA256'] and s['BOOT_SHA256']==os.environ['STATIC_BOOT_SHA256']
+          for k in ('AK3_TO_BOOT_KERNEL_BINDING','RAW_RAMDISK_BYTE_IDENTITY','DECODED_RAMDISK_BYTE_IDENTITY','BOOT_HEADER_V3','BOOT_HEADER_MUTATION_SCOPE','AVB_VERIFY_IMAGE_EXIT_ZERO','AVB_PROPERTIES_PRESERVED'):
+            assert s[k]=='PASS',(k,s[k])
+          assert (s['COMPILE_PASS'],s['PACKAGE_PASS'],s['STATIC_BOOT_PATH_PASS'],s['DEVICE_PASS']) == ('YES','YES','YES','NO')
+
+          pkg=root/os.environ['PACKAGE_FILE']
+          assert pkg.stat().st_size==int(os.environ['PACKAGE_BYTES'])
+          assert hashlib.sha256(pkg.read_bytes()).hexdigest()==os.environ['PACKAGE_SHA256']
+          sums={}
+          for line in (root/'SHA256SUMS.txt').read_text(encoding='utf-8').splitlines():
+            h,name=line.split(None,1); name=name.removeprefix('./')
+            assert name not in sums; sums[name]=h
+          assert set(sums)=={'BUILD-STATUS.txt','PACKAGE-STATUS.txt','STATIC-RESULT.txt',os.environ['PACKAGE_FILE']}
+          for name,h in sums.items():
+            assert hashlib.sha256((root/name).read_bytes()).hexdigest()==h
+          with zipfile.ZipFile(pkg) as z:
+            names=z.namelist(); assert 'Image' in names and names.count('Image')==1
+            info=z.getinfo('Image'); assert info.file_size==int(os.environ['IMAGE_BYTES'])
+            with z.open('Image') as f:
+              digest=hashlib.sha256(f.read()).hexdigest()
+            assert digest==os.environ['IMAGE_SHA256']
+          print('R2_STAGED_STATUS_CHAIN=PASS')
+          print('R2_PACKAGE_IMAGE_BINDING=PASS')
+          print('R2_STATIC_EVIDENCE=PASS')
+          PYEVIDENCE
+          echo 'R2_EVIDENCE_PASS=YES' >> "$GITHUB_ENV"
+
+      - name: Final Fleet V9 promotion GREEN gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONTRACT_BLOBS_PASS" = YES
+          test "$SEMANTIC_CHAIN_PASS" = YES
+          test "$R2_AUTH_PASS" = YES
+          test "$R2_EVIDENCE_PASS" = YES
+          echo 'FLEET_V9_301_PROMOTION=PASS'
+          echo 'COMPILE_PASS=YES'
+          echo 'PACKAGE_PASS=YES'
+          echo 'STATIC_BOOT_PATH_PASS=YES'
+          echo 'DEVICE_PASS=NO'
