@@ -1,0 +1,349 @@
+name: VEUX Port 5.4.302 R2 - normalize O44 status evidence (existing 35170 + NoMount artifact)
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-port-5-4-302-35170-nomount-r2-status-normalized
+  cancel-in-progress: false
+
+env:
+  SOURCE_WORKFLOW_PATH: .github/workflows/veux-port-5.4.302-35170-nomount-r1.yml
+  SOURCE_WORKFLOW_BLOB: fb4d5afd2f308d15c446928b8b1625f2d439a59c
+  SOURCE_RUN_ID: '36263837437'
+  SOURCE_RUN_HEAD_SHA: 734767487c6973c54d221d0a11ae48c85f015c24
+  SOURCE_JOB_ID: '108464599741'
+  SOURCE_ARTIFACT_NAME: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount
+  SOURCE_ARTIFACT_ID: '10914176645'
+  SOURCE_ARTIFACT_BYTES: '15412990'
+  SOURCE_ARTIFACT_SHA256: 26bff8f49db0e18c0fbbcc1d0827206cf02bf6cea2035143242c545454899e96
+  PACKAGE_FILE: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  PACKAGE_BYTES: '15409356'
+  PACKAGE_SHA256: 5666ab43c17e112b63778bcb02de1759919e74aa498d10d6eca11f4994ab4de3
+  IMAGE_BYTES: '29911552'
+  IMAGE_SHA256: d6a4aa5da2b7bf77dd3e4ac28deea4427df548cffe4e1a0fd8e02b54c6506f3b
+  EXPECTED_DTB_SHA256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+  STATIC_BOOT_SHA256: 44a0743c92c52a445ba01316c4633c947a90fc0ba6ec3c55f55e91103951a5d2
+  OUTPUT_ARTIFACT_NAME: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount_StatusNormalized
+
+jobs:
+  normalize-status-evidence:
+    name: Normalize exact R1 evidence and rerun full final gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout orchestrator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+
+      - name: Authenticate exact R1 workflow, run and failed-final-gate shape
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test -f "$SOURCE_WORKFLOW_PATH"
+          test "$(git hash-object "$SOURCE_WORKFLOW_PATH")" = "$SOURCE_WORKFLOW_BLOB"
+
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          auth=( -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' )
+
+          curl -fsSL "${auth[@]}" \
+            "$api/actions/runs/$SOURCE_RUN_ID" -o source-run.json
+          test "$(jq -r '.id' source-run.json)" = "$SOURCE_RUN_ID"
+          test "$(jq -r '.head_sha' source-run.json)" = "$SOURCE_RUN_HEAD_SHA"
+          test "$(jq -r '.event' source-run.json)" = 'workflow_dispatch'
+          test "$(jq -r '.status' source-run.json)" = 'completed'
+          test "$(jq -r '.conclusion' source-run.json)" = 'failure'
+
+          curl -fsSL "${auth[@]}" \
+            "$api/actions/jobs/$SOURCE_JOB_ID" -o source-job.json
+          test "$(jq -r '.run_id' source-job.json)" = "$SOURCE_RUN_ID"
+          test "$(jq -r '.head_sha' source-job.json)" = "$SOURCE_RUN_HEAD_SHA"
+          test "$(jq -r '.status' source-job.json)" = 'completed'
+          test "$(jq -r '.conclusion' source-job.json)" = 'failure'
+
+          require_step_conclusion() {
+            local step_name="$1" expected="$2" count actual
+            count="$(jq --arg n "$step_name" '[.steps[] | select(.name == $n)] | length' source-job.json)"
+            test "$count" -eq 1
+            actual="$(jq -r --arg n "$step_name" '.steps[] | select(.name == $n) | .conclusion' source-job.json)"
+            test "$actual" = "$expected"
+          }
+
+          require_step_conclusion 'Reconstruct proven 5.4.302 35158 baseline workspace' success
+          require_step_conclusion 'Require baseline reconstruction green' success
+          require_step_conclusion 'Stage ReSukiSU 35170 + NoMount and compile 5.4.302' success
+          require_step_conclusion 'Require 35170 + NoMount compile green' success
+          require_step_conclusion 'Build deterministic clean AK3 package' success
+          require_step_conclusion 'Construct and verify 5.4.302 static boot' success
+          require_step_conclusion 'Prepare lightweight public 5.4.302 artifact' success
+          require_step_conclusion 'Publish Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount' success
+          require_step_conclusion 'Final 302 port GREEN gate' failure
+
+          test "$(jq '[.steps[] | select(.conclusion == "failure")] | length' source-job.json)" -eq 1
+
+          curl -fsSL -L "${auth[@]}" \
+            "$api/actions/jobs/$SOURCE_JOB_ID/logs" -o source-job.log
+          grep -aFq 'O44_302_SOURCE_CONTRACT=PASS' source-job.log
+
+          echo 'R1_WORKFLOW_RUN_JOB_CONTRACT=PASS'
+
+      - name: Download and authenticate exact R1 artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          auth=( -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' )
+
+          curl -fsSL "${auth[@]}" \
+            "$api/actions/artifacts/$SOURCE_ARTIFACT_ID" -o source-artifact.json
+          test "$(jq -r '.id' source-artifact.json)" = "$SOURCE_ARTIFACT_ID"
+          test "$(jq -r '.name' source-artifact.json)" = "$SOURCE_ARTIFACT_NAME"
+          test "$(jq -r '.size_in_bytes' source-artifact.json)" = "$SOURCE_ARTIFACT_BYTES"
+          test "$(jq -r '.expired' source-artifact.json)" = 'false'
+          test "$(jq -r '.digest' source-artifact.json)" = "sha256:$SOURCE_ARTIFACT_SHA256"
+          test "$(jq -r '.workflow_run.id' source-artifact.json)" = "$SOURCE_RUN_ID"
+          test "$(jq -r '.workflow_run.head_sha' source-artifact.json)" = "$SOURCE_RUN_HEAD_SHA"
+
+          curl -fsSL -L "${auth[@]}" \
+            "$api/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" -o source-artifact.zip
+          test "$(stat -c '%s' source-artifact.zip)" = "$SOURCE_ARTIFACT_BYTES"
+          test "$(sha256sum source-artifact.zip | awk '{print $1}')" = "$SOURCE_ARTIFACT_SHA256"
+
+          rm -rf source-raw
+          mkdir source-raw
+          unzip -q source-artifact.zip -d source-raw
+
+          test "$(find source-raw -mindepth 1 -maxdepth 1 | wc -l)" -eq 5
+          test "$(find source-raw -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+          for f in BUILD-STATUS.txt PACKAGE-STATUS.txt STATIC-RESULT.txt SHA256SUMS.txt "$PACKAGE_FILE"; do
+            test -f "source-raw/$f"
+          done
+
+          (cd source-raw && sha256sum -c SHA256SUMS.txt)
+
+          test "$(stat -c '%s' "source-raw/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+          test "$(sha256sum "source-raw/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          unzip -tq "source-raw/$PACKAGE_FILE"
+          unzip -p "source-raw/$PACKAGE_FILE" Image > source-image.bin
+          test "$(stat -c '%s' source-image.bin)" = "$IMAGE_BYTES"
+          test "$(sha256sum source-image.bin | awk '{print $1}')" = "$IMAGE_SHA256"
+          grep -aFq '@ReSukiSU' source-image.bin
+          grep -aFq 'susfs:' source-image.bin
+          grep -aFq 'NoMount:' source-image.bin
+
+          echo 'R1_ARTIFACT_IDENTITY=PASS'
+
+      - name: Prove exact source-status defect and preserve DEVICE_PASS=NO
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3" count
+            count="$(grep -Ec "^${key}=" "$file")"
+            test "$count" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+
+          b='source-raw/BUILD-STATUS.txt'
+          p='source-raw/PACKAGE-STATUS.txt'
+          s='source-raw/STATIC-RESULT.txt'
+
+          require_exact_key "$b" KERNEL 5.4.302
+          require_exact_key "$b" KERNELRELEASE 5.4.302-qgki-g82179e362f33
+          require_exact_key "$b" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$b" IMAGE_BYTES "$IMAGE_BYTES"
+          require_exact_key "$b" DTB_SHA256 "$EXPECTED_DTB_SHA256"
+          require_exact_key "$b" WARNING_REGRESSION_GATE PASS
+          require_exact_key "$b" RESUKISU_VERSION 35170
+          require_exact_key "$b" UAPI 4
+          require_exact_key "$b" SUSFS_VERSION 2.3.0
+          require_exact_key "$b" NOMOUNT_ENABLED YES
+          require_exact_key "$b" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$b" KSU_DUAL_PATH_BINDING PASS
+          require_exact_key "$b" GENERIC_AUDIT_KSU_DIR2_CLASSIFIED PASS
+          require_exact_key "$b" KSU_BUILD_PATH_BINDING PASS
+          require_exact_key "$b" COMPILE_PASS YES
+          require_exact_key "$b" PACKAGE_PASS NO
+          require_exact_key "$b" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$b" DEVICE_PASS NO
+          test "$(grep -Ec '^O44_302_SOURCE_CONTRACT=' "$b")" -eq 0
+
+          require_exact_key "$p" KERNEL 5.4.302
+          require_exact_key "$p" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$p" IMAGE_BYTES "$IMAGE_BYTES"
+          require_exact_key "$p" DTB_SHA256 "$EXPECTED_DTB_SHA256"
+          require_exact_key "$p" RESUKISU_VERSION 35170
+          require_exact_key "$p" UAPI 4
+          require_exact_key "$p" SUSFS_VERSION 2.3.0
+          require_exact_key "$p" NOMOUNT_ENABLED YES
+          require_exact_key "$p" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$p" AK3_FILE "$PACKAGE_FILE"
+          require_exact_key "$p" AK3_SHA256 "$PACKAGE_SHA256"
+          require_exact_key "$p" AK3_BYTES "$PACKAGE_BYTES"
+          require_exact_key "$p" AK3_DETERMINISTIC_ZIP_A_B_GATE PASS
+          require_exact_key "$p" IMAGE_PARITY PASS
+          require_exact_key "$p" AK3_FLASH_CONTRACT PASS
+          require_exact_key "$p" COMPILE_PASS YES
+          require_exact_key "$p" PACKAGE_PASS YES
+          require_exact_key "$p" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$p" DEVICE_PASS NO
+
+          require_exact_key "$s" KERNEL 5.4.302
+          require_exact_key "$s" IMAGE_SHA256 "$IMAGE_SHA256"
+          require_exact_key "$s" AK3_SHA256 "$PACKAGE_SHA256"
+          require_exact_key "$s" BOOT_SHA256 "$STATIC_BOOT_SHA256"
+          require_exact_key "$s" RESUKISU_VERSION 35170
+          require_exact_key "$s" SUSFS_VERSION 2.3.0
+          require_exact_key "$s" NOMOUNT_ENABLED YES
+          require_exact_key "$s" NOMOUNT_VERSION 2.0.0
+          require_exact_key "$s" AK3_TO_BOOT_KERNEL_BINDING PASS
+          require_exact_key "$s" RAW_RAMDISK_BYTE_IDENTITY PASS
+          require_exact_key "$s" DECODED_RAMDISK_BYTE_IDENTITY PASS
+          require_exact_key "$s" BOOT_HEADER_V3 PASS
+          require_exact_key "$s" BOOT_HEADER_MUTATION_SCOPE PASS
+          require_exact_key "$s" AVB_VERIFY_IMAGE_EXIT_ZERO PASS
+          require_exact_key "$s" AVB_PROPERTIES_PRESERVED PASS
+          require_exact_key "$s" COMPILE_PASS YES
+          require_exact_key "$s" PACKAGE_PASS YES
+          require_exact_key "$s" STATIC_BOOT_PATH_PASS YES
+          require_exact_key "$s" DEVICE_PASS NO
+
+          echo 'R1_SOURCE_STATUS_DEFECT_PROVEN=PASS'
+
+      - name: Normalize only missing O44 status line and rebuild manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf normalized
+          mkdir normalized
+          cp source-raw/PACKAGE-STATUS.txt normalized/
+          cp source-raw/STATIC-RESULT.txt normalized/
+          cp "source-raw/$PACKAGE_FILE" normalized/
+
+          awk '
+            { print }
+            $0 == "WARNING_REGRESSION_GATE=PASS" {
+              print "O44_302_SOURCE_CONTRACT=PASS"
+              inserted++
+            }
+            END {
+              if (inserted != 1) exit 42
+            }
+          ' source-raw/BUILD-STATUS.txt > normalized/BUILD-STATUS.txt
+
+          test "$(grep -Ec '^O44_302_SOURCE_CONTRACT=' normalized/BUILD-STATUS.txt)" -eq 1
+          grep -Fxq 'O44_302_SOURCE_CONTRACT=PASS' normalized/BUILD-STATUS.txt
+
+          grep -v '^O44_302_SOURCE_CONTRACT=PASS$' normalized/BUILD-STATUS.txt > build-without-normalization.txt
+          cmp -s source-raw/BUILD-STATUS.txt build-without-normalization.txt
+
+          (
+            cd normalized
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 -r sha256sum > SHA256SUMS.txt
+            test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo 'STATUS_NORMALIZATION_SINGLE_LINE_DIFF=PASS'
+
+      - name: Run complete original R1 final gate against normalized evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3" count
+            count="$(grep -Ec "^${key}=" "$file")"
+            test "$count" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+
+          b='normalized/BUILD-STATUS.txt'
+          p='normalized/PACKAGE-STATUS.txt'
+          s='normalized/STATIC-RESULT.txt'
+
+          require_exact_key "$b" COMPILE_PASS YES
+          require_exact_key "$b" PACKAGE_PASS NO
+          require_exact_key "$b" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$b" DEVICE_PASS NO
+
+          require_exact_key "$p" COMPILE_PASS YES
+          require_exact_key "$p" PACKAGE_PASS YES
+          require_exact_key "$p" STATIC_BOOT_PATH_PASS NO
+          require_exact_key "$p" DEVICE_PASS NO
+
+          require_exact_key "$s" COMPILE_PASS YES
+          require_exact_key "$s" PACKAGE_PASS YES
+          require_exact_key "$s" STATIC_BOOT_PATH_PASS YES
+          require_exact_key "$s" DEVICE_PASS NO
+          require_exact_key "$s" RESUKISU_VERSION 35170
+          require_exact_key "$s" NOMOUNT_ENABLED YES
+
+          require_exact_key "$b" DTB_SHA256 "$EXPECTED_DTB_SHA256"
+          require_exact_key "$b" WARNING_REGRESSION_GATE PASS
+          require_exact_key "$b" O44_302_SOURCE_CONTRACT PASS
+          require_exact_key "$b" KSU_DUAL_PATH_BINDING PASS
+          require_exact_key "$b" GENERIC_AUDIT_KSU_DIR2_CLASSIFIED PASS
+          require_exact_key "$b" KSU_BUILD_PATH_BINDING PASS
+
+          test "$(sha256sum "normalized/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          test "$(stat -c '%s' "normalized/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+          test "$(find normalized -mindepth 1 -maxdepth 1 | wc -l)" -eq 5
+          test "$(find normalized -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+          (cd normalized && sha256sum -c SHA256SUMS.txt)
+
+          echo 'VEUX_5_4_302_35170_NOMOUNT_PORT_FINAL_GREEN_GATE=PASS'
+
+      - name: Publish exactly one normalized 5.4.302 evidence artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ env.OUTPUT_ARTIFACT_NAME }}
+          path: normalized/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Final R2 normalization green gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_exact_key() {
+            local file="$1" key="$2" expected="$3" count
+            count="$(grep -Ec "^${key}=" "$file")"
+            test "$count" -eq 1
+            grep -Fxq "${key}=${expected}" "$file"
+          }
+
+          test "$(find normalized -mindepth 1 -maxdepth 1 | wc -l)" -eq 5
+          test "$(find normalized -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+          (cd normalized && sha256sum -c SHA256SUMS.txt)
+
+          require_exact_key normalized/BUILD-STATUS.txt O44_302_SOURCE_CONTRACT PASS
+          require_exact_key normalized/BUILD-STATUS.txt COMPILE_PASS YES
+          require_exact_key normalized/PACKAGE-STATUS.txt PACKAGE_PASS YES
+          require_exact_key normalized/STATIC-RESULT.txt STATIC_BOOT_PATH_PASS YES
+          require_exact_key normalized/STATIC-RESULT.txt DEVICE_PASS NO
+          require_exact_key normalized/STATIC-RESULT.txt RESUKISU_VERSION 35170
+          require_exact_key normalized/STATIC-RESULT.txt NOMOUNT_ENABLED YES
+
+          test "$(sha256sum "normalized/$PACKAGE_FILE" | awk '{print $1}')" = "$PACKAGE_SHA256"
+          test "$(stat -c '%s' "normalized/$PACKAGE_FILE")" = "$PACKAGE_BYTES"
+
+          echo 'VEUX_5_4_302_R2_STATUS_NORMALIZATION_FINAL_GATE=PASS'
