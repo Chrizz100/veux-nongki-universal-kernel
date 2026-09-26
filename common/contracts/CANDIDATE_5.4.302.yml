@@ -1,0 +1,93 @@
+schema: 1
+kernel: 5.4.302
+status: candidate
+profile:
+  path: lineages/5.4.302/build.yml
+  previous_blob: 6988c68b9356e90ddd69b70d427fcadb32092703
+  expected_blob: 81bc186ecd3a021c455769d3a61ef0a46b6b1b73
+evidence_workflow:
+  path: .github/workflows/veux-port-5.4.302-35170-nomount-r2-status-normalized.yml
+  blob: 183dd49cb714c900fbb827b8f908a051f7e7660d
+  run_id: 36270805847
+  run_head_sha: c04d81a9067511eccffc934f6fd76502fc963727
+  conclusion: success
+artifact:
+  id: 10915213794
+  name: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount_StatusNormalized
+  size_bytes: 15413019
+  digest: sha256:699f4ddec2fca13a7e90a537c9f7147487953aa41f7bdb7766f90af48db0dea1
+  expires_at: '2026-12-25T20:48:51Z'
+components:
+  resukisu:
+    version: '35170'
+    commit: 9be0f347f38e790c846915bd5f9c24b337f85c4e
+    uapi: 4
+  susfs:
+    version: 2.3.0
+    commit: 04a9d713106191ba98be680bd7ad9547ab1de964
+  nomount:
+    enabled: true
+    version: 2.0.0
+    commit: b8d268353b4e7ecc53c67d1816a626b7d6579201
+image:
+  kernelrelease: 5.4.302-qgki-g82179e362f33
+  bytes: 29911552
+  sha256: d6a4aa5da2b7bf77dd3e4ac28deea4427df548cffe4e1a0fd8e02b54c6506f3b
+  dtb_sha256: 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37
+package:
+  file: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount.zip
+  bytes: 15409356
+  sha256: 5666ab43c17e112b63778bcb02de1759919e74aa498d10d6eca11f4994ab4de3
+static_boot:
+  file: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount_STATIC_BOOT.img
+  bytes: 134217728
+  sha256: 44a0743c92c52a445ba01316c4633c947a90fc0ba6ec3c55f55e91103951a5d2
+status_metadata:
+  source_build_workflow: .github/workflows/veux-port-5.4.302-35170-nomount-r1.yml
+  source_build_workflow_blob: fb4d5afd2f308d15c446928b8b1625f2d439a59c
+  source_run_id: 36263837437
+  source_run_head_sha: 734767487c6973c54d221d0a11ae48c85f015c24
+  source_artifact_id: 10914176645
+  source_artifact_digest: sha256:26bff8f49db0e18c0fbbcc1d0827206cf02bf6cea2035143242c545454899e96
+  source_final_gate_failure: true
+  source_missing_key: O44_302_SOURCE_CONTRACT
+  technical_build_result_affected: false
+  normalization_workflow: .github/workflows/veux-port-5.4.302-35170-nomount-r2-status-normalized.yml
+  normalization_workflow_blob: 183dd49cb714c900fbb827b8f908a051f7e7660d
+  normalization_run_status: success
+  normalization_run_id: 36270805847
+  normalization_run_head_sha: c04d81a9067511eccffc934f6fd76502fc963727
+  normalization_artifact:
+    id: 10915213794
+    name: Veux_5.4.302_SUSFS_2.3_ReSukiSU_35170_NoMount_StatusNormalized
+    size_bytes: 15413019
+    digest: sha256:699f4ddec2fca13a7e90a537c9f7147487953aa41f7bdb7766f90af48db0dea1
+    expires_at: '2026-12-25T20:48:51Z'
+  single_line_status_normalization: true
+  staged_status_chain: true
+  build_status:
+    compile_pass: true
+    package_pass: false
+    static_boot_path_pass: false
+    device_pass: false
+  package_status:
+    compile_pass: true
+    package_pass: true
+    static_boot_path_pass: false
+    device_pass: false
+  static_result:
+    compile_pass: true
+    package_pass: true
+    static_boot_path_pass: true
+    device_pass: false
+  warning_regression_gate: pass
+  o44_source_contract: pass
+  ksu_dual_path_binding: pass
+  ksu_build_path_binding: pass
+  generic_audit_ksu_dir2_classified: pass
+  note: R1 is retained as immutable technical build evidence. R2 authenticates that exact R1 run and artifact, adds only the previously omitted O44_302_SOURCE_CONTRACT=PASS status line, rebuilds SHA256SUMS, reruns the complete original final gate, and preserves DEVICE_PASS=NO throughout.
+validation:
+  compile_pass: true
+  package_pass: true
+  static_boot_path_pass: true
+  device_pass: false
