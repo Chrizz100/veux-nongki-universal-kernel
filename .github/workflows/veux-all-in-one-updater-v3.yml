@@ -1,0 +1,106 @@
+name: VEUX All-in-One Updater V3 - Shared Engine
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-all-in-one-v3-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  update:
+    name: Resolve once, integrate and validate all six
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+    - name: Checkout exact project
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+        python3 -m venv "$RUNNER_TEMP/veux-python"
+        "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+    - name: Verify engine and source contracts
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
+    - name: Resolve and authenticate upstreams once
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_update_engine.py resolve --work "$RUNNER_TEMP/veux-targets"
+    - name: Run the same engine for all six sources
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_update_engine.py all --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds" --public "$RUNNER_TEMP/veux-public" --jobs "$(nproc)"
+    - name: Prove checkout and Golden remain unchanged
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo REPOSITORY_MUTATION=NO
+    - name: Publish 5.4.274
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.274_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.274/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish 5.4.292
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.292_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.292/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish 5.4.293
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.293_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.293/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish 5.4.300
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.300_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.300/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish 5.4.301
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.301_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.301/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish 5.4.302
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Veux_5.4.302_AllInOne_${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-public/5.4.302/
+        if-no-files-found: error
+        retention-days: 90
+        compression-level: 0
+    - name: Publish failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-AllInOne-BLOCKED-${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-builds/diagnostics/
+        if-no-files-found: warn
+        retention-days: 7
