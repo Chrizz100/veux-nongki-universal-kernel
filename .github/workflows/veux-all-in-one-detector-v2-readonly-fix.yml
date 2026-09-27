@@ -1,0 +1,163 @@
+name: VEUX All-in-One Updater V2 - Read-only Detector
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-all-in-one-detector-v2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  DETECTOR_BLOB: 4a9a7a9c14aa6c709b113600bec6b6a98c772fcb
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  detector:
+    name: Detect fleet + upstreams with one generic engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Guard repository and branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF_NAME" = main
+          test -f common/scripts/veux_update_detector.py
+          test "$(git hash-object common/scripts/veux_update_detector.py)" = "$DETECTOR_BLOB"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Install parser dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' || python3 -m pip install --user PyYAML
+          import yaml
+          print(f"PyYAML={yaml.__version__}")
+          PY
+
+      - name: Self-test the single detector engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('common/scripts/veux_update_detector.py')
+          compile(p.read_text(encoding='utf-8'), str(p), 'exec')
+          print('DETECTOR_PYTHON_COMPILE=PASS')
+          PY
+          python3 common/scripts/veux_update_detector.py selftest
+
+      - name: Detect all six current lineages
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/veux_update_detector.py fleet \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --require-six \
+            --report "$RUNNER_TEMP/fleet-detection.json"
+
+          python3 - "$RUNNER_TEMP/fleet-detection.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert d['schema'] == 1
+          assert d['mode'] == 'read-only-detector'
+          assert d['lineage_count'] == 6
+          assert d['mutation_allowed'] is False
+          assert d['integration_code_model'] == 'single-generic-engine'
+          kernels = [x['kernel'] for x in d['lineages']]
+          assert kernels == ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          assert all(x['next_engine'] == 'generic-source-inspector' for x in d['lineages'])
+          assert all(x['authority_present'] for x in d['lineages'])
+          assert d['all_lineages_central_pin_aligned'] is True
+          print('ALL_SIX_SINGLE_ENGINE_DETECTION=PASS')
+          PY
+
+      - name: Resolve current upstream heads once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 common/scripts/veux_update_detector.py resolve \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --report "$RUNNER_TEMP/upstream-detection.json"
+
+      - name: Prove detector is read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain=v1 --untracked-files=all)"
+          if [ -n "$dirty" ]; then
+            echo '::error::Detector changed the repository workspace:'
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
+          echo 'DETECTOR_REPOSITORY_MUTATION=NO'
+
+      - name: Build one combined detector report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public"
+          cp "$RUNNER_TEMP/fleet-detection.json" "$RUNNER_TEMP/public/FLEET-DETECTION.json"
+          cp "$RUNNER_TEMP/upstream-detection.json" "$RUNNER_TEMP/public/UPSTREAM-DETECTION.json"
+          python3 - "$RUNNER_TEMP/fleet-detection.json" "$RUNNER_TEMP/upstream-detection.json" \
+            > "$RUNNER_TEMP/public/DETECTOR-SUMMARY.txt" <<'PY'
+          import json, sys
+          fleet = json.load(open(sys.argv[1], encoding='utf-8'))
+          upstream = json.load(open(sys.argv[2], encoding='utf-8'))
+          print('VEUX_ALL_IN_ONE_DETECTOR_V2=PASS')
+          print(f"LINEAGES={fleet['lineage_count']}")
+          print(f"SINGLE_ENGINE={fleet['integration_code_model']}")
+          print(f"CURRENT_PINS_ALIGNED={str(fleet['all_lineages_central_pin_aligned']).upper()}")
+          print(f"UPDATES_FOUND={str(upstream['updates_found']).upper()}")
+          for comp in ('resukisu','susfs','nomount'):
+              row = upstream['components'][comp]
+              print(f"{comp.upper()}_CURRENT_COMMIT={row['current_commit']}")
+              print(f"{comp.upper()}_REMOTE_HEAD={row['remote_head']}")
+              print(f"{comp.upper()}_UPDATE_AVAILABLE={str(row['update_available']).upper()}")
+          PY
+
+          (cd "$RUNNER_TEMP/public" && sha256sum FLEET-DETECTION.json UPSTREAM-DETECTION.json DETECTOR-SUMMARY.txt > SHA256SUMS.txt)
+          (cd "$RUNNER_TEMP/public" && sha256sum -c SHA256SUMS.txt)
+
+      - name: Upload one combined detector artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-ALL-IN-ONE-DETECTOR-V2-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/public/FLEET-DETECTION.json
+            ${{ runner.temp }}/public/UPSTREAM-DETECTION.json
+            ${{ runner.temp }}/public/DETECTOR-SUMMARY.txt
+            ${{ runner.temp }}/public/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Final read-only detector gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain=v1 --untracked-files=all)"
+          if [ -n "$dirty" ]; then
+            echo '::error::Final gate found repository workspace changes:'
+            printf '%s\n' "$dirty"
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/public/FLEET-DETECTION.json"
+          test -s "$RUNNER_TEMP/public/UPSTREAM-DETECTION.json"
+          test -s "$RUNNER_TEMP/public/DETECTOR-SUMMARY.txt"
+          grep -Fxq 'VEUX_ALL_IN_ONE_DETECTOR_V2=PASS' "$RUNNER_TEMP/public/DETECTOR-SUMMARY.txt"
+          grep -Fxq 'LINEAGES=6' "$RUNNER_TEMP/public/DETECTOR-SUMMARY.txt"
+          grep -Fxq 'SINGLE_ENGINE=single-generic-engine' "$RUNNER_TEMP/public/DETECTOR-SUMMARY.txt"
+          echo 'VEUX_ALL_IN_ONE_DETECTOR_V2_FINAL_GATE=PASS'
