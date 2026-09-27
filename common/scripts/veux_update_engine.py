@@ -805,14 +805,15 @@ def download(url, dest, expected):
 
 
 def package_kernel(image, targets, result, work, public):
+    from veux_release import identity
     ak = config()["ak3"]
     source = work / "ak3"
     checkout(ak["repo"], ak["commit"], source)
     require(git(source, "rev-parse", "HEAD^{tree}") == ak["tree"], "AK3 tree mismatch")
     c = targets["components"]
-    identity = f"VEUX {result['kernel']} ReSukiSU{c['resukisu']['version']} SUSFS{c['susfs']['version']} NoMount{c['nomount']['version']}"
+    release_name = identity(result["kernel"], c)
     script = ("# AnyKernel3 Ramdisk Mod Script\n# osm0sis @ xda-developers\n"
-              "properties() { '\n" + f"kernel.string={identity}\n" +
+              "properties() { '\n" + f"kernel.string={release_name}\n" +
               "do.devicecheck=1\ndo.modules=0\ndo.systemless=1\ndo.cleanup=1\ndo.cleanuponabort=0\n"
               "device.name1=veux\nsupported.versions=13\nsupported.patchlevels=\n'; }\n"
               "BLOCK=boot;\nIS_SLOT_DEVICE=1;\nSLOT_SELECT=active;\nRAMDISK_COMPRESSION=auto;\n"
@@ -826,9 +827,12 @@ def package_kernel(image, targets, result, work, public):
             if p.is_file() and not p.name.endswith("placeholder"):
                 require(not p.is_symlink(), "AK3 symlink unexpected")
                 files[p.relative_to(source).as_posix()] = (p.read_bytes(), p.stat().st_mode & 0o777)
+    for p in source.glob("LICENSE*"):
+        if p.is_file():
+            files[p.name] = (p.read_bytes(), 0o644)
     for rel in ("tools/ak3-core.sh", "META-INF/com/google/android/update-binary", "META-INF/com/google/android/updater-script"):
         require(rel in files, f"AK3 file missing: {rel}")
-    name = f"Veux_{result['kernel']}_ReSukiSU_{c['resukisu']['version']}_SUSFS_{c['susfs']['version']}_NoMount_{c['nomount']['version']}.zip"
+    name = release_name + "_AnyKernel.zip"
     package = public / name
     def write(path):
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -927,7 +931,7 @@ def static_boot(image, result, work):
     print(f"STATIC {result['kernel']}=PASS; DEVICE_PASS=NO", flush=True)
 
 
-def worker(label, bundle, work, public, jobs):
+def worker(label, bundle, work, public, jobs, repository_output=None):
     cfg, _ = check_repo()
     targets = json.loads((bundle / "targets.json").read_text())
     require(targets["repository_sha"] == git(REPO, "rev-parse", "HEAD"), "resolver/worker commit mismatch")
@@ -938,14 +942,30 @@ def worker(label, bundle, work, public, jobs):
     try:
         state = materialize(label, work)
         state["dtb_reference"] = prepare_dtb_reference(label, state, work, jobs)
-        apply_update(Path(state["source"]), state, bundle, work)
+        overlay_hash = None
+        if repository_output is not None:
+            from veux_release import inventory, replay_current, save_overlay
+            src = Path(state["source"])
+            before = inventory(src)
+            if not replay_current(src, label, targets):
+                apply_update(src, state, bundle, work)
+            overlay_hash = save_overlay(src, before, repository_output / label, label, targets)
+        else:
+            apply_update(Path(state["source"]), state, bundle, work)
         image, result = compile_kernel(label, state, targets, work, jobs)
         package_kernel(image, targets, result, work, public)
         static_boot(image, result, work)
+        from veux_release import publish_files
+        publish_files(result, work, public, targets)
+        if overlay_hash is not None:
+            result['integration_overlay_sha256'] = overlay_hash
         result.update(repository_sha=targets["repository_sha"], targets=targets["components"],
                       target_manifest_sha256=digest(bundle / "targets.json"), device=False)
         write_json(public / "RESULT.json", result)
-        write_json(public / "STATIC-RESULT.json", result)
+        if repository_output is None:
+            write_json(public / "STATIC-RESULT.json", result)
+        else:
+            (public / "PACKAGE-STATUS.json").unlink()
         (public / "SHA256SUMS.txt").write_text("".join(f"{digest(p)}  {p.name}\n" for p in sorted(public.iterdir()) if p.is_file()))
     except Exception as exc:
         write_json(work / "BLOCKED.json", {"kernel": label, "reason": str(exc), "device": False})
