@@ -4,6 +4,13 @@
   "golden_contract": "common/contracts/GOLDEN_BASELINE.yml",
   "lineages": {
     "5.4.274": {
+      "checkouts": [
+        {
+          "repository": "dereference23/kernel_xiaomi_sm6375",
+          "ref": "20240619",
+          "commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632"
+        }
+      ],
       "workflow": ".github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml",
       "blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
@@ -85,5 +92,20 @@
     "root_tree": "2fdc995c25e58c0206ff32d5dd46a200431912fa",
     "subdir": "clang-r416183b",
     "subtree": "0a90693130898d6f98a76538086247b374d4a57f"
+  },
+  "susfs_migration": {
+    "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+    "patch": "common/update/susfs-legacy-to-04a9d713.patch",
+    "patch_sha256": "f30771ff02a2d20c22fea8c5ee26e99e20f26f1d8fd9033153606cba9597e0c0",
+    "legacy_sha256": {
+      "fs/susfs.c": "e430d573ba5875a55d1ca70ba1b304e4b6727bbc42b8c3ac16f2c175b29a59c1",
+      "include/linux/susfs.h": "3c5fb1bcc28a70c82ee5cfe0a7375bb8e7babd26618ce9b451e598fa31aa3b6e",
+      "include/linux/susfs_def.h": "b16108a5fcd4cdd7203d9f084c2154da708ab3ae6bed17109e4ec63f04ff0f68"
+    },
+    "base_sha256": {
+      "fs/susfs.c": "dd1487860b673b1a57a171577a7e7b2fcc58b8b46f8018a68180a2ec97acc938",
+      "include/linux/susfs.h": "e755bf34538b8f2eec1e401d2d6b18811d82931770f56cf98448eaad5757cb79",
+      "include/linux/susfs_def.h": "db7f98dcf8119a4eb5c45c05205b6c1065766047d6f803b0e86f3d14b1a251f0"
+    }
   }
 }
