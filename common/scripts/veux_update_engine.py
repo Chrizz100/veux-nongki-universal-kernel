@@ -102,6 +102,12 @@ def check_repo():
         require(blob(profile) == row["profile_blob"], f"profile drift: {label}")
         rec = cfg["lineages"][label]
         require(blob(REPO / rec["workflow"]) == rec["blob"], f"source authority drift: {label}")
+        dtb = rec["dtb"]
+        require(dtb["reference"] in ("pinned", "native-source"), f"invalid DTB policy: {label}")
+        require(not Path(dtb["path"]).is_absolute() and ".." not in Path(dtb["path"]).parts,
+                f"invalid DTB path: {label}")
+        if dtb["reference"] == "pinned":
+            require(re.fullmatch(r"[0-9a-f]{64}", dtb["sha256"]), f"invalid DTB pin: {label}")
     return cfg, fleet
 
 
@@ -667,6 +673,70 @@ def validate_build_config(conf, enabled, disabled):
                     for line in conf), "conflicting hook configuration")
 
 
+def prepare_dtb_reference(label, state, work, jobs):
+    """Record a DTB reference before modifying the authenticated source."""
+    recipe = config()["lineages"][label]
+    spec = recipe["dtb"]
+    reference = {"kernel": label, "mode": spec["reference"], "path": spec["path"],
+                 "source_recipe_blob": recipe["blob"]}
+    require(not Path(spec["path"]).is_absolute() and ".." not in Path(spec["path"]).parts,
+            "invalid DTB path")
+    if spec["reference"] == "pinned":
+        reference["sha256"] = spec["sha256"]
+    else:
+        require(spec["reference"] == "native-source", "unsupported DTB reference policy")
+        src = Path(state["source"])
+        values = dict(v.split("=", 1) for v in state["variables"])
+        require("O" in values, "native DTB reference needs an explicit output directory")
+        out = inside((src / values["O"]).resolve(), work)
+        conf = out / ".config"
+        reference["config_sha256"] = digest(conf)
+        env = dict(os.environ, **state["env"])
+        env.pop("VEUX_CAPTURE", None)
+        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep)
+                                      if p != str(work / "source-temp/bin"))
+        base = ["/usr/bin/make", "-C", str(src), *[f"{k}={v}" for k, v in values.items()]]
+        print(f"DTB {label}: build authenticated native reference before update", flush=True)
+        run([*base, f"-j{jobs}", "dtbs"], env=env, log=work / "dtb-reference.log")
+        require(digest(conf) == reference["config_sha256"], "native DTB build changed baseline config")
+        dtb = inside(out / spec["path"], out)
+        require(dtb.is_file() and dtb.stat().st_size > 0, "native reference DTB missing")
+        reference["sha256"] = digest(dtb)
+    require(re.fullmatch(r"[0-9a-f]{64}", reference["sha256"]), "invalid DTB reference hash")
+    write_json(work / "DTB-REFERENCE.json", reference)
+    print(f"DTB {label}: mode={reference['mode']} expected={reference['sha256']}", flush=True)
+    return reference
+
+
+def verify_dtb(label, dtb, reference, work):
+    recipe = config()["lineages"][label]
+    spec = recipe["dtb"]
+    require(reference["kernel"] == label and reference["source_recipe_blob"] == recipe["blob"]
+            and reference["mode"] == spec["reference"] and reference["path"] == spec["path"],
+            "DTB reference belongs to a different source")
+    if spec["reference"] == "pinned":
+        require(reference["sha256"] == spec["sha256"], "pinned DTB reference changed")
+    actual = digest(dtb) if dtb.is_file() else None
+    evidence = dict(reference, expected_sha256=reference["sha256"], actual_sha256=actual,
+                    match=actual == reference["sha256"])
+    write_json(work / "DTB-CHECK.json", evidence)
+    require(evidence["match"], f"VEUX DTB regression: kernel={label}; mode={reference['mode']}; "
+            f"expected={reference['sha256']}; actual={actual}; evidence={work / 'DTB-CHECK.json'}")
+    print(f"DTB {label}=PASS sha256={actual}", flush=True)
+
+
+def preserve_diagnostics(stage, public, diag):
+    """Keep exact gate evidence, including earlier successes, after a failure."""
+    diag.mkdir(parents=True, exist_ok=True)
+    for name in ("BLOCKED.json", "DTB-REFERENCE.json", "DTB-CHECK.json",
+                 "build-result.json", "integration.json"):
+        if (stage / name).is_file():
+            shutil.copy2(stage / name, diag / name)
+    for name in ("RESULT.json", "STATIC-RESULT.json", "PACKAGE-STATUS.json"):
+        if (public / name).is_file():
+            shutil.copy2(public / name, diag / name)
+
+
 def compile_kernel(label, state, targets, work, jobs):
     src = Path(state["source"])
     values = dict(v.split("=", 1) for v in state["variables"])
@@ -707,9 +777,9 @@ def compile_kernel(label, state, targets, work, jobs):
     limit = config()["lineages"][label]["warning_limit"]
     require(warnings <= limit, f"warning regression: {warnings} > {limit}; log={log}")
     image = out / "arch/arm64/boot/Image"
-    dtb = out / "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+    dtb = inside(out / config()["lineages"][label]["dtb"]["path"], out)
     require(image.is_file() and image.stat().st_size > 1024*1024, "kernel Image missing")
-    require(digest(dtb) == yaml_read(REPO / config()["golden_contract"])["dtb"]["sha256"], "VEUX DTB regression")
+    verify_dtb(label, dtb, state["dtb_reference"], work)
     # Built-in LTO flattens composite objects into built-in.a; kernelsu.o need
     # not exist even when all ReSukiSU objects are present in the final Image.
     for obj in ("fs/nomount/nomount.o", "fs/susfs.o", "drivers/kernelsu/core/init.o",
@@ -722,6 +792,7 @@ def compile_kernel(label, state, targets, work, jobs):
     require(release.startswith(label + "-"), "kernelrelease identity changed")
     result = {"kernel": label, "kernelrelease": release, "image_sha256": digest(image),
               "image_bytes": image.stat().st_size, "dtb_sha256": digest(dtb),
+              "dtb_reference": state["dtb_reference"],
               "warnings": warnings, "compile": True, "device": False}
     write_json(work / "build-result.json", result)
     print(f"BUILD {label}=PASS image={result['image_sha256']}", flush=True)
@@ -866,6 +937,7 @@ def worker(label, bundle, work, public, jobs):
     public.mkdir(parents=True, exist_ok=False)
     try:
         state = materialize(label, work)
+        state["dtb_reference"] = prepare_dtb_reference(label, state, work, jobs)
         apply_update(Path(state["source"]), state, bundle, work)
         image, result = compile_kernel(label, state, targets, work, jobs)
         package_kernel(image, targets, result, work, public)
@@ -897,8 +969,7 @@ def all_workers(bundle, work, public, jobs):
             diag.mkdir(parents=True, exist_ok=True)
             for p in stage.glob("*.log"):
                 shutil.copy2(p, diag / p.name)
-            if (stage / "BLOCKED.json").exists():
-                shutil.copy2(stage / "BLOCKED.json", diag / "BLOCKED.json")
+            preserve_diagnostics(stage, dest, diag)
         # These are our temporary build/source copies, not repository files.
         inside(stage, work)
         shutil.rmtree(stage)

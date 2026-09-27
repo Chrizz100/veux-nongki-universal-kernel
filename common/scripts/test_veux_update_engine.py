@@ -19,6 +19,86 @@ import veux_update_engine as e
 
 
 class EngineTests(unittest.TestCase):
+    def test_all_six_dtb_policies_are_explicit(self):
+        recipes = e.config()["lineages"]
+        self.assertEqual({k for k, r in recipes.items() if r["dtb"]["reference"] == "native-source"},
+                         {"5.4.292", "5.4.293"})
+        golden = e.yaml_read(e.REPO / e.config()["golden_contract"])["dtb"]["sha256"]
+        for label, recipe in recipes.items():
+            self.assertEqual(recipe["dtb"]["path"], "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb")
+            if recipe["dtb"]["reference"] == "pinned":
+                self.assertEqual(recipe["dtb"]["sha256"], golden)
+
+    def test_native_dtb_reference_accepts_own_hash_and_rejects_changed_dtb(self):
+        for label in ("5.4.292", "5.4.293"):
+            with self.subTest(kernel=label), tempfile.TemporaryDirectory() as d:
+                work = Path(d); src = work / "source"; src.mkdir(); out = work / "original-out"; out.mkdir()
+                (out / ".config").write_text("CONFIG_ARCH_QCOM=y\n")
+                rel = e.config()["lineages"][label]["dtb"]["path"]
+                state = {"source": str(src), "variables": ["O=" + str(out), "ARCH=arm64"],
+                         "env": {"PATH": str(work / "source-temp/bin") + os.pathsep + os.environ["PATH"]}}
+                def baseline_build(args, **kwargs):
+                    self.assertEqual(args[-1], "dtbs")
+                    self.assertNotIn(str(work / "source-temp/bin"), kwargs["env"]["PATH"].split(os.pathsep))
+                    dtb = out / rel; dtb.parent.mkdir(parents=True); dtb.write_bytes(b"native-lineage-fixture")
+                with mock.patch.object(e, "run", side_effect=baseline_build) as run:
+                    reference = e.prepare_dtb_reference(label, state, work, 2)
+                    run.assert_called_once()
+                self.assertNotEqual(reference["sha256"], e.yaml_read(e.REPO / e.config()["golden_contract"])["dtb"]["sha256"])
+                candidate = work / "candidate.dtb"; candidate.write_bytes(b"native-lineage-fixture")
+                e.verify_dtb(label, candidate, reference, work)
+                candidate.write_bytes(b"changed-candidate")
+                with self.assertRaisesRegex(e.Blocked, "expected=.*actual="):
+                    e.verify_dtb(label, candidate, reference, work)
+                evidence = json.loads((work / "DTB-CHECK.json").read_text())
+                self.assertFalse(evidence["match"])
+                self.assertNotEqual(evidence["actual_sha256"], evidence["expected_sha256"])
+                reference["kernel"] = "wrong-lineage"
+                with self.assertRaises(e.Blocked):
+                    e.verify_dtb(label, candidate, reference, work)
+
+    def test_pinned_dtb_cannot_be_replaced_by_candidate_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            work = Path(d)
+            with mock.patch.object(e, "run") as run:
+                reference = e.prepare_dtb_reference("5.4.274", {}, work, 1)
+                run.assert_not_called()
+            p = work / "fake.dtb"; p.write_bytes(b"wrong Golden DTB")
+            with self.assertRaises(e.Blocked):
+                e.verify_dtb("5.4.274", p, reference, work)
+            reference["sha256"] = e.digest(p)
+            with self.assertRaisesRegex(e.Blocked, "pinned DTB reference changed"):
+                e.verify_dtb("5.4.274", p, reference, work)
+
+    def test_dtb_reference_is_built_before_source_mutation(self):
+        cfg, _ = e.check_repo()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); bundle = root / "bundle"; bundle.mkdir()
+            e.write_json(bundle / "targets.json", {"repository_sha": e.git(e.REPO, "rev-parse", "HEAD"),
+                "golden_sha256": e.digest(e.REPO / cfg["golden_contract"]), "lineages": ["5.4.292"]})
+            events = []
+            def reference(*args): events.append("reference"); return {"test": True}
+            def update(*args): events.append("update")
+            def compile(*args): events.append("compile"); raise e.Blocked("test stop before build")
+            with mock.patch.object(e, "materialize", return_value={"source": str(root / "source")}), \
+                 mock.patch.object(e, "prepare_dtb_reference", side_effect=reference), \
+                 mock.patch.object(e, "apply_update", side_effect=update), \
+                 mock.patch.object(e, "compile_kernel", side_effect=compile):
+                with self.assertRaises(e.Blocked):
+                    e.worker("5.4.292", bundle, root / "work", root / "public", 1)
+            self.assertEqual(events, ["reference", "update", "compile"])
+
+    def test_diagnostics_retain_successes_and_dtb_mismatch(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); stage = root / "stage"; stage.mkdir(); public = root / "public"; public.mkdir()
+            e.write_json(stage / "DTB-CHECK.json", {"expected_sha256": "old", "actual_sha256": "new", "match": False})
+            e.write_json(public / "RESULT.json", {"compile": True, "package": True, "static_boot": True, "device": False})
+            (stage / "source.json").write_text("private-environment")
+            e.preserve_diagnostics(stage, public, root / "diagnostics")
+            self.assertTrue((root / "diagnostics/DTB-CHECK.json").is_file())
+            self.assertTrue((root / "diagnostics/RESULT.json").is_file())
+            self.assertFalse((root / "diagnostics/source.json").exists())
+
     def test_authenticated_avb_identical_duplicate_properties_are_preserved(self):
         info = ("Algorithm: NONE\nPartition Name: boot\nHash Algorithm: sha256\nSalt: abcdef\n"
                 "Prop: com.android.build.boot.security_patch -> '2024-12-01'\n"
