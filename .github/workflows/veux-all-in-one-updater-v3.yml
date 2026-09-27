@@ -43,6 +43,7 @@ jobs:
         set -euo pipefail
         "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_update_engine.py all --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds" --public "$RUNNER_TEMP/veux-public" --jobs "$(nproc)"
     - name: Prove checkout and Golden remain unchanged
+      if: always()
       shell: bash
       run: |
         set -euo pipefail
