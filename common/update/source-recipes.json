@@ -1,1 +1,89 @@
-
+{
+  "schema": 1,
+  "fleet_contract": "common/contracts/CURRENT_FLEET_V10.yml",
+  "golden_contract": "common/contracts/GOLDEN_BASELINE.yml",
+  "lineages": {
+    "5.4.274": {
+      "workflow": ".github/workflows/clean-gen1-p14r1-resukisu-35157-susfs23-ak3-v3-selfcontained.yml",
+      "blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "golden_transform": {
+        "path": "common/update/golden-source-transform.py",
+        "sha256": "b8605aa596cb12124dc604c5bac594bb0e34c20284e844088fae9dae478588eb",
+        "before": {
+          "fs/open.c": "70e3dfa8011381c551cc5db7a268a76cfe272b2e7784fba5df9dd709788cba06",
+          "fs/stat.c": "53f6fd9cdee6c28cd4810086120dca0cadde97f84be79c4245b82a1719416b15"
+        },
+        "after": {
+          "fs/open.c": "e792629492c2e6579c10a92e87d3ccd4528d639b2a0f53b8c302c2dc0b9e929a",
+          "fs/stat.c": "be500df947c56b91682742d486b825381ac400d44054790555ced8f37187d4ba"
+        }
+      },
+      "warning_limit": 2
+    },
+    "5.4.292": {
+      "workflow": ".github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml",
+      "blob": "724b1e19556bacc7b3ad4c8dfe3b1900082ec127",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "warning_limit": 9
+    },
+    "5.4.293": {
+      "workflow": ".github/workflows/13-veux-5.4.293-resukisu-35157-susfs-update-r1.yml",
+      "blob": "25a7a1c3d51194e26cfd929f85a81045dbdfac7b",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "warning_limit": 9
+    },
+    "5.4.300": {
+      "workflow": ".github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml",
+      "blob": "06cee54d544cb69db2f334b3d3ef99f37a6eaf19",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "warning_limit": 3
+    },
+    "5.4.301": {
+      "workflow": ".github/workflows/veux-gen1-u5-o45-v2-5.4.301-resukisu-35157-incremental.yml",
+      "blob": "0943d45b4872f950ede3af03c4fb758a2f1897bf",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "warning_limit": 4
+    },
+    "5.4.302": {
+      "workflow": ".github/workflows/veux-gen1-u5-o44-v1-5.4.302-resukisu-35157-selfcontained.yml",
+      "blob": "724e67bd50fdd276b47f8ed8a553566cba4108a7",
+      "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
+      "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "warning_limit": 4
+    }
+  },
+  "static": {
+    "BASE_BOOT_URL": "https://github.com/Chrizz100/veux-nongki-universal-kernel/releases/download/v1.0.0-beta1/VEUX-5.4.302-ReSukiSU-35157-UAPI4-SUSFS-2.3.0-BOOTTEST.img",
+    "BASE_BOOT_SHA256": "b79d121003e9abb12962eaf44ff56aa4c66588d2245ed09d8325e3c39fe67e65",
+    "BASE_KERNEL_SHA256": "67807748edd57e9fa714d444a39fccf54d88b95c92d54de029b4c12bc868345a",
+    "BASE_KERNEL_BYTES": "29911552",
+    "RAW_STOCK_RAMDISK_SHA256": "0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a",
+    "DECODED_STOCK_RAMDISK_SHA256": "d3c0e26ce76ab272a9c7bfd53ad3b0f57754e8eb9a30085abfbacf180c2638e5",
+    "BOOT_PARTITION_SIZE": "134217728",
+    "EXPECTED_HEADER_VERSION": "3",
+    "BOOT_PAGE_SIZE": "4096",
+    "MAGISK_APK_URL": "https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk",
+    "MAGISK_APK_SHA256": "e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5",
+    "AVB_REPO": "https://android.googlesource.com/platform/external/avb",
+    "AVB_COMMIT": "de53827b226bccef7407e4c253b0152e8d9f8e04"
+  },
+  "ak3": {
+    "repo": "https://github.com/osm0sis/AnyKernel3.git",
+    "commit": "af770f7b16cf8f8eb7c68614b2a693b3b361c90c",
+    "tree": "c6af9eb7018bce852819ab1585de426a426e6806"
+  },
+  "toolchain_transport": {
+    "url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/aa2e4a514a6c85eebcc4a27149eaf9244e951a1e/clang-r416183b.tar.gz",
+    "repo": "https://github.com/msft-mirror-aosp/platform.prebuilts.clang.host.linux-x86.git",
+    "commit": "aa2e4a514a6c85eebcc4a27149eaf9244e951a1e",
+    "root_tree": "2fdc995c25e58c0206ff32d5dd46a200431912fa",
+    "subdir": "clang-r416183b",
+    "subtree": "0a90693130898d6f98a76538086247b374d4a57f"
+  }
+}
