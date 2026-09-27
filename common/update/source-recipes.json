@@ -27,42 +27,70 @@
           "fs/stat.c": "be500df947c56b91682742d486b825381ac400d44054790555ced8f37187d4ba"
         }
       },
-      "warning_limit": 2
+      "warning_limit": 2,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "pinned",
+        "sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37"
+      }
     },
     "5.4.292": {
       "workflow": ".github/workflows/14-veux-5.4.292-resukisu-35157-susfs-update-r1.yml",
       "blob": "724b1e19556bacc7b3ad4c8dfe3b1900082ec127",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
       "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "warning_limit": 9
+      "warning_limit": 9,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "native-source"
+      }
     },
     "5.4.293": {
       "workflow": ".github/workflows/13-veux-5.4.293-resukisu-35157-susfs-update-r1.yml",
       "blob": "25a7a1c3d51194e26cfd929f85a81045dbdfac7b",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
       "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "warning_limit": 9
+      "warning_limit": 9,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "native-source"
+      }
     },
     "5.4.300": {
       "workflow": ".github/workflows/veux-gen1-u5-o43-v4-5.4.300-resukisu-35157-selfcontained.yml",
       "blob": "06cee54d544cb69db2f334b3d3ef99f37a6eaf19",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
       "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "warning_limit": 3
+      "warning_limit": 3,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "pinned",
+        "sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37"
+      }
     },
     "5.4.301": {
       "workflow": ".github/workflows/veux-gen1-u5-o45-v2-5.4.301-resukisu-35157-incremental.yml",
       "blob": "0943d45b4872f950ede3af03c4fb758a2f1897bf",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
       "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "warning_limit": 4
+      "warning_limit": 4,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "pinned",
+        "sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37"
+      }
     },
     "5.4.302": {
       "workflow": ".github/workflows/veux-gen1-u5-o44-v1-5.4.302-resukisu-35157-selfcontained.yml",
       "blob": "724e67bd50fdd276b47f8ed8a553566cba4108a7",
       "baseline_resukisu": "3d1185d878a856ea6435799b436b3d3ec510da76",
       "baseline_susfs": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "warning_limit": 4
+      "warning_limit": 4,
+      "dtb": {
+        "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+        "reference": "pinned",
+        "sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37"
+      }
     }
   },
   "static": {
