@@ -1,0 +1,482 @@
+{
+  "edits": {
+    "KernelSU/kernel/Kbuild": {
+      "after": {
+        "mode": 420,
+        "sha256": "632200ea8dd8437c0a76d6a35b9a4c9fc9f989f2a4747182ff26e22846aff82b"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "e3f1ed09d2f829717d37a29845955b0c1b3824e0daa5a0df2e3b7caf1d461226"
+      }
+    },
+    "KernelSU/kernel/compat/kernel_compat.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "6875ec674727fe1b8d5b56bc5b7dc75b8deb63326163d353433b15a4e122950f"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "f7b07b4b32979a06a3ea6f18fc8efdeb0f4924330057982f61d7f36a077a615d"
+      }
+    },
+    "KernelSU/kernel/compat/kernel_compat.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "e83804a1eb8d1f5b4414986067e6f595395a4f2511956f15cda627b1d54133df"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "ab4c6594af4b74ea56cb77d96f1871c9e61b98cc35c6ac1c7310c6785744ce88"
+      }
+    },
+    "KernelSU/kernel/core/init.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "2a5d5aa7b0280b36485dd4d322ccded6ea8b67562940190a2a2213d9e9852dcd"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "b42e22e6c14858ed0059fe2168e81b54c1c6237d56a6d345b286b7d25ed9fa74"
+      }
+    },
+    "KernelSU/kernel/feature/adb_root.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "e9562ef3a924ff5c4c6869f366110ea5c973cd7ad322a9ad71475f2bcef7e507"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "fa42fdf94ce57539755c04f0b143e4e43a4080738319a7bb172e4c12f6f07649"
+      }
+    },
+    "KernelSU/kernel/feature/dynamic_manager.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9703983f8ac85bbd410fa2ebb0daf1bb27b6835f136af041cafcfb458a496dfa"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "d77ee9a24de802f5aa04eac3e7a637436dcd12647f13898054a852e4217784e7"
+      }
+    },
+    "KernelSU/kernel/feature/kernel_umount.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "d9eab1338211b1eae8a78fce3ccbfec4872120ad566fd660ce70e4e83b958ace"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "df9c888bef8877a52df2bc144a642b64e92fca6381eba703595ad82e22306b54"
+      }
+    },
+    "KernelSU/kernel/feature/sucompat.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "a0976161b7ac6e109e12649e9e998f2a9a4ddfc6c6255a484709ffe4834c0511"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "10bae9393f5341178ccf8ca3e0a36ef3c653989cc218899658e290a0652fb8bb"
+      }
+    },
+    "KernelSU/kernel/feature/sucompat.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "fdba5c3f8bb537ab9c4be098484a8fdd9951b76fb72ad832e17db2433dbf1bc3"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "f10cc860f892633b52e3f90c8fa4ba947678a1a4cec6deef511475b077d28159"
+      }
+    },
+    "KernelSU/kernel/hook/arm64/patch_memory.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "965ecc627c3206a08feee2076163638cfbb7bee938bd40e12dfb3089e1711692"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "381a0b8beeb9aa8c9fa8738d9f953752be159163815c48c062bf97793fbb0ceb"
+      }
+    },
+    "KernelSU/kernel/hook/lsm_hooks.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9f2082f7cfc8551268310f7c4e09242fd7624f3a89353ecda38999322d0dc0c7"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "c569dba5664e4c954e73f2542ed10c3719dece8dc706ab7bb14c4320007aebd9"
+      }
+    },
+    "KernelSU/kernel/hook/patch_memory.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "a50dfa8768c89d1f31f0b1133f44b4386c4765e75b64fc96d390fd9eeef947fc"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "01eef246848f94ea94c017967b8d1c7de346af0f54a74e854b9bc11b6b7c5d46"
+      }
+    },
+    "KernelSU/kernel/hook/riscv64/insn.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "322faa2d837163bf86a72b7282c88af96727f9baf832de95105938346d9144c4"
+      },
+      "before": null
+    },
+    "KernelSU/kernel/hook/riscv64/patch_memory.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "417b34eb6968291d33d6fdeded971caad4067078459920e85b63402febc0cd95"
+      },
+      "before": null
+    },
+    "KernelSU/kernel/hook/riscv64/syscall_hook.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "85766a35033abf2b148f4f3755830e08438a37a602205326adc77c06ef87c9fe"
+      },
+      "before": null
+    },
+    "KernelSU/kernel/hook/riscv64/syscall_regs.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "c4db2d132128d5b4cd86103adff5b5f458df17880fdd236aade1d7fa4d788276"
+      },
+      "before": null
+    },
+    "KernelSU/kernel/hook/syscall_event_bridge.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "0ef5c8fc5c4a73640e58e484f078b9fd5c8da3918dc4ff7cd5d0e6a0ac6a289c"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "3cef99a624d1f45f06145221b167584f456d9f67b05dda7303a6b22a6729c396"
+      }
+    },
+    "KernelSU/kernel/hook/syscall_hook.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "f2ff8d6b98c03008961849a449c1632a6ca8dd16d475f732a9693b61ede1b622"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "0c60a54d67498d41976f6471d3f71a21b16fb399a4ae789311532df3945cb71b"
+      }
+    },
+    "KernelSU/kernel/hook/syscall_hook_manager.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "5cd30ac210ed4b4745b829d335b2b354b0a356e86ffaeeaee7ed8fa568833c62"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "d4490bb4a920878e934bc05b030f6f243b7b95ff65d529b96eaa86e42adea027"
+      }
+    },
+    "KernelSU/kernel/include/arch.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "74a76616726423bea079588903f6a95edf06bfe7507aba7f46ff75a8c908bce6"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "4fbf6c477337717e40e26d3ab2d746a40b620c2709829be7b189aac3bf4dc33b"
+      }
+    },
+    "KernelSU/kernel/include/ksu.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "94a3745ba0d155400666035c54e587e3dfb49cf8956695a6600ec390db745bea"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "c1b73fb7c6a6658df5029766a34da4d3ff1e0569a2f48502236648d19499ecb0"
+      }
+    },
+    "KernelSU/kernel/infra/su_mount_ns.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9f9144dcaa21f09e5835ace08899ac873949a6f80987d41aa26c43e44d01c85a"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "ed1245561263ad14237b19c21245f4fe3ecccba03c178c1661c31e427fa35616"
+      }
+    },
+    "KernelSU/kernel/manager/apk_sign.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "ac940c7b289e4b23866d9879c9e29458063dd766a435aadcf39a631776a47710"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "3c035641ca64a2cef881d791b50f507a1cd01d754debaf16526e88ddcf6e9a0a"
+      }
+    },
+    "KernelSU/kernel/manager/manager.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "2aa64b89d68473442e50e6b18ec87ea006a13eff68b78b63513a56318cdaa1e6"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "2b17c54276a9a0854e64279df3def0714d68b76027f3a40eecea14e9f4613a54"
+      }
+    },
+    "KernelSU/kernel/manager/manager_identity.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "371fef1e9a91bb269090a28f4dcc4c182c9eb2f696ce9c1380c61210ab1af358"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "8352ee40fcbe4b2aba97a98780077aec908efe596c7f57a5806d5b9b3312a61a"
+      }
+    },
+    "KernelSU/kernel/manager/pkg_observer.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "d968e4fc38e1ad24d2afda48ef56872619cf6d33e2283dfbc58739bab547f080"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "245fcae77ff50bd310d8d3a311a8b065305a3125d624af89e340f413326162e9"
+      }
+    },
+    "KernelSU/kernel/manager/throne_tracker.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "ccb8e63b10e145d894d83bfcae937bde5b605717991d58c61ac59329776a0dbb"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "39c8c80a003ba90bb184c19947c4233dc4a30d50b124a1007a15bdd9a5005150"
+      }
+    },
+    "KernelSU/kernel/manager/throne_tracker.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "9ada871b770067b94753712a69c65123954ac23f83a583c85713d518b4ec40b0"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "08eaff5d81ece05f062b018398a7f1cc787addf77ddcf83af5d76abad9663f88"
+      }
+    },
+    "KernelSU/kernel/runtime/ksud_integration.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9e6c72fec94bfa70adb86294b8f60ebf47cf68fb84a377f8700403ac2ecf8f08"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "8e629ef188123aca4f7c72696f33c21fcd37ad84613f8a5047ecb95f9d20b193"
+      }
+    },
+    "KernelSU/kernel/selinux/rules.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "d599f97877dcff4a59201ca32dd9f765f734823d043b9569504f6eb66397b2e5"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "084f97117adfc847e5d93266d580019fa29f2e4b2ab902a9d822b6542509275d"
+      }
+    },
+    "KernelSU/kernel/selinux/sepolicy.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "ec139ae30b24d3b4b7d553ad5720e682afbd9fb26575cdf4581ded4b0dcf9b22"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "99b029fc3f31f32448eb6a28a8807b2269947b92b17adc82c9944f27dd2a113e"
+      }
+    },
+    "KernelSU/kernel/supercall/supercall.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "60a5440c35a8124dc80f7b3454791db5832754fd9bfaba5a8abe2c24ab25aebe"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "3112a8a8183e5e42c13ec2d5c5ac6c0866dd9903ee47a556b668adc2899cc9eb"
+      }
+    },
+    "KernelSU/kernel/tools/inline_hook_check.mk": {
+      "after": {
+        "mode": 420,
+        "sha256": "bcaac925dac1caa6f1d3ba7357fc58791fc0c8b88d9cfa07d8acb0edba393e88"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "8fee5551a5bdc57ac5b16014390459914da2171051de06c7804318c7159f4c50"
+      }
+    },
+    "KernelSU/kernel/tools/kernel_compat.mk": {
+      "after": {
+        "mode": 420,
+        "sha256": "65848cb5978502573b7b9f5994331cccf8ff4b34ec6966ae166a2d21e1c26abe"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "565b9f7cf36ad4bb2f91c5de83998b5597cb51e56fedab5d28ee3cca7fa2e2f5"
+      }
+    },
+    "fs/Kconfig": {
+      "after": {
+        "mode": 420,
+        "sha256": "5d2234538eb5da3635971bc99ae8a1bf468b146cae5483cde8e21160c3e2e54a"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "f60c20034b2435b3ffc1bd90027c7926c1d624620b504017d999c55ff25d7b9e"
+      }
+    },
+    "fs/Makefile": {
+      "after": {
+        "mode": 420,
+        "sha256": "81e2cb1935c128c3f07bca87abdf88663e22be020eb178c239e40a7f20b5b419"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "be1a02026b91f8346c1acf6f63fce6d0e43b8cb30d014026b9140823d8abe797"
+      }
+    },
+    "fs/nomount/Kconfig": {
+      "after": {
+        "mode": 420,
+        "sha256": "1df7ad3589a282128f797f7a46b28aee315d080550aae26b681a898f11c7abc7"
+      },
+      "before": null
+    },
+    "fs/nomount/Makefile": {
+      "after": {
+        "mode": 420,
+        "sha256": "c85c0ebe247c77882c5ac9f776941bf3a50f859b7d6bfb5bca1e1ccf9bed5b47"
+      },
+      "before": null
+    },
+    "fs/nomount/nomount.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9b76eee61f0b1ac319999ae0520325df224fbae798da6ca56c9021bc1610a266"
+      },
+      "before": null
+    },
+    "fs/nomount/nomount.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "6129075bcfcedd4b9c33e3207c94392e9d6824f7f940c50d611892b048c01227"
+      },
+      "before": null
+    },
+    "fs/notify/fdinfo.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "9cdbfa21eb2503af303440b47eda0ab0a95f203912962b482df4c4cd7de33e0a"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "dbe48c4bd3852ecc7ed072fef23e80dd928ce1e61a1a267410c0bb2db6a16d6d"
+      }
+    },
+    "fs/proc/fd.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "eaf616b73c00275f610a9ff7e13a0f7417aa4b5996512cac5d960c4947d42b01"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "57efc5dbec44495e3a0c8f2531845c660a0b81cbcc44215de0bbcbc7f58e2841"
+      }
+    },
+    "fs/stat.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "80c932cf9c4008bf18a94c49a9d2e07996e024041fed47a8003e138455b0497a"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "53f6fd9cdee6c28cd4810086120dca0cadde97f84be79c4245b82a1719416b15"
+      }
+    },
+    "fs/statfs.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "8369c70ee6ce055238790d952279ae5e3ca334e2a3fe521595a2aa0ad43fc5b0"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "fa5cdf20670ee55cf03c96090ae7c28745d938bbe26e20d2141fa033e759cb22"
+      }
+    },
+    "fs/susfs.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "685a8029db60d9d7f4709d9ea37324643c1fff9809bac86c55b2e85bab4a3b30"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "e430d573ba5875a55d1ca70ba1b304e4b6727bbc42b8c3ac16f2c175b29a59c1"
+      }
+    },
+    "include/linux/susfs.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "829022e26b51daf2c0cf7085fbb931ef280d64f4c21c148443a1c5be341684e7"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "3c5fb1bcc28a70c82ee5cfe0a7375bb8e7babd26618ce9b451e598fa31aa3b6e"
+      }
+    },
+    "include/linux/susfs_def.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "2a00b61b8739d2fd735761e1b768e5afc1004a2de2627cf1cf954b7707e9d707"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "b16108a5fcd4cdd7203d9f084c2154da708ab3ae6bed17109e4ec63f04ff0f68"
+      }
+    }
+  },
+  "kernel": "5.4.300",
+  "recipe_blob": "06cee54d544cb69db2f334b3d3ef99f37a6eaf19",
+  "targets": {
+    "nomount": {
+      "ahead": 155,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "commit": "6b1be186322d4e0bdc465cf27f6fc0d3679087c6",
+      "ref": "refs/heads/master",
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "20",
+      "version_kind": "kernel-wire-version"
+    },
+    "resukisu": {
+      "ahead": 14,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
+      "local_version": 4484,
+      "ref": "refs/heads/main",
+      "tag": "v4.2.0-rc3",
+      "uapi": 4,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35184"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "ref": "refs/heads/gki-android13-5.10",
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  }
+}

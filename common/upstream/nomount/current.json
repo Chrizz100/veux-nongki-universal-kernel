@@ -1,0 +1,9 @@
+{
+  "ahead": 155,
+  "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+  "commit": "6b1be186322d4e0bdc465cf27f6fc0d3679087c6",
+  "ref": "refs/heads/master",
+  "url": "https://github.com/maxsteeel/nomount.git",
+  "version": "20",
+  "version_kind": "kernel-wire-version"
+}
