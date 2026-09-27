@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""DRAFT: one integration engine; legacy SUSFS migration is not yet supported.
+"""One integration engine with authenticated legacy SUSFS migration.
 
-Not released for a fleet update. Lineage numbers select source recipes only.
+Lineage numbers select source recipes only. Device PASS is never inferred.
 
 Source recipes reconstruct historical, authenticated host integrations. No legacy
 updater is used for the new targets. All writes occur below an explicit work dir.
@@ -117,6 +117,21 @@ def checkout(url, commit, dest, full=False):
         git(dest, "fetch", "--quiet", "--depth=1", "origin", commit)
     git(dest, "checkout", "--quiet", "--detach", commit)
     require(git(dest, "rev-parse", "HEAD") == commit, "checkout identity mismatch")
+
+
+def source_checkout(opts, recipe, env, ctx, outputs, dest):
+    repo_name = expression(opts["repository"], env, ctx, outputs)
+    ref = expression(opts.get("ref", ""), env, ctx, outputs)
+    commit = ref
+    if not SHA.fullmatch(ref):
+        pins = [p for p in recipe.get("checkouts", [])
+                if p["repository"] == repo_name and p["ref"] == ref]
+        require(len(pins) == 1, f"unmapped source checkout: {repo_name}@{ref}")
+        commit = pins[0]["commit"]
+    require(SHA.fullmatch(commit), f"invalid source checkout pin: {repo_name}@{ref}")
+    # Preserve the historical recipe's full-history requirement.
+    checkout(f"https://github.com/{repo_name}.git", commit, dest,
+             full=str(opts.get("fetch-depth", 1)) == "0")
 
 
 def resolve(work):
@@ -268,10 +283,14 @@ def transport_curl(args):
     outputs = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg in ("-o", "--output")]
     require(len(outputs) == 1, "clang request needs one explicit output path")
     output = Path(outputs[0]).resolve()
-    inside(output, os.environ["VEUX_SOURCE_WORK"])
-    p = subprocess.run(["/usr/bin/curl", *args], timeout=600)
-    if p.returncode == 0:
-        return
+    require(any(output.is_relative_to(Path(os.environ[key]).resolve())
+                for key in ("VEUX_SOURCE_WORK", "VEUX_TRANSPORT_WORK")), "clang output escapes temporary workspace")
+    try:
+        p = subprocess.run(["/usr/bin/curl", *args], timeout=600)
+        if p.returncode == 0:
+            return
+    except subprocess.TimeoutExpired:
+        pass
     mirror = Path(os.environ["VEUX_TRANSPORT_WORK"]) / "clang-mirror"
     mirror.mkdir()
     git(mirror, "init", "-q")
@@ -344,8 +363,7 @@ def materialize(label, work):
                             require(not existing.exists(), f"checkout collision: {existing}")
                     shutil.copytree(clone, dest, dirs_exist_ok=True, symlinks=True)
                 else:
-                    ref = expression(opts.get("ref", ""), step_env, ctx, outputs)
-                    checkout(f"https://github.com/{repo_name}.git", ref, dest)
+                    source_checkout(opts, rec, step_env, ctx, outputs, dest)
                 continue
             raise Blocked(f"reached action before source build boundary: {step['uses']}")
         require("run" in step, f"unsupported source step: {name}")
@@ -495,8 +513,39 @@ def patch_images(text):
     return result
 
 
+def apply_host_delta(path, old, new):
+    """Apply unique changed preimages, independent of surrounding 5.4 layout.
+
+    Historical ports relocate whole functions. Unchanged GKI context must not
+    force those functions back to their 5.10 positions. Ambiguous edits block.
+    """
+    text = path.read_text()
+    edits = []
+    for tag, a, b, c, d in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        before, after = "".join(old[a:b]), "".join(new[c:d])
+        if not before:
+            require(a > 0 and b < len(old), f"unanchored host insertion: {path}")
+            before = old[a - 1] + old[b]
+            after = old[a - 1] + after + old[b]
+        require(text.count(before) == 1, f"ambiguous or changed host preimage: {path}: {before[:100]!r}")
+        start = text.index(before)
+        edits.append((start, start + len(before), after))
+    edits.sort()
+    require(all(a[1] <= b[0] for a, b in zip(edits, edits[1:])), f"overlapping host edits: {path}")
+    for start, end, after in reversed(edits):
+        text = text[:start] + after + text[end:]
+    path.write_text(text)
+
+
 def integrate_susfs(src, donor, base, target, work):
-    validate_susfs_base(src, donor, base, target)
+    kind = validate_susfs_base(src, donor, base, target)
+    if kind == "legacy":
+        migration = config()["susfs_migration"]
+        patch = REPO / migration["patch"]
+        run(["git", "apply", "--check", "--whitespace=nowarn", patch], cwd=src)
+        run(["git", "apply", "--whitespace=nowarn", patch], cwd=src)
     changed = git(donor, "diff", "--name-only", base, target, "--", "kernel_patches").splitlines()
     host_patch = "kernel_patches/50_add_susfs_in_gki-android13-5.10.patch"
     alternate = "kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
@@ -515,11 +564,7 @@ def integrate_susfs(src, donor, base, target, work):
                     require(a["before"] == b["before"], f"SUSFS upstream base changed: {rel}")
                     if a["after"] == b["after"]:
                         continue
-                    delta = "".join(difflib.unified_diff(a["after"], b["after"], fromfile=f"a/{rel}", tofile=f"b/{rel}", n=3))
-                    patch = work / "susfs-host-delta.patch"
-                    patch.write_text(delta)
-                    run(["git", "apply", "--check", "--whitespace=nowarn", patch], cwd=src)
-                    run(["git", "apply", "--whitespace=nowarn", patch], cwd=src)
+                    apply_host_delta(inside(src / rel, src), a["after"], b["after"])
         elif name == alternate:
             # This is the alternative upstream KernelSU port, not the native
             # ReSukiSU SUSFS backend. Require its produced additions unchanged.
@@ -532,8 +577,16 @@ def integrate_susfs(src, donor, base, target, work):
 
 
 def validate_susfs_base(src, donor, base, target):
-    if base == target:
-        return
+    migration = config()["susfs_migration"]
+    legacy = all((src / p).is_file() and digest(src / p) == value
+                 for p, value in migration["legacy_sha256"].items())
+    if legacy:
+        require(base == migration["base"], "legacy migration base changed")
+        require(digest(REPO / migration["patch"]) == migration["patch_sha256"], "SUSFS migration patch drift")
+        for rel, expected in migration["base_sha256"].items():
+            data = subprocess.check_output(["git", "-C", str(donor), "show", f"{base}:kernel_patches/{rel}"])
+            require(hashlib.sha256(data).hexdigest() == expected, f"SUSFS migration donor drift: {rel}")
+        return "legacy"
     pinned_c = git(donor, "show", f"{base}:kernel_patches/fs/susfs.c")
     actual_c = (src / "fs/susfs.c").read_text()
     markers = ("susfs_is_inode_sus_kstat", "susfs_sus_kstat_spoof_vfs_statfs", "statfs_by_dentry")
@@ -544,6 +597,7 @@ def validate_susfs_base(src, donor, base, target):
             "expected transformation=shared legacy-to-current SUSFS migration preserving "
             "OPEN_REDIRECT and Non-GKI compatibility; unresolved difference=older SUS_KSTAT/statfs API. "
             "No upstream-pin promotion is permitted.")
+    return "current"
 
 
 def apply_update(src, source_state, bundle, work):
@@ -605,6 +659,14 @@ def apply_update(src, source_state, bundle, work):
     return targets
 
 
+def validate_build_config(conf, enabled, disabled):
+    require(all(f"CONFIG_{k}=y" in conf for k in enabled), "required feature dropped by olddefconfig")
+    # Kconfig omits invisible children when their parent hook is disabled.
+    # Both an absent symbol and '# ... is not set' mean disabled.
+    require(not any(line.startswith(tuple(f"CONFIG_{k}=" for k in disabled))
+                    for line in conf), "conflicting hook configuration")
+
+
 def compile_kernel(label, state, targets, work, jobs):
     src = Path(state["source"])
     values = dict(v.split("=", 1) for v in state["variables"])
@@ -633,8 +695,7 @@ def compile_kernel(label, state, targets, work, jobs):
     run(configure, cwd=src, env=env)
     run([*base, "olddefconfig"], env=env, log=work / "configure.log")
     conf = (out / ".config").read_text().splitlines()
-    require(all(f"CONFIG_{k}=y" in conf for k in enabled), "required feature dropped by olddefconfig")
-    require(all(f"# CONFIG_{k} is not set" in conf for k in disabled), "conflicting hook configuration")
+    validate_build_config(conf, enabled, disabled)
     actual_version = run(["/usr/bin/make", "-s", "-C", src, "kernelversion"], env=env)
     require(actual_version == label, f"native kernel version mismatch: {actual_version}")
     print(f"BUILD {label} started (jobs={jobs})", flush=True)
@@ -649,7 +710,10 @@ def compile_kernel(label, state, targets, work, jobs):
     dtb = out / "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
     require(image.is_file() and image.stat().st_size > 1024*1024, "kernel Image missing")
     require(digest(dtb) == yaml_read(REPO / config()["golden_contract"])["dtb"]["sha256"], "VEUX DTB regression")
-    for obj in ("fs/nomount/nomount.o", "fs/susfs.o", "drivers/kernelsu/kernelsu.o"):
+    # Built-in LTO flattens composite objects into built-in.a; kernelsu.o need
+    # not exist even when all ReSukiSU objects are present in the final Image.
+    for obj in ("fs/nomount/nomount.o", "fs/susfs.o", "drivers/kernelsu/core/init.o",
+                "drivers/kernelsu/built-in.a"):
         require((out / obj).is_file(), f"required compiled object missing: {obj}")
     data = image.read_bytes()
     for marker in (b"@ReSukiSU", targets["components"]["resukisu"]["commit"][:8].encode(), b"susfs:", b"NoMount:"):
@@ -724,7 +788,12 @@ def avb_metadata(text):
         require(len(matches) == 1, f"ambiguous AVB {key}")
         fields[key] = matches[0]
     props = re.findall(r"^\s*Prop:\s+(.+?)\s+->\s+'(.*)'\s*$", text, re.M)
-    require(props and len(props) == len({p[0] for p in props}), "missing/duplicate AVB properties")
+    require(props, "missing AVB properties")
+    # The authenticated stock-derived image repeats security_patch with the
+    # same value. Preserve that descriptor multiplicity instead of rejecting
+    # it or silently dropping metadata. Conflicting duplicate values block.
+    require(all(len({value for name, value in props if name == key}) == 1
+                for key in {name for name, _ in props}), "conflicting AVB properties")
     fields["props"] = sorted(props)
     require(fields["Algorithm"] == "NONE" and fields["Partition Name"] == "boot" and fields["Hash Algorithm"] == "sha256", "AVB policy mismatch")
     require(re.fullmatch(r"[a-fA-F0-9]+", fields["Salt"]), "invalid AVB salt")

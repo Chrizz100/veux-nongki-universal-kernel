@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed checks for the shared engine; no network or kernel build claimed."""
 import copy
+import gzip
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import zipfile
 
 sys.dont_write_bytecode = True
@@ -17,6 +19,118 @@ import veux_update_engine as e
 
 
 class EngineTests(unittest.TestCase):
+    def test_authenticated_avb_identical_duplicate_properties_are_preserved(self):
+        info = ("Algorithm: NONE\nPartition Name: boot\nHash Algorithm: sha256\nSalt: abcdef\n"
+                "Prop: com.android.build.boot.security_patch -> '2024-12-01'\n"
+                "Prop: com.android.build.boot.security_patch -> '2024-12-01'\n")
+        self.assertEqual(len(e.avb_metadata(info)["props"]), 2)
+        with self.assertRaises(e.Blocked):
+            e.avb_metadata(info + "Prop: com.android.build.boot.security_patch -> '2025-01-01'\n")
+
+    def test_invisible_disabled_kconfig_children_are_valid(self):
+        conf = ["CONFIG_KSU_SUSFS=y", "# CONFIG_KSU_MANUAL_HOOK is not set"]
+        disabled = ["KSU_MANUAL_HOOK", "KSU_MANUAL_HOOK_AUTO_SETUID_HOOK"]
+        e.validate_build_config(conf, ["KSU_SUSFS"], disabled)
+        for value in ("y", "m"):
+            with self.assertRaises(e.Blocked):
+                e.validate_build_config(conf + ["CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK=" + value],
+                                        ["KSU_SUSFS"], disabled)
+        with self.assertRaises(e.Blocked):
+            e.validate_build_config([], ["KSU_SUSFS"], disabled)
+
+    def test_real_historical_vendor_checkout_uses_pinned_commit_and_history(self):
+        recipe = e.config()["lineages"]["5.4.274"]
+        doc = e.yaml_read(e.REPO / recipe["workflow"])
+        steps = next(iter(doc["jobs"].values()))["steps"]
+        opts = next(s["with"] for s in steps if s.get("name") == "Checkout exact VEUX vendor source")
+        dest = Path("/unused-test-checkout")
+        with mock.patch.object(e, "checkout") as checkout:
+            e.source_checkout(opts, recipe, {}, {}, {}, dest)
+            checkout.assert_called_once_with("https://github.com/dereference23/kernel_xiaomi_sm6375.git",
+                                             "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632", dest, full=True)
+        with mock.patch.object(e, "checkout") as checkout:
+            with self.assertRaises(e.Blocked):
+                e.source_checkout(dict(opts, ref="unreviewed-tag"), recipe, {}, {}, {}, dest)
+            checkout.assert_not_called()
+
+    def test_real_legacy_susfs_migration_preserves_compatibility(self):
+        fixture = e.REPO / "common/update/tests/susfs-legacy-source.json.gz"
+        data = json.loads(gzip.decompress(fixture.read_bytes()))
+        migration = e.config()["susfs_migration"]
+        patch = e.REPO / migration["patch"]
+        self.assertEqual(e.digest(patch), migration["patch_sha256"])
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d)
+            for rel, text in data.items():
+                p = src / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
+            for rel, value in migration["legacy_sha256"].items():
+                self.assertEqual(e.digest(src / rel), value)
+            # A changed preimage must fail without any partial edits.
+            bad = src / "fs/statfs.c"
+            good = bad.read_text(); bad.write_text(good.replace("int vfs_get_fsid(", "int changed_vfs_get_fsid("))
+            before = e.tree_hashes(src)
+            with self.assertRaises(e.Blocked):
+                e.run(["git", "apply", "--check", patch], cwd=src)
+            self.assertEqual(e.tree_hashes(src), before)
+            bad.write_text(good)
+            e.run(["git", "apply", "--check", patch], cwd=src)
+            e.run(["git", "apply", patch], cwd=src)
+            c = (src / "fs/susfs.c").read_text()
+            for name in ("susfs_open_redirect_spoof_vfs_readlink", "susfs_open_redirect_spoof_do_proc_readlink",
+                         "susfs_open_redirect_spoof_vfs_statfs", "susfs_open_redirect_spoof_seq_show",
+                         "susfs_get_enabled_features"):
+                import re
+                pattern = r"^(?:int|void) " + name + r"\([^;]+?\{.*?^}"
+                self.assertEqual(re.search(pattern, c, re.M | re.S).group(),
+                                 re.search(pattern, data["fs/susfs.c"], re.M | re.S).group())
+            self.assertIn(".handle_event = susfs_handle_sdcard_inode_event", c)
+            self.assertIn("DEFINE_SRCU(susfs_srcu_sus_path_loop)", c)
+            stat = (src / "fs/stat.c").read_text()
+            self.assertIn("is_fuse ? STATX_SUS_KSTAT_FUSE : STATX_SUS_KSTAT", stat)
+            self.assertNotIn("stat->mnt_id", stat)
+            self.assertNotIn("stat->result_mask |= STATX_SUS_KSTAT", stat)
+            self.assertIn("susfs_sus_kstat_spoof_vfs_statfs", (src / "fs/statfs.c").read_text())
+
+    def test_failure_still_checks_repository_integrity(self):
+        doc = e.yaml_read(e.REPO / ".github/workflows/veux-all-in-one-updater-v3.yml")
+        steps = doc["jobs"]["update"]["steps"]
+        gate = next(s for s in steps if s["name"] == "Prove checkout and Golden remain unchanged")
+        self.assertEqual(gate["if"], "always()")
+
+    def test_real_relocated_statfs_delta_and_ambiguous_preimage(self):
+        fixture = e.REPO / "common/update/tests/susfs-relocated-statfs.json.gz"
+        data = json.loads(gzip.decompress(fixture.read_bytes()))
+        old = e.patch_images(data["before"])["fs/statfs.c"]
+        new = e.patch_images(data["after"])["fs/statfs.c"]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "statfs.c"; p.write_text(data["source"])
+            for a, b in zip(old, new):
+                e.apply_host_delta(p, a["after"], b["after"])
+            updated = p.read_text()
+            self.assertIn("int calculate_f_flags_wrapper(struct vfsmount *mnt)", updated)
+            self.assertIn("susfs_statfs_by_dentry(path->dentry, path->mnt, buf, &is_fuse)", updated)
+            self.assertIn("EXPORT_SYMBOL(vfs_get_fsid);", updated)
+            self.assertIn("buf->f_flags = calculate_f_flags(mnt);", updated)
+            p.write_text("same\nsame\n")
+            with self.assertRaises(e.Blocked):
+                e.apply_host_delta(p, ["same\n"], ["changed\n"])
+            self.assertEqual(p.read_text(), "same\nsame\n")
+
+    def test_clang_archive_accepts_runner_temp_and_rejects_escape(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            env = {"VEUX_SOURCE_WORK": str(root / "source-work"),
+                   "VEUX_TRANSPORT_WORK": str(root / "source-temp")}
+            url = e.config()["toolchain_transport"]["url"]
+            with mock.patch.dict(os.environ, env), mock.patch.object(e.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                e.transport_curl([url, "-o", str(root / "source-temp/clang.tar.gz")])
+                run.assert_called_once()
+                run.reset_mock()
+                with self.assertRaises(e.Blocked):
+                    e.transport_curl([url, "-o", str(root / "outside.tar.gz")])
+                run.assert_not_called()
+
     def test_repository_contracts(self):
         cfg, fleet = e.check_repo()
         self.assertEqual(len(fleet["lineages"]), 6)
