@@ -1,0 +1,133 @@
+# Repository: Chrizz100/veux-nongki-universal-kernel
+# Save as: .github/workflows/veux-charger-vindpm-5.4.274.yml
+# Start manually through Actions. No companion files are required.
+# Reviewed baseline: f71c132f028ee5fccb9e33c302b9febafff652af.
+# Fix: stale absolute VINDPM after the charging supply returns to 5 V.
+# Existing component pins and compile/package/static-boot gates are retained.
+# The generated patch and contract live only in a temporary build checkout.
+# No push, fleet promotion, hardware PASS claim, or charge-limit increase.
+name: VEUX 5.4.274 Charger Diagnostic 02 - VINDPM
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-charger-vindpm-5.4.274
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  diagnostic:
+    name: Build and validate the 5 V charging correction
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Prepare and authenticate the charging correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT="$RUNNER_TEMP/veux-charger-project"
+          git clone --quiet --no-hardlinks "$GITHUB_WORKSPACE" "$PROJECT"
+          git -C "$PROJECT" checkout --quiet --detach "$GITHUB_SHA"
+          cd "$PROJECT"
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/veux_charger_diagnostic.py check
+          "$RUNNER_TEMP/veux-python/bin/python" - <<'PY_PREPARE'
+          import hashlib
+          import json
+          from pathlib import Path
+          import subprocess
+
+          repo = Path.cwd()
+          runner = repo / 'common/scripts/veux_charger_diagnostic.py'
+          expected = '3e887ffc532064944376a69034e1216423d63274'
+          actual = subprocess.check_output(['git', 'hash-object', str(runner)], text=True).strip()
+          if actual != expected:
+              raise SystemExit('BLOCKED: diagnostic runner differs from the reviewed baseline')
+          patch = '--- a/drivers/power/supply/qcom/bq2589x_charger.c\n+++ b/drivers/power/supply/qcom/bq2589x_charger.c\n@@ -143,8 +143,11 @@\n \t\t\tmutex_unlock(&bq2589x_i2c_lock);\n \t\t\tcount--;\n \t\t} else {\n-\t\t\t*data = (u8)ret;\n+\t\t\tif (ret >= 0)\n+\t\t\t\t*data = (u8)ret;\n \t\t\tmutex_unlock(&bq2589x_i2c_lock);\n+\t\t\tif (ret < 0)\n+\t\t\t\treturn ret;\n \t\t\tbreak;\n \t\t}\n \t\tudelay(200);\n@@ -461,11 +464,66 @@\n \treturn bq2589x_update_bits(bq, BQ2589X_REG_06, BQ2589X_VREG_MASK, val << BQ2589X_VREG_SHIFT);\n }\n \n+/* Match the 5 V threshold already used when an adapter is disconnected. */\n+#define BQ2589X_5V_VINDPM_MV 4400\n+\n+static bool bq2589x_is_5v_input(int vbus)\n+{\n+\treturn vbus >= 4800 && vbus <= 5500;\n+}\n+\n int bq2589x_set_input_volt_limit(struct bq2589x *bq, int volt)\n {\n-\tu8 val;\n+\tint vbus;\n+\tu8 val;\n+\n+\t/* A cached MAXC classification can outlive the negotiated 9 V supply. */\n+\tif (volt > 5500 && bq->cfg.enable_term && !bq->cfg.otg_status) {\n+\t\tvbus = bq2589x_adc_read_vbus_volt(bq);\n+\t\tif (vbus < 0)\n+\t\t\treturn vbus;\n+\t\tif (bq2589x_is_5v_input(vbus))\n+\t\t\tvolt = BQ2589X_5V_VINDPM_MV;\n+\t}\n \tval = (volt - BQ2589X_VINDPM_BASE) / BQ2589X_VINDPM_LSB;\n \treturn bq2589x_update_bits(bq, BQ2589X_REG_0D, BQ2589X_VINDPM_MASK, val << BQ2589X_VINDPM_SHIFT);\n+}\n+\n+static int bq2589x_restore_5v_vindpm(struct bq2589x *bq)\n+{\n+\tint vbus, vindpm, ret;\n+\tu8 reg;\n+\n+\t/* Termination is disabled while the charge pump owns the charging path. */\n+\tif (!bq->cfg.enable_term || bq->cfg.otg_status)\n+\t\treturn 0;\n+\tvbus = bq2589x_adc_read_vbus_volt(bq);\n+\tif (vbus < 0)\n+\t\treturn vbus;\n+\tif (!bq2589x_is_5v_input(vbus))\n+\t\treturn 0;\n+\tret = bq2589x_read_byte(bq, &reg, BQ2589X_REG_0D);\n+\tif (ret < 0)\n+\t\treturn ret;\n+\t/* Do not override the chip\'s relative VINDPM algorithm. */\n+\tif (!(reg & BQ2589X_FORCE_VINDPM_MASK))\n+\t\treturn 0;\n+\tvindpm = BQ2589X_VINDPM_BASE +\n+\t\t((reg & BQ2589X_VINDPM_MASK) >> BQ2589X_VINDPM_SHIFT) *\n+\t\tBQ2589X_VINDPM_LSB;\n+\tif (vindpm <= vbus)\n+\t\treturn 0;\n+\tret = bq2589x_set_input_volt_limit(bq, BQ2589X_5V_VINDPM_MV);\n+\tif (ret < 0)\n+\t\treturn ret;\n+\tret = bq2589x_read_vindpm_volt(bq);\n+\tif (ret < 0)\n+\t\treturn ret;\n+\tif (ret != BQ2589X_5V_VINDPM_MV)\n+\t\treturn -EIO;\n+\tdev_info(bq->dev, "%s: VBUS %d mV, VINDPM %d -> %d mV\\n",\n+\t\t __func__, vbus, vindpm, ret);\n+\treturn 0;\n }\n \n int bq2589x_set_input_current_limit(struct bq2589x *bq, int curr)\n@@ -1261,14 +1319,12 @@\n \tif (val.intval < 100)\n \t\tbq2589x_update_bits(bq, BQ2589X_REG_08, BQ2589X_BAT_COMP_MASK, 2 << 5);\n \n-\tif (bq->vbus_volt >= 4800) {\n+\t/* Retry after asynchronous PD changes or a temporarily stale ADC sample. */\n+\tret = bq2589x_restore_5v_vindpm(bq);\n+\tif (ret < 0)\n+\t\tdev_err(bq->dev, "%s: VINDPM recovery failed: %d\\n", __func__, ret);\n+\tif (bq->vbus_volt >= 4800)\n \t\tvindpm = bq2589x_read_vindpm_volt(bq);\n-\t\tif (vindpm > bq->vbus_volt) {\n-\t\t\tbq2589x_enter_hiz_mode(bq);\n-\t\t\tmsleep(1);\n-\t\t\tbq2589x_exit_hiz_mode(bq);\n-\t\t}\n-\t}\n \tdev_info(bq->dev, "%s:vbus volt:%d,vbat volt:%d,charge current:%d, temp %d, vindpm %d\\n",\n \t\t\t__func__, bq->vbus_volt, bq->vbat_volt, chg_current, val.intval, vindpm);\n \n@@ -1563,8 +1619,12 @@\n \t\tbq2589x_set_chargevoltage(bq, val1);\n \t\tbreak;\n \tcase PSY_IIO_ENABLE_CHAGER_TERM:\n-\t\tbq->cfg.enable_term = val1;\n-\t\tbq2589x_enable_term(bq, bq->cfg.enable_term);\n+\t\trc = bq2589x_enable_term(bq, !!val1);\n+\t\tif (rc < 0)\n+\t\t\tbreak;\n+\t\tbq->cfg.enable_term = !!val1;\n+\t\tif (val1)\n+\t\t\trc = bq2589x_restore_5v_vindpm(bq);\n \t\tbreak;\n \tdefault:\n \t\tpr_debug("Unsupported BQ25890 IIO chan %d\\n", chan->channel);\n'
+          if hashlib.sha256(patch.encode()).hexdigest() != '9dd4351cec0f53a6c917f6bb9914750f9d49e347f654e02df4dffbb289b7bfac':
+              raise SystemExit('BLOCKED: embedded charger patch checksum differs')
+          folder = repo / 'common/diagnostics/charger-5.4.274-vindpm'
+          folder.mkdir()
+          (folder / '0001-bq2589x-recover-5v-vindpm.patch').write_text(patch)
+          contract = json.loads((repo / 'common/diagnostics/charger-5.4.274/contract.json').read_text())
+          contract['id'] = 'ChargerDiag02'
+          contract['patch'].update(
+              path='common/diagnostics/charger-5.4.274-vindpm/0001-bq2589x-recover-5v-vindpm.patch',
+              sha256='9dd4351cec0f53a6c917f6bb9914750f9d49e347f654e02df4dffbb289b7bfac',
+              before_sha256='c050a311e687d7d3bf78950d70dd27e849489dbd2452c10be0ee5722bc7a50ab',
+              after_sha256='0d6b90b1accb0547e22491402a2c8268f54690add84afc6ca84c4125d4b25de9',
+              added_lines=71, removed_lines=11)
+          (folder / 'contract.json').write_text(json.dumps(contract, indent=2, sort_keys=True) + '\n')
+          source = runner.read_text()
+          changes = [
+              ("and contract['id'] == 'ChargerDiag01'", "and contract['id'] in ('ChargerDiag01', 'ChargerDiag02')"),
+              ("print('CHARGER PATCH=PASS; changed files=1; removed lines=5', flush=True)",
+               "print(f\"CHARGER PATCH=PASS; changed files=1; added lines={spec['added_lines']}; removed lines={spec['removed_lines']}\", flush=True)"),
+              ('def main():\n', 'def main():\n    global CONTRACT\n'),
+              ("    sub = parser.add_subparsers(dest='command', required=True)",
+               "    parser.add_argument('--contract', default=CONTRACT, choices=(CONTRACT, 'common/diagnostics/charger-5.4.274-vindpm/contract.json'))\n    sub = parser.add_subparsers(dest='command', required=True)"),
+              ('    args = parser.parse_args()\n', '    args = parser.parse_args()\n    CONTRACT = args.contract\n'),
+          ]
+          for before, after in changes:
+              if source.count(before) != 1:
+                  raise SystemExit('BLOCKED: diagnostic runner edit anchor differs')
+              source = source.replace(before, after)
+          compile(source, str(runner), 'exec')
+          runner.write_text(source)
+          print('PREPARATION=PASS; patch authenticated; original build gates retained')
+          PY_PREPARE
+          git add common/scripts/veux_charger_diagnostic.py common/diagnostics/charger-5.4.274-vindpm/
+          git -c user.name='Kernel Maintenance' -c user.email='kernel-maintenance@users.noreply.github.com' commit --quiet -m 'Apply authenticated VEUX charging diagnostic 02'
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_release.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_charger_diagnostic.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/veux_charger_diagnostic.py --contract common/diagnostics/charger-5.4.274-vindpm/contract.json check
+      - name: Build and statically validate 5.4.274
+        id: kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/veux-charger-project"
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_charger_diagnostic.py \
+            --contract common/diagnostics/charger-5.4.274-vindpm/contract.json build \
+            --work "$RUNNER_TEMP/veux-charger-work" \
+            --public "$RUNNER_TEMP/veux-charger-public" \
+            --diagnostics "$RUNNER_TEMP/veux-charger-diagnostics" \
+            --jobs "$(nproc)"
+      - name: Verify unchanged original checkout
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Publish validated kernel and boot image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-charger-public/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+      - name: Publish diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-5.4.274-ChargerDiag02-Reports-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-charger-diagnostics/
+          if-no-files-found: warn
+          retention-days: 30
