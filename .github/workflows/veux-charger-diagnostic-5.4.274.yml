@@ -1,0 +1,78 @@
+name: VEUX 5.4.274 Charger Diagnostic 01
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [diagnose/veux-5.4.274-charger-hiz]
+    paths:
+      - .github/workflows/veux-charger-diagnostic-5.4.274.yml
+      - common/scripts/veux_charger_diagnostic.py
+      - common/scripts/test_veux_charger_diagnostic.py
+      - common/diagnostics/charger-5.4.274/**
+permissions:
+  contents: read
+concurrency:
+  group: veux-charger-diagnostic-5.4.274
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  diagnostic:
+    name: Build and validate the pinned charging experiment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Verify source contracts and regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_release.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_charger_diagnostic.py
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/veux_charger_diagnostic.py check
+      - name: Build and statically validate 5.4.274
+        id: kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_charger_diagnostic.py build \
+            --work "$RUNNER_TEMP/veux-charger-work" \
+            --public "$RUNNER_TEMP/veux-charger-public" \
+            --diagnostics "$RUNNER_TEMP/veux-charger-diagnostics" \
+            --jobs "$(nproc)"
+      - name: Verify unchanged checkout
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Publish validated kernel and boot image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-charger-public/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+      - name: Publish diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-5.4.274-ChargerDiag01-Reports-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-charger-diagnostics/
+          if-no-files-found: warn
+          retention-days: 30
