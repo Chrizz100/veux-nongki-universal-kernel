@@ -1,0 +1,14 @@
+--- a/drivers/power/supply/qcom/bq2589x_charger.c
++++ b/drivers/power/supply/qcom/bq2589x_charger.c
+@@ -1263,11 +1263,6 @@
+ 
+ 	if (bq->vbus_volt >= 4800) {
+ 		vindpm = bq2589x_read_vindpm_volt(bq);
+-		if (vindpm > bq->vbus_volt) {
+-			bq2589x_enter_hiz_mode(bq);
+-			msleep(1);
+-			bq2589x_exit_hiz_mode(bq);
+-		}
+ 	}
+ 	dev_info(bq->dev, "%s:vbus volt:%d,vbat volt:%d,charge current:%d, temp %d, vindpm %d\n",
+ 			__func__, bq->vbus_volt, bq->vbat_volt, chg_current, val.intval, vindpm);

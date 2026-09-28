@@ -1,1 +1,53 @@
-
+{
+  "baseline_repository_sha": "6dcf3369f27f2306bde876fd8ce06a7df3fb559d",
+  "baseline_run_id": "36319804763",
+  "components": {
+    "nomount": {
+      "ahead": 155,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "commit": "6b1be186322d4e0bdc465cf27f6fc0d3679087c6",
+      "ref": "refs/heads/master",
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "20",
+      "version_kind": "kernel-wire-version"
+    },
+    "resukisu": {
+      "ahead": 14,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
+      "local_version": 4484,
+      "ref": "refs/heads/main",
+      "tag": "v4.2.0-rc3",
+      "uapi": 4,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35184"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "ref": "refs/heads/gki-android13-5.10",
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  },
+  "id": "ChargerDiag01",
+  "kernel": "5.4.274",
+  "patch": {
+    "added_lines": 0,
+    "after_sha256": "15593898d0936c9b72e13bc318eedb98c30423df5979958d2f9c2e966ef086da",
+    "before_sha256": "c050a311e687d7d3bf78950d70dd27e849489dbd2452c10be0ee5722bc7a50ab",
+    "path": "common/diagnostics/charger-5.4.274/0001-bq2589x-remove-monitor-hiz-pulse.patch",
+    "removed_lines": 5,
+    "sha256": "6febb79956fce8571ca04aa65632981cdca7e171e4e22adf3dcdb089a77239f6",
+    "source": "drivers/power/supply/qcom/bq2589x_charger.c"
+  },
+  "pins": {
+    "common/contracts/CURRENT_BUILD.json": "cda324416df270cb98961d8762dc111ef30cfe00483f4937b3892ff0f6f85c04",
+    "common/contracts/GOLDEN_BASELINE.yml": "330a031f1af2e7846304c35c3ab03141f072f31a8285e8cfc6aa0d0935e0398e",
+    "common/scripts/veux_release.py": "d8ab6d1724d25bc77b65e201eaac34d0f35bd0ac70b59b4eb822faa377c2a258",
+    "common/scripts/veux_update_engine.py": "4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d",
+    "common/update/source-recipes.json": "fba6b30ecc72ab44eb4d5fba96eb4ab200249b968a928aca2e699fc4d131fb33"
+  },
+  "schema": 1
+}
