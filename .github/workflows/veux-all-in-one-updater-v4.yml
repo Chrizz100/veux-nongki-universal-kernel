@@ -41,6 +41,7 @@ jobs:
         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_release.py
         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_device_fixes.py
+        "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_source_transport.py
     - name: Resolve and authenticate upstreams once
       shell: bash
       run: |
