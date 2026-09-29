@@ -15,6 +15,7 @@ import sys
 import veux_update_engine as e
 import veux_release as r
 import veux_device_fixes as fixes
+import veux_source_transport as transport
 
 
 def worker(args):
@@ -32,7 +33,7 @@ def worker(args):
     work.mkdir(parents=True)
     public.mkdir(parents=True)
     try:
-        state = e.materialize(label, work)
+        state = transport.materialize(label, work)
         state['dtb_reference'] = e.prepare_dtb_reference(label, state, work, args.jobs)
         src = Path(state['source'])
         before = r.inventory(src)
