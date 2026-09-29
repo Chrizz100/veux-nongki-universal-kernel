@@ -1,0 +1,908 @@
+--- a/drivers/power/supply/qcom/bq2589x_charger.c
++++ b/drivers/power/supply/qcom/bq2589x_charger.c
+@@ -16,6 +16,7 @@
+ #include <linux/init.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/power_supply.h>
+ #include <linux/slab.h>
+ #include <linux/kernel.h>
+@@ -85,6 +86,9 @@
+ 
+ 	bool	enabled;
+ 	bool	is_bq25890h;
++	/* Serialize external IIO operations against the start of shutdown. */
++	struct mutex io_lock;
++	bool stopping;
+ 
+ 	int		vbus_volt;
+ 	int		vbat_volt;
+@@ -143,8 +147,11 @@
+ 			mutex_unlock(&bq2589x_i2c_lock);
+ 			count--;
+ 		} else {
+-			*data = (u8)ret;
++			if (ret >= 0)
++				*data = (u8)ret;
+ 			mutex_unlock(&bq2589x_i2c_lock);
++			if (ret < 0)
++				return ret;
+ 			break;
+ 		}
+ 		udelay(200);
+@@ -179,14 +186,14 @@
+ }
+ 
+ 
+-static enum bq2589x_vbus_type bq2589x_get_vbus_type(struct bq2589x *bq)
++static int bq2589x_get_vbus_type(struct bq2589x *bq)
+ {
+ 	u8 val = 0;
+ 	int ret;
+ 
+ 	ret = bq2589x_read_byte(bq, &val, BQ2589X_REG_0B);
+ 	if (ret < 0)
+-		return 0;
++		return ret;
+ 	val &= BQ2589X_VBUS_STAT_MASK;
+ 	val >>= BQ2589X_VBUS_STAT_SHIFT;
+ 
+@@ -195,11 +202,11 @@
+ 
+ static int  bq2589x_get_chg_type(struct bq2589x *bq)
+ {
+-	u8 val;
+ 	int type, real_type;
+ 
+-	val = bq2589x_get_vbus_type(bq);
+-	type = (int)val;
++	type = bq2589x_get_vbus_type(bq);
++	if (type < 0)
++		return type;
+ 
+ 	if(!bq->is_bq25890h && bq->old_type == BQ2589X_VBUS_UNKNOWN) {
+ 		type = BQ2589X_VBUS_NONSTAND;
+@@ -461,11 +468,66 @@
+ 	return bq2589x_update_bits(bq, BQ2589X_REG_06, BQ2589X_VREG_MASK, val << BQ2589X_VREG_SHIFT);
+ }
+ 
++/* Match the 5 V threshold already used when an adapter is disconnected. */
++#define BQ2589X_5V_VINDPM_MV 4400
++
++static bool bq2589x_is_5v_input(int vbus)
++{
++	return vbus >= 4800 && vbus <= 5500;
++}
++
+ int bq2589x_set_input_volt_limit(struct bq2589x *bq, int volt)
+ {
++	int vbus;
+ 	u8 val;
++
++	/* A cached MAXC classification can outlive the negotiated 9 V supply. */
++	if (volt > 5500 && bq->cfg.enable_term && !bq->cfg.otg_status) {
++		vbus = bq2589x_adc_read_vbus_volt(bq);
++		if (vbus < 0)
++			return vbus;
++		if (bq2589x_is_5v_input(vbus))
++			volt = BQ2589X_5V_VINDPM_MV;
++	}
+ 	val = (volt - BQ2589X_VINDPM_BASE) / BQ2589X_VINDPM_LSB;
+ 	return bq2589x_update_bits(bq, BQ2589X_REG_0D, BQ2589X_VINDPM_MASK, val << BQ2589X_VINDPM_SHIFT);
++}
++
++static int bq2589x_restore_5v_vindpm(struct bq2589x *bq)
++{
++	int vbus, vindpm, ret;
++	u8 reg;
++
++	/* Termination is disabled while the charge pump owns the charging path. */
++	if (!bq->cfg.enable_term || bq->cfg.otg_status)
++		return 0;
++	vbus = bq2589x_adc_read_vbus_volt(bq);
++	if (vbus < 0)
++		return vbus;
++	if (!bq2589x_is_5v_input(vbus))
++		return 0;
++	ret = bq2589x_read_byte(bq, &reg, BQ2589X_REG_0D);
++	if (ret < 0)
++		return ret;
++	/* Do not override the chip's relative VINDPM algorithm. */
++	if (!(reg & BQ2589X_FORCE_VINDPM_MASK))
++		return 0;
++	vindpm = BQ2589X_VINDPM_BASE +
++		((reg & BQ2589X_VINDPM_MASK) >> BQ2589X_VINDPM_SHIFT) *
++		BQ2589X_VINDPM_LSB;
++	if (vindpm <= vbus)
++		return 0;
++	ret = bq2589x_set_input_volt_limit(bq, BQ2589X_5V_VINDPM_MV);
++	if (ret < 0)
++		return ret;
++	ret = bq2589x_read_vindpm_volt(bq);
++	if (ret < 0)
++		return ret;
++	if (ret != BQ2589X_5V_VINDPM_MV)
++		return -EIO;
++	dev_info(bq->dev, "%s: VBUS %d mV, VINDPM %d -> %d mV\n",
++		 __func__, vbus, vindpm, ret);
++	return 0;
+ }
+ 
+ int bq2589x_set_input_current_limit(struct bq2589x *bq, int curr)
+@@ -525,6 +587,8 @@
+ 	int ret = 0;
+ 	u8 data=0;
+ 	ret = bq2589x_read_byte(bq, &data, BQ2589X_REG_02);
++	if (ret < 0)
++		return ret;
+ 	//pr_err("%s data(0x%x)\n",  __func__, data);
+ 	data &= (BQ2589X_FORCE_DPDM << BQ2589X_FORCE_DPDM_SHIFT);
+ 	*done = (data >> BQ2589X_FORCE_DPDM_SHIFT);
+@@ -538,19 +602,29 @@
+ 	return bq2589x_update_bits(bq, BQ2589X_REG_02, BQ2589X_FORCE_DPDM_MASK, val);
+ }
+ 
+-void bq2589x_force_dpdm_done(struct bq2589x *bq)
++int bq2589x_force_dpdm_done(struct bq2589x *bq)
+ {
+ 	int retry = 0;
+ 	int bc_count = 200;
+ 	int done = 1;
+-
+-	bq2589x_force_dpdm(bq);
++	int ret;
++
++	if (READ_ONCE(bq->stopping))
++		return -ESHUTDOWN;
++	ret = bq2589x_force_dpdm(bq);
++	if (ret < 0)
++		return ret;
+ 	while(retry++ < bc_count){
+-		bq2589x_is_dpdm_done(bq,&done);
++		if (READ_ONCE(bq->stopping))
++			return -ESHUTDOWN;
++		ret = bq2589x_is_dpdm_done(bq, &done);
++		if (ret < 0)
++			return ret;
+ 		msleep(20);
+ 		if(!done) //already known charger type
+-			break;
+-	}
++			return 0;
++	}
++	return -ETIMEDOUT;
+ }
+ 
+ /*
+@@ -792,7 +866,7 @@
+ 
+ }
+ 
+-static bool bq2589x_is_charge_done(struct bq2589x *bq)
++static int bq2589x_is_charge_done(struct bq2589x *bq)
+ {
+ 	int ret;
+ 	u8 val;
+@@ -800,7 +874,7 @@
+ 	ret = bq2589x_read_byte(bq, &val, BQ2589X_REG_0B);
+ 	if (ret < 0) {
+ 		dev_err(bq->dev, "%s:read REG0B failed :%d\n", __func__, ret);
+-		return false;
++		return ret;
+ 	}
+ 	val &= BQ2589X_CHRG_STAT_MASK;
+ 	val >>= BQ2589X_CHRG_STAT_SHIFT;
+@@ -908,8 +982,11 @@
+ static int bq2589x_charge_status(struct bq2589x *bq)
+ {
+ 	u8 val = 0;
+-
+-	bq2589x_read_byte(bq, &val, BQ2589X_REG_0B);
++	int ret;
++
++	ret = bq2589x_read_byte(bq, &val, BQ2589X_REG_0B);
++	if (ret < 0)
++		return ret;
+ 	val &= BQ2589X_CHRG_STAT_MASK;
+ 	val >>= BQ2589X_CHRG_STAT_SHIFT;
+ 	switch (val) {
+@@ -928,6 +1005,7 @@
+ static ssize_t bq2589x_show_registers(struct device *dev,
+ 				struct device_attribute *attr, char *buf)
+ {
++	struct bq2589x *bq = dev_get_drvdata(dev);
+ 	u8 addr;
+ 	u8 val;
+ 	u8 tmpbuf[300];
+@@ -937,7 +1015,7 @@
+ 
+ 	idx = snprintf(buf, PAGE_SIZE, "%s:\n", "Charger 1");
+ 	for (addr = 0x0; addr <= 0x14; addr++) {
+-		ret = bq2589x_read_byte(g_bq, &val, addr);
++		ret = bq2589x_read_byte(bq, &val, addr);
+ 		if (ret == 0) {
+ 			len = snprintf(tmpbuf, PAGE_SIZE - idx,"Reg[0x%.2x] = 0x%.2x\n", addr, val);
+ 			memcpy(&buf[idx], tmpbuf, len);
+@@ -1042,7 +1120,7 @@
+ 
+ static void bq2589x_adjust_absolute_vindpm(struct bq2589x *bq)
+ {
+-	u16 vbus_volt;
++	int vbus_volt;
+ 	u16 vindpm_volt;
+ 	int ret;
+ 
+@@ -1065,6 +1143,10 @@
+ 	else
+ 		vindpm_volt = vbus_volt - 1200;
+ */
++	if (vbus_volt < 0) {
++		dev_err(bq->dev, "%s: failed to read VBUS: %d\n", __func__, vbus_volt);
++		return;
++	}
+ 	if (bq->vbus_type != BQ2589X_VBUS_USB_SDP)
+ 		vindpm_volt = 4500;
+ 	else
+@@ -1083,6 +1165,9 @@
+ 	int ret;
+ 	union power_supply_propval val = {0,};
+ 
++	if (READ_ONCE(bq->stopping))
++		return;
++
+ 	bq2589x_adc_start(bq, false);
+ 	if (bq->vbus_type == BQ2589X_VBUS_MAXC) {
+ 		bq2589x_set_input_volt_limit(bq, 8550);
+@@ -1092,7 +1177,8 @@
+ 			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+ 		else
+ 			dev_info(bq->dev, "%s: Set inputcurrent to %dmA successfully\n",__func__,bq->cfg.charge_current);
+-		schedule_delayed_work(&bq->ico_work, msecs_to_jiffies(500));
++		if (!READ_ONCE(bq->stopping))
++			schedule_delayed_work(&bq->ico_work, msecs_to_jiffies(500));
+ 	} else if (bq->vbus_type == BQ2589X_VBUS_USB_DCP) {/* DCP, let's check if it is PE adapter*/
+ 		ret = bq2589x_set_input_current_limit(bq, 2000);
+ 		dev_info(bq->dev, "%s:usb dcp adapter plugged in\n", __func__);
+@@ -1136,7 +1222,8 @@
+ 		else
+ 			dev_info(bq->dev, "%s: Set input current to %dmA successfully\n",__func__,1000);
+ 		bq2589x_usb_switch(bq, false);
+-		schedule_delayed_work(&bq->ico_work, 0);
++		if (!READ_ONCE(bq->stopping))
++			schedule_delayed_work(&bq->ico_work, 0);
+ 	}
+ 
+ 	if(bq->vbus_type == BQ2589X_VBUS_USB_SDP)
+@@ -1144,13 +1231,17 @@
+ 
+ 	power_supply_changed(bq->usb_psy);
+ 	cancel_delayed_work_sync(&bq->monitor_work);
+-	schedule_delayed_work(&bq->monitor_work, 0);
++	if (!READ_ONCE(bq->stopping))
++		schedule_delayed_work(&bq->monitor_work, 0);
+ }
+ 
+ static void bq2589x_adapter_out_workfunc(struct work_struct *work)
+ {
+ 	struct bq2589x *bq = container_of(work, struct bq2589x, adapter_out_work);
+ 	int ret;
++
++	if (READ_ONCE(bq->stopping))
++		return;
+ 
+ 	ret = bq2589x_set_input_current_limit(bq, 500);
+ 	ret = bq2589x_set_input_volt_limit(bq, 4400);
+@@ -1170,20 +1261,25 @@
+ 	u8 status;
+ 	static bool ico_issued;
+ 
++	if (READ_ONCE(bq->stopping))
++		return;
++
+ 	if (!ico_issued) {
+ 		ret = bq2589x_force_ico(bq);
+ 		if (ret < 0) {
+-			schedule_delayed_work(&bq->ico_work, HZ); /* retry 1 second later*/
++			if (!READ_ONCE(bq->stopping))
++				schedule_delayed_work(&bq->ico_work, HZ); /* retry 1 second later*/
+ 			dev_info(bq->dev, "%s:ICO command issued failed:%d\n", __func__, ret);
+ 		} else {
+ 			ico_issued = true;
+-			schedule_delayed_work(&bq->ico_work, 3 * HZ);
++			if (!READ_ONCE(bq->stopping))
++				schedule_delayed_work(&bq->ico_work, 3 * HZ);
+ 			dev_info(bq->dev, "%s:ICO command issued successfully\n", __func__);
+ 		}
+ 	} else {
+ 		ico_issued = false;
+ 		ret = bq2589x_check_force_ico_done(bq);
+-		if (ret) {/*ico done*/
++		if (ret > 0) {/*ico done*/
+ 			ret = bq2589x_read_byte(bq, &status, BQ2589X_REG_13);
+ 			if (ret == 0) {
+ 				idpm = ((status & BQ2589X_IDPM_LIM_MASK) >> BQ2589X_IDPM_LIM_SHIFT) * BQ2589X_IDPM_LIM_LSB + BQ2589X_IDPM_LIM_BASE;
+@@ -1196,19 +1292,26 @@
+ static void bq2589x_force_workfunc(struct work_struct *work)
+ {
+ 	struct bq2589x *bq = container_of(work, struct bq2589x, force_work.work);
+-	u8 val = 0;
+-
++	int val = 0;
++	int ret;
++
++	if (READ_ONCE(bq->stopping))
++		return;
++	val = bq2589x_get_vbus_type(bq);
++	if (val < 0)
++		return;
+ 	bq->force_exit_flag = true;
+ 	dev_err(bq->dev, "%s:val=%d,bq->usb_switch_flag=%d force_exit_flag %d\n",
+ 				__func__,val,bq->usb_switch_flag,bq->force_exit_flag);
+-	val = bq2589x_get_vbus_type(bq);
+ 	if((val == BQ2589X_VBUS_UNKNOWN) || (val == BQ2589X_VBUS_NONSTAND)) {
+ 		bq->old_type = BQ2589X_VBUS_UNKNOWN;
+ 		dev_err(bq->dev, "%s:val=%d,bq->usb_switch_flag=%d\n",
+ 				__func__,val,bq->usb_switch_flag);
+ 		bq2589x_usb_switch(bq, true);
+ //		bq->usb_switch_flag = true;
+-		bq2589x_force_dpdm_done(bq);
++		ret = bq2589x_force_dpdm_done(bq);
++		if (ret < 0)
++			dev_err(bq->dev, "%s: DPDM failed: %d\n", __func__, ret);
+ 		bq->old_type = BQ2589X_VBUS_NONE;
+ 	}
+ 	bq->force_exit_flag = false;
+@@ -1222,13 +1325,24 @@
+ 	int chg_current;
+ 	int vindpm = 0;
+ 	union power_supply_propval val = {0,};
++
++	if (READ_ONCE(bq->stopping))
++		return;
+ 
+ //	bq2589x_reset_watchdog_timer(bq);
+ #ifdef DEBUG
+ 	bq2589x_dump_regs(bq);
+ #endif
+-	bq->vbus_volt = bq2589x_adc_read_vbus_volt(bq);
+-	bq->vbat_volt = bq2589x_adc_read_battery_volt(bq);
++	ret = bq2589x_adc_read_vbus_volt(bq);
++	if (ret >= 0)
++		bq->vbus_volt = ret;
++	else
++		dev_err(bq->dev, "VBUS read failed: %d\n", ret);
++	ret = bq2589x_adc_read_battery_volt(bq);
++	if (ret >= 0)
++		bq->vbat_volt = ret;
++	else
++		dev_err(bq->dev, "battery voltage read failed: %d\n", ret);
+ 	chg_current = bq2589x_adc_read_charge_current(bq);
+ 
+ 	if (!bq->curr_flag) {
+@@ -1261,14 +1375,12 @@
+ 	if (val.intval < 100)
+ 		bq2589x_update_bits(bq, BQ2589X_REG_08, BQ2589X_BAT_COMP_MASK, 2 << 5);
+ 
+-	if (bq->vbus_volt >= 4800) {
++	/* Retry after asynchronous PD changes or a temporarily stale ADC sample. */
++	ret = bq2589x_restore_5v_vindpm(bq);
++	if (ret < 0)
++		dev_err(bq->dev, "%s: VINDPM recovery failed: %d\n", __func__, ret);
++	if (bq->vbus_volt >= 4800)
+ 		vindpm = bq2589x_read_vindpm_volt(bq);
+-		if (vindpm > bq->vbus_volt) {
+-			bq2589x_enter_hiz_mode(bq);
+-			msleep(1);
+-			bq2589x_exit_hiz_mode(bq);
+-		}
+-	}
+ 	dev_info(bq->dev, "%s:vbus volt:%d,vbat volt:%d,charge current:%d, temp %d, vindpm %d\n",
+ 			__func__, bq->vbus_volt, bq->vbat_volt, chg_current, val.intval, vindpm);
+ 
+@@ -1288,7 +1400,8 @@
+ 
+ 	/* read temperature,or any other check if need to decrease charge current*/
+ 
+-	schedule_delayed_work(&bq->monitor_work, msecs_to_jiffies(10000));
++	if (!READ_ONCE(bq->stopping))
++		schedule_delayed_work(&bq->monitor_work, msecs_to_jiffies(10000));
+ }
+ 
+ static void bq2589x_charger_irq_workfunc(struct work_struct *work)
+@@ -1298,6 +1411,9 @@
+ 	u8 fault = 0;
+ 	u8 charge_status = 0;
+ 	int ret;
++
++	if (READ_ONCE(bq->stopping))
++		return;
+ 
+ 	//bq2589x_set_watchdog_timer(bq, BQ2589X_WDT_160S);
+ 	//bq2589x_reset_watchdog_timer(bq);
+@@ -1317,9 +1433,11 @@
+ 		power_supply_changed(bq->usb_psy);
+ 		if((!bq->hz_flag) && (!bq->force_exit_flag)) {
+ 			if(!bq->is_bq25890h) {
+-				schedule_delayed_work(&bq->force_work, msecs_to_jiffies(4000));
++				if (!READ_ONCE(bq->stopping))
++					schedule_delayed_work(&bq->force_work, msecs_to_jiffies(4000));
+ 			} else {
+-				schedule_delayed_work(&bq->force_work, msecs_to_jiffies(4000));
++				if (!READ_ONCE(bq->stopping))
++					schedule_delayed_work(&bq->force_work, msecs_to_jiffies(4000));
+ 			}
+ 		}
+ 		return;
+@@ -1339,7 +1457,8 @@
+ 		bq->status &= ~BQ2589X_STATUS_PLUGIN;
+ 		cancel_delayed_work_sync(&bq->force_work);
+ 		power_supply_changed(bq->usb_psy);
+-		schedule_work(&bq->adapter_out_work);
++		if (!READ_ONCE(bq->stopping))
++			schedule_work(&bq->adapter_out_work);
+ 	} else if (bq->vbus_type != BQ2589X_VBUS_NONE && (bq->vbus_type != BQ2589X_VBUS_OTG) && !(bq->status & BQ2589X_STATUS_PLUGIN)) {
+ 		dev_info(bq->dev, "%s:adapter plugged in\n", __func__);
+ 		bq->status |= BQ2589X_STATUS_PLUGIN;
+@@ -1347,7 +1466,8 @@
+ 		bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK,
+ 			BQ2589X_ENILIM_DISABLE << BQ2589X_ENILIM_SHIFT);
+ 		power_supply_changed(bq->usb_psy);
+-		schedule_work(&bq->adapter_in_work);
++		if (!READ_ONCE(bq->stopping))
++			schedule_work(&bq->adapter_in_work);
+ 	}
+ 
+ 	if ((status & BQ2589X_PG_STAT_MASK) && !(bq->status & BQ2589X_STATUS_PG))
+@@ -1394,69 +1514,75 @@
+ {
+ 	struct bq2589x *bq = data;
+ 
++	if (READ_ONCE(bq->stopping))
++		return IRQ_HANDLED;
++
+ 	dev_info(bq->dev, "%s: charger device bq25890 irq detected, revision:%d,bq->vbus_type %d\n",
+ 			__func__, bq->revision, bq->charge_type);
+ 	if (bq->usb_switch_flag && (bq->charge_type == POWER_SUPPLY_TYPE_UNKNOWN)) {
+ 		bq2589x_usb_switch(bq, true);
+ 		bq->usb_switch_flag = false;
+ 	}
+-	schedule_work(&bq->irq_work);
++	if (!READ_ONCE(bq->stopping))
++		schedule_work(&bq->irq_work);
+ 	return IRQ_HANDLED;
+ }
+ 
+-static int bq_iio_read_raw(struct iio_dev *indio_dev,
++static int bq_iio_read_raw_unlocked(struct iio_dev *indio_dev,
+ 		struct iio_chan_spec const *chan, int *val1,
+ 		int *val2, long mask)
+ {
+ 	struct bq2589x *bq = iio_priv(indio_dev);
+ 	int rc = 0;
++	int value = 0;
+ 	u8 state;
+-	*val1 = 0;
+ 
+ 	switch (chan->channel) {
+ 	case PSY_IIO_CHARGE_DONE:
+-		*val1 = bq2589x_is_charge_done(bq);
++		value = bq2589x_is_charge_done(bq);
+ 		break;
+ 	case PSY_IIO_MAIN_CHAGER_HZ:
+ 		rc = bq2589x_get_hiz_mode(bq, &state);
+ 		if(!rc)
+-			*val1 = (int)state;
++			value = (int)state;
+ 		break;
+ 	case PSY_IIO_MAIN_INPUT_CURRENT_SETTLED:
+-		*val1 = bq->cfg.input_current;
++		value = bq->cfg.input_current;
+ 		break;
+ 	case PSY_IIO_MAIN_INPUT_VOLTAGE_SETTLED:
+-		*val1 = bq->cfg.charge_voltage;
++		value = bq->cfg.charge_voltage;
+ 		break;
+ 	case PSY_IIO_MAIN_CHAGER_CURRENT:
+-		*val1 = bq2589x_adc_read_charge_current(bq);
++		value = bq2589x_adc_read_charge_current(bq);
+ 		break;
+ 	case PSY_IIO_CHARGING_ENABLED:
+-		*val1 = !!bq2589x_charge_status(bq);
++		value = bq2589x_charge_status(bq);
++		if (value >= 0)
++			value = !!value;
+ 		break;
+ 	case PSY_IIO_SC_BUS_VOLTAGE:
+-		*val1 = bq2589x_adc_read_vbus_volt(bq);
++		value = bq2589x_adc_read_vbus_volt(bq);
+ 		break;
+ 	case PSY_IIO_SC_BATTERY_VOLTAGE:
+-		*val1 = bq2589x_adc_read_battery_volt(bq);
++		value = bq2589x_adc_read_battery_volt(bq);
+ 		break;
+ 	case PSY_IIO_OTG_ENABLE:
+-		*val1 = bq->cfg.otg_status;
++		value = bq->cfg.otg_status;
+ 		break;
+ 	case PSY_IIO_MAIN_CHAGER_TERM:
+-		*val1 = bq->cfg.term_current;
++		value = bq->cfg.term_current;
+ 		break;
+ 	case PSY_IIO_BATTERY_VOLTAGE_TERM:
+-		*val1 = bq->cfg.battery_voltage_term;
++		value = bq->cfg.battery_voltage_term;
+ 		break;
+ 	case PSY_IIO_CHARGER_STATUS:
+-		*val1 = bq2589x_charge_status(bq);
++		value = bq2589x_charge_status(bq);
+ 		break;
+ 	case PSY_IIO_CHARGE_TYPE:
+-		*val1 = bq2589x_get_chg_type(bq);;
++		value = bq2589x_get_chg_type(bq);
+ 		break;
+ 	case PSY_IIO_ENABLE_CHAGER_TERM:
+-		*val1 = bq->cfg.enable_term;
++		value = bq->cfg.enable_term;
+ 		break;
+ 	default:
+ 		pr_debug("Unsupported QG IIO chan %d\n", chan->channel);
+@@ -1464,13 +1590,151 @@
+ 		break;
+ 	}
+ 
++	if (rc == 0 && value < 0)
++		rc = value;
+ 	if (rc < 0) {
+ 		pr_err_ratelimited("Couldn't read IIO channel %d, rc = %d\n",
+ 			chan->channel, rc);
+ 		return rc;
+ 	}
+ 
++	*val1 = value;
+ 	return IIO_VAL_INT;
++}
++
++static int bq_iio_write_raw_unlocked(struct iio_dev *indio_dev,
++		struct iio_chan_spec const *chan, int val1,
++		int val2, long mask)
++{
++	struct bq2589x *bq = iio_priv(indio_dev);
++	int rc = 0;
++	union power_supply_propval val = {0,};
++
++	switch (chan->channel) {
++	case PSY_IIO_MAIN_CHAGER_HZ:
++		if (val1 > 0) {
++			rc = bq2589x_enter_hiz_mode(bq);
++			if (!rc)
++				bq->hz_flag = false;
++		} else {
++			rc = bq2589x_exit_hiz_mode(bq);
++			if (rc < 0)
++				break;
++			bq->usb_switch_flag = false;
++			bq->hz_flag = val1 == 0 && bq->is_bq25890h;
++		}
++		break;
++	case PSY_IIO_MAIN_INPUT_CURRENT_SETTLED:
++		if (val1 >= 3100)
++			val1 = 3100;
++		rc = bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK,
++			BQ2589X_ENILIM_DISABLE << BQ2589X_ENILIM_SHIFT);
++		if (!rc)
++			rc = bq2589x_set_input_current_limit(bq, val1);
++		break;
++	case PSY_IIO_MAIN_INPUT_VOLTAGE_SETTLED:
++		rc = bq2589x_set_input_volt_limit(bq, val1);
++		break;
++	case PSY_IIO_MAIN_CHAGER_CURRENT:
++		if (val1 >= 3100)
++			val1 = 3100;
++		rc = bq2589x_set_charge_current(bq, val1);
++		if (rc < 0)
++			break;
++		bq->cfg.input_current = val1;
++		if (val1 == 100)
++			rc = bq2589x_set_chargevoltage(bq, 4608);
++		break;
++	case PSY_IIO_CHARGING_ENABLED:
++		rc = val1 ? bq2589x_enable_charger(bq) : bq2589x_disable_charger(bq);
++		break;
++	case PSY_IIO_OTG_ENABLE:
++		rc = gpio_direction_output(bq->otg_gpio, val1);
++		if (rc < 0)
++			break;
++		if (val1) {
++			bq2589x_usb_switch(bq, !val1);
++			rc = bq2589x_exit_hiz_mode(bq);
++			if (rc < 0)
++				break;
++			rc = bq2589x_disable_charger(bq);
++			if (rc < 0)
++				break;
++			rc = bq2589x_enable_otg(bq);
++			if (rc < 0)
++				break;
++			bq->cfg.otg_status = true;
++			if (!bq->wakeup_flag) {
++				__pm_stay_awake(bq->wt_ws);
++				bq->wakeup_flag = 1;
++			}
++			rc = bq2589x_set_otg_volt(bq, 5300);
++			if (rc < 0)
++				break;
++			if (bq->batt_psy) {
++				rc = power_supply_get_property(bq->batt_psy,
++					POWER_SUPPLY_PROP_CAPACITY, &val);
++				if (rc < 0)
++					break;
++			}
++			rc = bq2589x_set_otg_current(bq, val.intval > 5 ? 1800 : 1500);
++		} else {
++			rc = bq2589x_disable_otg(bq);
++			if (rc < 0)
++				break;
++			bq->cfg.otg_status = false;
++			if (bq->wakeup_flag) {
++				__pm_relax(bq->wt_ws);
++				bq->wakeup_flag = 0;
++			}
++			rc = bq2589x_enable_charger(bq);
++		}
++		break;
++	case PSY_IIO_MAIN_CHAGER_TERM:
++		if (bq->batt_psy) {
++			rc = power_supply_get_property(bq->batt_psy,
++				POWER_SUPPLY_PROP_TEMP, &val);
++			if (rc < 0)
++				break;
++		}
++		if (bq->is_bq25890h && val.intval >= 100)
++			val1 -= 64;
++		rc = bq2589x_set_term_current(bq, val1);
++		break;
++	case PSY_IIO_BATTERY_VOLTAGE_TERM:
++		rc = bq2589x_set_chargevoltage(bq, val1);
++		break;
++	case PSY_IIO_ENABLE_CHAGER_TERM:
++		rc = bq2589x_enable_term(bq, !!val1);
++		if (rc < 0)
++			break;
++		bq->cfg.enable_term = !!val1;
++		if (val1)
++			rc = bq2589x_restore_5v_vindpm(bq);
++		break;
++	default:
++		rc = -EINVAL;
++		break;
++	}
++
++	if (rc < 0)
++		pr_err_ratelimited("Couldn't write IIO channel %d, rc = %d\n",
++			chan->channel, rc);
++	return rc;
++}
++
++static int bq_iio_read_raw(struct iio_dev *indio_dev,
++		struct iio_chan_spec const *chan, int *val1,
++		int *val2, long mask)
++{
++	struct bq2589x *bq = iio_priv(indio_dev);
++	int ret;
++
++	mutex_lock(&bq->io_lock);
++	ret = bq->stopping ? -ESHUTDOWN :
++		bq_iio_read_raw_unlocked(indio_dev, chan, val1, val2, mask);
++	mutex_unlock(&bq->io_lock);
++	return ret;
+ }
+ 
+ static int bq_iio_write_raw(struct iio_dev *indio_dev,
+@@ -1478,105 +1742,13 @@
+ 		int val2, long mask)
+ {
+ 	struct bq2589x *bq = iio_priv(indio_dev);
+-	int rc = 0;
+-	union power_supply_propval val = {0,};
+-
+-	switch (chan->channel) {
+-	case PSY_IIO_MAIN_CHAGER_HZ:
+-		if(val1 > 0) {
+-			bq2589x_enter_hiz_mode(bq);
+-			bq->hz_flag = false;
+-		} else {
+-			bq2589x_exit_hiz_mode(bq);
+-			bq->usb_switch_flag = false;
+-			if(val1 == 0 && bq->is_bq25890h)
+-				bq->hz_flag = true;
+-			else
+-				bq->hz_flag = false;
+-		}
+-		break;
+-	case PSY_IIO_MAIN_INPUT_CURRENT_SETTLED:
+-		if(val1 >= 3100)
+-			val1 = 3100;
+-		bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK,
+-			BQ2589X_ENILIM_DISABLE << BQ2589X_ENILIM_SHIFT);
+-		bq2589x_set_input_current_limit(bq, val1);
+-		break;
+-	case PSY_IIO_MAIN_INPUT_VOLTAGE_SETTLED:
+-		bq2589x_set_input_volt_limit(bq, val1);
+-		break;
+-	case PSY_IIO_MAIN_CHAGER_CURRENT:
+-		if(val1 >= 3100)
+-			val1 = 3100;
+-		bq->cfg.input_current = val1;
+-		bq2589x_set_charge_current(bq, val1);
+-		if(val1 == 100)
+-			bq2589x_set_chargevoltage(bq, 4608);
+-		break;
+-	case PSY_IIO_CHARGING_ENABLED:
+-		if(val1)
+-			bq2589x_enable_charger(bq);
+-		else
+-			bq2589x_disable_charger(bq);
+-		break;
+-	case PSY_IIO_OTG_ENABLE:
+-		gpio_direction_output(g_bq->otg_gpio, val1);
+-		if(val1) {
+-			bq2589x_usb_switch(g_bq, !val1);
+-			bq->cfg.otg_status = true;
+-			bq2589x_exit_hiz_mode(bq);
+-			bq2589x_disable_charger(bq);
+-			bq2589x_enable_otg(bq);
+-			bq2589x_set_otg_volt(bq, 5300);
+-			if(bq->batt_psy)
+-				power_supply_get_property(bq->batt_psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+-			if(val.intval > 5)
+-				bq2589x_set_otg_current(bq, 1800);
+-			else
+-				bq2589x_set_otg_current(bq, 1500);
+-			if(!bq->wakeup_flag) {
+-				__pm_stay_awake(bq->wt_ws);
+-				bq->wakeup_flag = 1;
+-				pr_err("otg workup\n");
+-			}
+-		} else {
+-		//	bq2589x_usb_switch(g_bq, !val1);
+-			bq->cfg.otg_status = false;
+-			bq2589x_disable_otg(bq);
+-			bq2589x_enable_charger(bq);
+-			if(bq->wakeup_flag) {
+-				__pm_relax(bq->wt_ws);
+-				bq->wakeup_flag = 0;
+-				pr_err("wt otg relax\n");
+-			}
+-		}
+-		break;
+-	case PSY_IIO_MAIN_CHAGER_TERM:
+-		if(bq->batt_psy)
+-			power_supply_get_property(bq->batt_psy, POWER_SUPPLY_PROP_TEMP, &val);
+-		if (bq->is_bq25890h && val.intval >= 100) {
+-			val1 -= 64;
+-		}
+-		bq2589x_set_term_current(bq, val1);
+-		break;
+-	case PSY_IIO_BATTERY_VOLTAGE_TERM:
+-		bq2589x_set_chargevoltage(bq, val1);
+-		break;
+-	case PSY_IIO_ENABLE_CHAGER_TERM:
+-		bq->cfg.enable_term = val1;
+-		bq2589x_enable_term(bq, bq->cfg.enable_term);
+-		break;
+-	default:
+-		pr_debug("Unsupported BQ25890 IIO chan %d\n", chan->channel);
+-		rc = -EINVAL;
+-		break;
+-	}
+-
+-	if (rc < 0)
+-		pr_err_ratelimited("Couldn't write IIO channel %d, rc = %d\n",
+-			chan->channel, rc);
+-
+-	return rc;
++	int ret;
++
++	mutex_lock(&bq->io_lock);
++	ret = bq->stopping ? -ESHUTDOWN :
++		bq_iio_write_raw_unlocked(indio_dev, chan, val1, val2, mask);
++	mutex_unlock(&bq->io_lock);
++	return ret;
+ }
+ 
+ static int bq_iio_of_xlate(struct iio_dev *indio_dev,
+@@ -1659,11 +1831,12 @@
+ 	int ret;
+ 
+ 	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*bq));
+-	bq = iio_priv(indio_dev);
+-	if (!bq) {
++	if (!indio_dev) {
+ 		dev_err(&client->dev, "%s: out of memory\n", __func__);
+ 		return -ENOMEM;
+ 	}
++	bq = iio_priv(indio_dev);
++	mutex_init(&bq->io_lock);
+ 
+ 	bq->indio_dev = indio_dev;
+ 	bq->dev = &client->dev;
+@@ -1690,6 +1863,7 @@
+ 	ret = bq_init_iio_psy(bq);
+ 	if (ret < 0) {
+ 		pr_err("Failed to initialize BQ IIO PSY, rc=%d\n", ret);
++		return ret;
+ 	}
+ 
+ 	bq->wt_ws = wakeup_source_register(bq->dev, "bq25890_wakeup");
+@@ -1749,7 +1923,9 @@
+ 	enable_irq_wake(irqn);
+ 
+ 	bq2589x_usb_switch(bq, true);
+-	bq2589x_force_dpdm_done(bq);
++	ret = bq2589x_force_dpdm_done(bq);
++	if (ret < 0)
++		dev_warn(bq->dev, "initial DPDM detection failed: %d\n", ret);
+ 
+ 	return 0;
+ 
+@@ -1769,27 +1945,43 @@
+ static void bq2589x_charger_shutdown(struct i2c_client *client)
+ {
+ 	struct bq2589x *bq = i2c_get_clientdata(client);
+-
+-	bq2589x_disable_otg(bq);
+-	bq2589x_enable_charger(bq);
+-	bq2589x_exit_hiz_mode(bq);
+-	bq2589x_adc_start(bq, true);
+-	bq2589x_adc_stop(bq);
+-	msleep(2);
+-	dev_info(bq->dev, "%s: shutdown\n", __func__);
++	int ret;
++
++	/* Drain active IIO calls and reject subsequent calls before final writes. */
++	mutex_lock(&bq->io_lock);
++	WRITE_ONCE(bq->stopping, true);
++	mutex_unlock(&bq->io_lock);
++
++	/* Stop the producer before draining its work and the work it can enqueue. */
++	disable_irq(client->irq);
+ 	sysfs_remove_group(&bq->dev->kobj, &bq2589x_attr_group);
+ 	cancel_work_sync(&bq->irq_work);
+ 	cancel_work_sync(&bq->adapter_in_work);
+ 	cancel_work_sync(&bq->adapter_out_work);
++	cancel_delayed_work_sync(&bq->force_work);
++	cancel_delayed_work_sync(&bq->ico_work);
+ 	cancel_delayed_work_sync(&bq->monitor_work);
+-	cancel_delayed_work_sync(&bq->ico_work);
+-	cancel_delayed_work_sync(&bq->force_work);
+-
+-	if (bq->client->irq) {
+-		disable_irq(bq->client->irq);
+-		free_irq(bq->client->irq, bq);
+-		gpio_free(bq->irq_gpio);
+-	}
++
++	/* Preserve the established shutdown settings, after all writers stop. */
++	ret = bq2589x_disable_otg(bq);
++	if (ret < 0)
++		dev_err(bq->dev, "shutdown: disable OTG failed: %d\n", ret);
++	ret = bq2589x_enable_charger(bq);
++	if (ret < 0)
++		dev_err(bq->dev, "shutdown: enable charging failed: %d\n", ret);
++	ret = bq2589x_exit_hiz_mode(bq);
++	if (ret < 0)
++		dev_err(bq->dev, "shutdown: exit HiZ failed: %d\n", ret);
++	ret = bq2589x_adc_start(bq, true);
++	if (ret < 0)
++		dev_err(bq->dev, "shutdown: start ADC failed: %d\n", ret);
++	ret = bq2589x_adc_stop(bq);
++	if (ret < 0)
++		dev_err(bq->dev, "shutdown: stop ADC failed: %d\n", ret);
++	msleep(2);
++	dev_info(bq->dev, "%s: shutdown\n", __func__);
++	free_irq(client->irq, bq);
++	gpio_free(bq->irq_gpio);
+ 	g_bq = NULL;
+ }
+ 

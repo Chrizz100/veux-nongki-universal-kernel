@@ -1,0 +1,28 @@
+--- a/drivers/power/supply/qcom/wt_chg.c
++++ b/drivers/power/supply/qcom/wt_chg.c
+@@ -1801,6 +1801,7 @@
+ 		union power_supply_propval *val)
+ {
+ 	int rc = 0, type = 0;
++	int vbus_mv;
+ 	struct batt_chg *chg = power_supply_get_drvdata(psy);
+ 	val->intval = 0;
+ 
+@@ -1821,7 +1822,16 @@
+ 		val->intval = chg->charge_voltage_max;
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+-		rc = batt_get_iio_channel(chg, BMS, BATT_QG_VOLTAGE_NOW, &chg->batt_voltage_now);
++		/* The charge-pump ADC reports VBUS in mV; power_supply uses uV. */
++		rc = batt_get_iio_channel(chg, CP_MASTER,
++				CHARGE_PUMP_SC_BUS_VOLTAGE, &vbus_mv);
++		if (rc < 0)
++			break;
++		if (vbus_mv < 0 || vbus_mv > INT_MAX / 1000) {
++			rc = -ERANGE;
++			break;
++		}
++		val->intval = vbus_mv * 1000;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+ 		rc = batt_get_iio_channel(chg, BMS, BATT_QG_CURRENT_NOW, &chg->batt_current_now);

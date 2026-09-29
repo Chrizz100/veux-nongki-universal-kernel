@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "charger-diag04",
+  "kernel": "5.4.274",
+  "recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+  "reference_run": "36502307601",
+  "files": [
+    {
+      "source": "drivers/power/supply/qcom/bq2589x_charger.c",
+      "patch": "0001-bq2589x-lifecycle-and-errors.patch",
+      "before_sha256": "c050a311e687d7d3bf78950d70dd27e849489dbd2452c10be0ee5722bc7a50ab",
+      "after_sha256": "eb9fbc20d58c5e0a585e44943296726e798e847a939d42fbd8653a226188f260",
+      "patch_sha256": "1441bac7fc31edbfd4b2cf1483efb225b123f2d2144ac5a9c93266c17ebe3080",
+      "test": "test_bq2589x.py",
+      "test_sha256": "264a6e45766876979523e8ea56b73467f43237b43f12d073510f8b28487e464e"
+    },
+    {
+      "source": "drivers/power/supply/qcom/wt_chg.c",
+      "patch": "0002-wt-chg-usb-voltage.patch",
+      "before_sha256": "d85ee321bccd8970c70b775e5df23139a08c84918f5c058f1b1c6e80752460ff",
+      "after_sha256": "5e757ddd513075879fec6119323f316d95a0af5612f880d27212bf3db0cc7053",
+      "patch_sha256": "e1874781b26c63dc151a8f7fa15fb52df722b3f5630763d0bc81c56cdb36395d",
+      "test": "test_usb_voltage.py",
+      "test_sha256": "0f926aa11306311268af501e9a019e7407a662ef3e5e6d0cabc466292050402f"
+    }
+  ]
+}
