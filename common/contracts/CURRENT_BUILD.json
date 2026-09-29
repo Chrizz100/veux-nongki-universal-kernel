@@ -1,22 +1,22 @@
 {
-  "base_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+  "base_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
   "device_pass_inferred": false,
   "golden_preserved": true,
   "integration_directory": "common/update/current",
   "lineages": {
     "5.4.274": {
-      "artifact_name": "Kernel_5.4.274_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.274_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.274_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.274_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [
         {
           "host_tests": true,
-          "id": "charger-diag04",
-          "manifest_sha256": "54a5b9490ebaae1a7c261952f534c56c1c20fd3a7d9c89e70960be194050efa7",
-          "reference_run": "36502307601",
+          "id": "charger-diag05",
+          "manifest_sha256": "a8f927756bf8983ee982ea0a50e79d0c4fbdfbec2a23c203c638b6ab6eee41e4",
+          "reference_run": "36518512103",
           "source_sha256": {
-            "drivers/power/supply/qcom/bq2589x_charger.c": "eb9fbc20d58c5e0a585e44943296726e798e847a939d42fbd8653a226188f260",
+            "drivers/power/supply/qcom/bq2589x_charger.c": "0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241",
             "drivers/power/supply/qcom/wt_chg.c": "5e757ddd513075879fec6119323f316d95a0af5612f880d27212bf3db0cc7053"
           }
         }
@@ -30,17 +30,17 @@
       },
       "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
       "image_bytes": 29843968,
-      "image_sha256": "aedb119a67880cd6a1b83f67dc65a5c398040b5d0cb880a6d2d7de944073bc01",
-      "integration_overlay_sha256": "12364109a40a682438b0ef9bf86c5d871145421e7ec53ed946bfe825733ba84a",
+      "image_sha256": "2a12decbbb8654360e400cb7728e87c747d35c07664b58ce42cd9b4315d0dad6",
+      "integration_overlay_sha256": "9b699eaaee0f1286eed6fd8c0a0de54043a38e947bedb8df2a1b30bab28b7363",
       "kernel": "5.4.274",
       "kernelrelease": "5.4.274-qgki-g82179e362f33",
       "package": true,
-      "package_file": "Kernel_5.4.274_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "a4831ef7eec286d8557d04c1f0463e1290ee9a29c3007d175abaffb138343a65",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.274_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "30a3e9965cc8cd804b71897bf8ca8572c78a0a781aa3df3bf380e2cbd64a4e31",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "4afe8b05744581f1b0049af85b14834a389dbdd2805f4e91bfdb60d7e609e1ae",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "774a04798d03939f4633f18e954cca75708f4f09e228980f7ddb959483d25e55",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -52,15 +52,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -74,8 +74,8 @@
       "warnings": 2
     },
     "5.4.292": {
-      "artifact_name": "Kernel_5.4.292_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.292_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.292_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.292_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [],
@@ -89,17 +89,17 @@
       },
       "dtb_sha256": "51e74d728f6a344738d29a5afd7221c9caf7d81d135de27f9843fd379e278e25",
       "image_bytes": 33925632,
-      "image_sha256": "4f31122bbb070bf1ce224b3a6c431f6c9a6165b6760275e028ef875057f16d2b",
-      "integration_overlay_sha256": "9e5b2fe144fb5bcf46b0779d762bee4c71dd0b68383b013b9ea0d6f34706495c",
+      "image_sha256": "f700a16bdb14eace8db2ef14f29911b35ad741c1dab96bd7387aa4173e5dab47",
+      "integration_overlay_sha256": "105117cab6f65b86a95394eef94dec7f521f0d1a6a55cab410b3ee484de848bc",
       "kernel": "5.4.292",
       "kernelrelease": "5.4.292-veid-veux",
       "package": true,
-      "package_file": "Kernel_5.4.292_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "efc9a7a1a0523e134f88997415a15625d96622dbddb8242690dba14add966495",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.292_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "168647d01ff369918befbf711a32cb602f5f46230885cf80e3817c349046a8c9",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "4aba8cd886430f12d4bc9c4173ac69b5ed5497f1f37d9286d014d73a0da41660",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "eeba78f229b3f99946bfaa06a3473ed29c343289bd2bde4badceaea08d30a062",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -111,15 +111,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -133,8 +133,8 @@
       "warnings": 9
     },
     "5.4.293": {
-      "artifact_name": "Kernel_5.4.293_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.293_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.293_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.293_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [],
@@ -148,17 +148,17 @@
       },
       "dtb_sha256": "51e74d728f6a344738d29a5afd7221c9caf7d81d135de27f9843fd379e278e25",
       "image_bytes": 33925632,
-      "image_sha256": "6ced7286429e9d303e756021470909dff958b310db6a817216efbdf20e62ccb8",
-      "integration_overlay_sha256": "8152038b51d654f8e796bb519dbe3237c8803e8d698c2596729852288f58e933",
+      "image_sha256": "ba2d1f892381e2ec2971e259df03e72a851cb9e5c66b7413ca06f7c16dab6e1c",
+      "integration_overlay_sha256": "24addeae371e5df480f63a2ca8986c0d6bc7c4e22027cfccc963f3cb4569e177",
       "kernel": "5.4.293",
       "kernelrelease": "5.4.293-veid-veux",
       "package": true,
-      "package_file": "Kernel_5.4.293_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "164f15bd93207bbe1531f7ef75d0aeae7123f4b3e1715225d768b780ab5f853a",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.293_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "e63a4f666f5b7ebf7eea0e2b8a7c2a2499a7b4abc050303986b193c2f81bf102",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "42d53d62a0d77e7cc2cf59fa84b2b51f2dc681feea83c0706ef21123a7553e4b",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "5fe5e405c36dab86509db39fb04f722bb88f9fc94a47557cdd184cb759e5cf0e",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -170,15 +170,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -192,8 +192,8 @@
       "warnings": 9
     },
     "5.4.300": {
-      "artifact_name": "Kernel_5.4.300_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.300_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.300_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.300_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [],
@@ -206,17 +206,17 @@
       },
       "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
       "image_bytes": 29911552,
-      "image_sha256": "20f41d461f86b1094dd04a6595c8a85000186cb461f84a8f0baed9b4d2727bd3",
-      "integration_overlay_sha256": "138ab7b2c0b1cb838301f949ab2a10a9c3266df55d8726c129cae9090a8d3f26",
+      "image_sha256": "dc459ea14b6f5cb34833c239026d8c43bffba1466ff4c52f1a7993f215627b8c",
+      "integration_overlay_sha256": "65676dea70101c1b0f5793e9104d12f5007ff8c8bdc31e9aa30f194efda8606b",
       "kernel": "5.4.300",
       "kernelrelease": "5.4.300-qgki-g82179e362f33",
       "package": true,
-      "package_file": "Kernel_5.4.300_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "41d10cea7eb1078bbb0afb2bad6f36b563ac43ff9535b26f4015c3db058d32ea",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.300_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "1aca028eb2a6cb8e70d87f68203a4bf6d30a20d1e3ccf35cec54effbb2258d7c",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "0bdbd4be51c6060e69e57887a5ea4576f85afbb1eb9294e098d9c5e4971c8093",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "59194678558375b96ed9d0dc1367d1ce03363d5e364e80fe976209901f6db48b",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -228,15 +228,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -250,8 +250,8 @@
       "warnings": 3
     },
     "5.4.301": {
-      "artifact_name": "Kernel_5.4.301_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.301_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.301_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.301_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [],
@@ -264,17 +264,17 @@
       },
       "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
       "image_bytes": 29911552,
-      "image_sha256": "3c17220ab354d04934a354b9d4395a36dd20524fa527606cc82e931ae8a14af9",
-      "integration_overlay_sha256": "ea271a4d83027e853784e2c7c5df15278cb222c4a2b77e3b70425cf756fc18c8",
+      "image_sha256": "4a2793decd6c0c1308c05216e211f070a8a387f40e5461f1ffb36ca60071a3e9",
+      "integration_overlay_sha256": "2b022458576301b8995bb40327bf1a3ffd6e04a14f5e5eefae2baeb901bd7fa2",
       "kernel": "5.4.301",
       "kernelrelease": "5.4.301-qgki-g82179e362f33",
       "package": true,
-      "package_file": "Kernel_5.4.301_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "d0f246bbed0101759e6df67a0491812e8fa459d5efb5531f27451d9e6e6e4867",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.301_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "fe62c51769881b024568505d1cd3c70aa21cc5f725aae545ea89bc17ff2e056f",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "1ab9d1c6e8956226c3e3db0831f829146e5ab0605a22045af4939fe15e0b1810",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "2c88558bf5413e3b7b1926095e20f4fb724b8f5812eb703116e1edb3a0a0cdcb",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -286,15 +286,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -308,8 +308,8 @@
       "warnings": 4
     },
     "5.4.302": {
-      "artifact_name": "Kernel_5.4.302_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20",
-      "boot_file": "Kernel_5.4.302_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_boot.img",
+      "artifact_name": "Kernel_5.4.302_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20",
+      "boot_file": "Kernel_5.4.302_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_boot.img",
       "compile": true,
       "device": false,
       "device_fixes": [],
@@ -322,17 +322,17 @@
       },
       "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
       "image_bytes": 29911552,
-      "image_sha256": "beef9153a5bf9087b71b35c8e2937de7cbb328bf328aa3ba26cebd15c2f10255",
-      "integration_overlay_sha256": "6b9a9054d8098c35c23ebe379fda3d3dc3d2d4c52c60a3cfeec23fdd3ac93a03",
+      "image_sha256": "1e2a0562a358a052beb314787a9424b7c56e05acba369cb3303d2fed1bf2fbb2",
+      "integration_overlay_sha256": "1b36aaaa917d5da54463049914188bcdf0dcca260e941b61eef20b01b12fda75",
       "kernel": "5.4.302",
       "kernelrelease": "5.4.302-qgki-g82179e362f33",
       "package": true,
-      "package_file": "Kernel_5.4.302_ReSukiSU_35184_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "41f80d5571c01746efdc1cd7797af6610411d30f0a433f7d3aa1e11becca5961",
-      "repository_sha": "172ad4e98532837aac2b8148a1c2bcad31990536",
+      "package_file": "Kernel_5.4.302_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+      "package_sha256": "cca9d8188fde899d45422bdf852dfc8020836b9c81e9cf569f06bac212b61ed1",
+      "repository_sha": "d6eae9f630db7aebf3de2cda2ed4a61827db0877",
       "static_boot": true,
-      "static_boot_sha256": "70f18ffcc071917af0e8ff2024ac6c2c8162fbae282c1798a4c39aef1849b300",
-      "target_manifest_sha256": "ac59393f3eb099bd0637dc4d35d04e85ad83935f7007c85227ebfff9f8ef3faf",
+      "static_boot_sha256": "98f373c611df6e2a8f2b496c276a41c23d3404489c0c29fdbfcfa772d21a4e2f",
+      "target_manifest_sha256": "9ab0ca9253f510b07778be64e97767b6a16eac99e5ad8a6b4a4f76e93902b7d2",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -344,15 +344,15 @@
           "version_kind": "kernel-wire-version"
         },
         "resukisu": {
-          "ahead": 14,
+          "ahead": 17,
           "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-          "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-          "local_version": 4484,
+          "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+          "local_version": 4487,
           "ref": "refs/heads/main",
           "tag": "v4.2.0-rc3",
           "uapi": 4,
           "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-          "version": "35184"
+          "version": "35187"
         },
         "susfs": {
           "ahead": 5,
@@ -367,7 +367,7 @@
     }
   },
   "repository_mutation": true,
-  "run_id": "36530597765",
+  "run_id": "36593645230",
   "source_directory": "third_party/current",
   "source_sha256": {
     "nomount/LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -384,7 +384,7 @@
     "resukisu/kernel/.vscode/c_cpp_properties.json": "6804923b4b778af108130ad69acc0c698bc4a35997d90e5287536053211cf901",
     "resukisu/kernel/.vscode/generate_compdb.py": "c5e9abcdbc21ad753285021fef87f46964e75d92957665faac3948cb1a2199e7",
     "resukisu/kernel/.vscode/tasks.json": "d6bd34770ac32d1d74b308404eff2690f3296abf81b79ce74a8841f8754656a3",
-    "resukisu/kernel/Kbuild": "632200ea8dd8437c0a76d6a35b9a4c9fc9f989f2a4747182ff26e22846aff82b",
+    "resukisu/kernel/Kbuild": "d2165d9e9b486e3417c87493892ccb9d6d5715730cc2d3d4cb74642eebd8d74d",
     "resukisu/kernel/Kconfig": "858edd0d1c802f2f63c5ad5f746005681eca693c3c670cb9404f90e160c5f0fa",
     "resukisu/kernel/LICENSE": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505",
     "resukisu/kernel/Makefile": "d21033a0fb8b3324f5d0563361dcb3a5d75dbc7ac916a88dd8e21c322e24f7e4",
@@ -512,15 +512,15 @@
       "version_kind": "kernel-wire-version"
     },
     "resukisu": {
-      "ahead": 14,
+      "ahead": 17,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-      "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-      "local_version": 4484,
+      "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+      "local_version": 4487,
       "ref": "refs/heads/main",
       "tag": "v4.2.0-rc3",
       "uapi": 4,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35184"
+      "version": "35187"
     },
     "susfs": {
       "ahead": 5,

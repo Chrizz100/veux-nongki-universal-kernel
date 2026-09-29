@@ -1,11 +1,11 @@
 {
-  "ahead": 14,
+  "ahead": 17,
   "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-  "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-  "local_version": 4484,
+  "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+  "local_version": 4487,
   "ref": "refs/heads/main",
   "tag": "v4.2.0-rc3",
   "uapi": 4,
   "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-  "version": "35184"
+  "version": "35187"
 }

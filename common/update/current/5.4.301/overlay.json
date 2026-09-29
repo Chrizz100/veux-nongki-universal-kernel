@@ -3,7 +3,7 @@
     "KernelSU/kernel/Kbuild": {
       "after": {
         "mode": 420,
-        "sha256": "632200ea8dd8437c0a76d6a35b9a4c9fc9f989f2a4747182ff26e22846aff82b"
+        "sha256": "d2165d9e9b486e3417c87493892ccb9d6d5715730cc2d3d4cb74642eebd8d74d"
       },
       "before": {
         "mode": 420,
@@ -460,15 +460,15 @@
       "version_kind": "kernel-wire-version"
     },
     "resukisu": {
-      "ahead": 14,
+      "ahead": 17,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-      "commit": "fa8311f632a215b5381ec644627c6198d1e8a13e",
-      "local_version": 4484,
+      "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+      "local_version": 4487,
       "ref": "refs/heads/main",
       "tag": "v4.2.0-rc3",
       "uapi": 4,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35184"
+      "version": "35187"
     },
     "susfs": {
       "ahead": 5,
