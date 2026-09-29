@@ -40,6 +40,7 @@ jobs:
         set -euo pipefail
         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_release.py
+        "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_device_fixes.py
     - name: Resolve and authenticate upstreams once
       shell: bash
       run: |
@@ -50,7 +51,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.274" --public "$RUNNER_TEMP/veux-public/5.4.274" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.274" --public "$RUNNER_TEMP/veux-public/5.4.274" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.274
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -64,7 +65,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.292 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.292" --public "$RUNNER_TEMP/veux-public/5.4.292" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.292 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.292" --public "$RUNNER_TEMP/veux-public/5.4.292" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.292
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -78,7 +79,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.293 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.293" --public "$RUNNER_TEMP/veux-public/5.4.293" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.293 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.293" --public "$RUNNER_TEMP/veux-public/5.4.293" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.293
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -92,7 +93,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.300 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.300" --public "$RUNNER_TEMP/veux-public/5.4.300" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.300 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.300" --public "$RUNNER_TEMP/veux-public/5.4.300" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.300
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -106,7 +107,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.301 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.301" --public "$RUNNER_TEMP/veux-public/5.4.301" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.301 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.301" --public "$RUNNER_TEMP/veux-public/5.4.301" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.301
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -120,7 +121,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py worker --kernel 5.4.302 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.302" --public "$RUNNER_TEMP/veux-public/5.4.302" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker --kernel 5.4.302 --bundle "$RUNNER_TEMP/veux-targets" --work "$RUNNER_TEMP/veux-builds/5.4.302" --public "$RUNNER_TEMP/veux-public/5.4.302" --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
     - name: Publish 5.4.302
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -146,7 +147,7 @@ jobs:
         export GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
         export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
-        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release.py promote --bundle "$RUNNER_TEMP/veux-targets" --artifacts "$RUNNER_TEMP/veux-public" --overlays "$RUNNER_TEMP/veux-overlays" --output "$RUNNER_TEMP/veux-promotion"
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py promote --bundle "$RUNNER_TEMP/veux-targets" --artifacts "$RUNNER_TEMP/veux-public" --overlays "$RUNNER_TEMP/veux-overlays" --output "$RUNNER_TEMP/veux-promotion"
     - name: Publish failure diagnostics
       if: failure()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

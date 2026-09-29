@@ -1,0 +1,27 @@
+name: VEUX device fix integration checks
+on:
+  pull_request:
+    paths:
+      - common/device-fixes/**
+      - common/scripts/**
+      - .github/workflows/veux-all-in-one-updater-v4.yml
+      - .github/workflows/veux-device-fixes-check.yml
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Check release, diagnostic and device-fix contracts
+        run: |
+          "$RUNNER_TEMP/veux-python/bin/python" -m unittest discover -s common/scripts -p 'test_veux*.py'
