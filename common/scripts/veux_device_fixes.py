@@ -8,7 +8,19 @@ import tempfile
 import veux_update_engine as e
 
 
-PATCHSETS = {'5.4.274': 'common/device-fixes/5.4.274/charger-diag04'}
+PATCHSETS = {'5.4.274': 'common/device-fixes/5.4.274/charger-diag05'}
+
+
+def authenticate_payload(folder, name, digest):
+    e.require(name not in ('', '.', '..') and Path(name).name == name,
+              'invalid device payload path')
+    path = folder / name
+    e.require(path.is_file() and not path.is_symlink(), 'device payload must be a regular file')
+    e.require(e.digest(path) == digest, 'device payload drift: ' + name)
+
+
+def host_tests(row):
+    return [row] + row.get('extra_tests', [])
 
 
 def load(label):
@@ -26,10 +38,11 @@ def load(label):
                   'invalid device source path')
         e.require(name not in names, 'duplicate device source path')
         names.add(name)
-        for key in ('patch', 'test'):
-            e.require(Path(row[key]).name == row[key], 'invalid device payload path')
-            e.require(e.digest(folder / row[key]) == row[key + '_sha256'],
-                      'device payload drift: ' + row[key])
+        authenticate_payload(folder, row['patch'], row['patch_sha256'])
+        for test in host_tests(row):
+            authenticate_payload(folder, test['test'], test['test_sha256'])
+            for asset in test.get('assets', []):
+                authenticate_payload(folder, asset['file'], asset['sha256'])
     e.require(names, 'empty device patchset')
     proof = {'id': data['id'], 'manifest_sha256': e.digest(manifest),
              'reference_run': data['reference_run'],
@@ -68,8 +81,9 @@ def apply(src, label, work):
         header = 'drivers/power/supply/qcom/bq2589x_reg.h'
         shutil.copy2(e.inside(src / header, src), stage / header)
         for row in data['files']:
-            e.run([sys.executable, folder / row['test'], stage / row['source']],
-                  log=work / (row['test'] + '.log'))
+            for test in host_tests(row):
+                e.run([sys.executable, folder / test['test'], stage / row['source']],
+                      log=work / (test['test'] + '.log'))
         for row in data['files']:
             shutil.copy2(stage / row['source'], src / row['source'])
     e.write_json(work / 'DEVICE-FIXES.json', [proof])

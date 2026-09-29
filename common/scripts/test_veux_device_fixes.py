@@ -45,13 +45,65 @@ class DeviceTests(unittest.TestCase):
             recipe_blob=e.config()['lineages']['5.4.274']['blob'], reference_run='fixture', files=rows))
         return repo, src, work, folder, rows
 
-    def test_real_manifest_preserves_exact_diag04_hashes(self):
+    def test_real_manifest_preserves_exact_diag05_hashes_and_all_host_tests(self):
         proof = f.expected('5.4.274')[0]
-        self.assertEqual(proof['reference_run'], '36502307601')
+        self.assertEqual(proof['id'], 'charger-diag05')
+        self.assertEqual(proof['reference_run'], '36518512103')
         self.assertEqual(proof['source_sha256']['drivers/power/supply/qcom/bq2589x_charger.c'],
-                         'eb9fbc20d58c5e0a585e44943296726e798e847a939d42fbd8653a226188f260')
+                         '0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241')
         self.assertEqual(proof['source_sha256']['drivers/power/supply/qcom/wt_chg.c'],
                          '5e757ddd513075879fec6119323f316d95a0af5612f880d27212bf3db0cc7053')
+        _, data, _ = f.load('5.4.274')
+        tests = {t['test']: t for row in data['files'] for t in f.host_tests(row)}
+        self.assertEqual(set(tests), {'test_bq2589x.py', 'test_usb_voltage.py', 'test_i2c_callers.py'})
+        self.assertEqual(tests['test_i2c_callers.py']['test_sha256'],
+                         '400ac52e581c9f87ce33c474cccc2b38ad61b1c1a98e3e0dc7254c73140867d9')
+        self.assertEqual(tests['test_i2c_callers.py']['assets'], [{
+            'file': '0003-bq2589x-check-init-and-adapter-errors.patch',
+            'sha256': '3575dc10c0d96ead626fdd1e555db16f402dadbff189f926569dd7e90cd705b2'}])
+
+    def test_extra_tests_and_assets_are_required_before_driver_mutation(self):
+        for mode in ('success', 'test_drift', 'asset_drift', 'host_failure',
+                     'missing_asset', 'asset_path', 'asset_symlink'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                repo, src, work, folder, rows = self.fixture(Path(tmp))
+                asset = folder / 'reference.patch'
+                asset.write_text('reference\n')
+                test = folder / 'extra.py'
+                test.write_text('from pathlib import Path\nimport sys\n'
+                    'assert Path(sys.argv[1]).read_text() == "fixed\\n"\n'
+                    'assert Path(__file__).with_name("reference.patch").read_text() == "reference\\n"\n'
+                    'print("EXTRA_TEST=PASS")\n')
+                extra = dict(test=test.name, test_sha256=e.digest(test),
+                    assets=[dict(file=asset.name, sha256=e.digest(asset))])
+                if mode == 'test_drift':
+                    test.write_text('print("tampered")\n')
+                elif mode == 'asset_drift':
+                    asset.write_text('tampered\n')
+                elif mode == 'host_failure':
+                    test.write_text('raise SystemExit(1)\n')
+                    extra['test_sha256'] = e.digest(test)
+                elif mode == 'missing_asset':
+                    asset.unlink()
+                elif mode == 'asset_path':
+                    extra['assets'][0]['file'] = '../reference.patch'
+                elif mode == 'asset_symlink':
+                    asset.rename(asset.with_suffix('.backup'))
+                    asset.symlink_to(asset.with_suffix('.backup').name)
+                manifest = json.loads((folder / 'manifest.json').read_text())
+                manifest['files'][1]['extra_tests'] = [extra]
+                e.write_json(folder / 'manifest.json', manifest)
+                before = [e.digest(src / row['source']) for row in rows]
+                with mock.patch.object(e, 'REPO', repo):
+                    if mode == 'success':
+                        proof = f.apply(src, '5.4.274', work)
+                        f.verify_source(src, '5.4.274', proof)
+                        self.assertIn('EXTRA_TEST=PASS', (work / 'extra.py.log').read_text())
+                    else:
+                        with self.assertRaises((e.Blocked, subprocess.SubprocessError)):
+                            f.apply(src, '5.4.274', work)
+                        self.assertEqual([e.digest(src / row['source']) for row in rows], before)
+                        self.assertFalse((work / 'DEVICE-FIXES.json').exists())
 
     def test_apply_and_repeat_accept_only_exact_postimages(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +221,12 @@ class DeviceTests(unittest.TestCase):
             root = Path(tmp)
             e.write_json(root / 'bundle/targets.json', {'lineages': ['5.4.274']})
             args = argparse.Namespace(bundle=root/'bundle', artifacts=root/'artifacts')
-            for proof in (None, [], [{'id': 'old'}], f.expected('5.4.274')):
+            old_manifest = e.REPO / 'common/device-fixes/5.4.274/charger-diag04/manifest.json'
+            old_data = json.loads(old_manifest.read_text())
+            old_proof = [dict(id=old_data['id'], manifest_sha256=e.digest(old_manifest),
+                reference_run=old_data['reference_run'], host_tests=True,
+                source_sha256={row['source']: row['after_sha256'] for row in old_data['files']})]
+            for proof in (None, [], old_proof, f.expected('5.4.274')):
                 e.write_json(args.artifacts / '5.4.274/RESULT.json', {'device_fixes': proof})
                 with mock.patch.object(r, 'promote') as promote:
                     if proof == f.expected('5.4.274'):
