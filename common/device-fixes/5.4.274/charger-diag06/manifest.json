@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "id": "charger-diag06",
+  "kernel": "5.4.274",
+  "recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+  "reference_run": "36615353847",
+  "files": [
+    {
+      "source": "drivers/power/supply/qcom/bq2589x_charger.c",
+      "patch": "0001-bq2589x-lifecycle-and-caller-errors.patch",
+      "before_sha256": "c050a311e687d7d3bf78950d70dd27e849489dbd2452c10be0ee5722bc7a50ab",
+      "after_sha256": "0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241",
+      "patch_sha256": "4d8a5e752a83a923f686304b76c326951422ccbcfa69ca25d9de7933bec6d258",
+      "test": "test_bq2589x.py",
+      "test_sha256": "264a6e45766876979523e8ea56b73467f43237b43f12d073510f8b28487e464e",
+      "extra_tests": [
+        {
+          "test": "test_i2c_callers.py",
+          "test_sha256": "400ac52e581c9f87ce33c474cccc2b38ad61b1c1a98e3e0dc7254c73140867d9",
+          "assets": [
+            {
+              "file": "0003-bq2589x-check-init-and-adapter-errors.patch",
+              "sha256": "3575dc10c0d96ead626fdd1e555db16f402dadbff189f926569dd7e90cd705b2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "drivers/power/supply/qcom/wt_chg.c",
+      "patch": "0002-wt-chg-usb-voltage-and-type.patch",
+      "before_sha256": "d85ee321bccd8970c70b775e5df23139a08c84918f5c058f1b1c6e80752460ff",
+      "after_sha256": "e75f5c793d74311da59343eb46410563750b642e63fd70e1e1f2cabaad3d3e08",
+      "patch_sha256": "8db71b22e791425b12ed769812430943e5d7c4d58b82c0de4f308a3d079645dd",
+      "test": "test_usb_voltage.py",
+      "test_sha256": "ff4a0022ea13a2d46455fe2360ab16d28064b8e7710de1df5b93771550e3756e",
+      "extra_tests": [
+        {
+          "test": "test_usb_type.py",
+          "test_sha256": "21de1bf28aaa03b79106a0f9517aded52b336b3d2b5f65ec2b4f6a48190e3459",
+          "assets": [
+            {
+              "file": "usb_type_reference.h",
+              "sha256": "fe8b62b44b61bdeb0e618d3a53346a0c9bb77d36e30d08dc8c9dc22cf9f92146"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "baseline_diag05_run": "36518512103"
+}

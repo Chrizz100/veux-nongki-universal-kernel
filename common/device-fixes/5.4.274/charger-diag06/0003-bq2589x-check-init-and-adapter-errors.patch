@@ -1,0 +1,190 @@
+--- a/drivers/power/supply/qcom/bq2589x_charger.c
++++ b/drivers/power/supply/qcom/bq2589x_charger.c
+@@ -902,17 +902,27 @@
+ 	int ret;
+ 
+ 	/*common initialization*/
+-	bq2589x_disable_watchdog_timer(bq);
+-
+-	bq2589x_enable_auto_dpdm(bq, bq->cfg.enable_auto_dpdm);
+-	bq2589x_enable_term(bq, bq->cfg.enable_term);
+-	bq2589x_enable_ico(bq, bq->cfg.enable_ico);
++	ret = bq2589x_disable_watchdog_timer(bq);
++	if (ret < 0)
++		return ret;
++
++	ret = bq2589x_enable_auto_dpdm(bq, bq->cfg.enable_auto_dpdm);
++	if (ret < 0)
++		return ret;
++	ret = bq2589x_enable_term(bq, bq->cfg.enable_term);
++	if (ret < 0)
++		return ret;
++	ret = bq2589x_enable_ico(bq, bq->cfg.enable_ico);
++	if (ret < 0)
++		return ret;
+ 	/*force use absolute vindpm if auto_dpdm not enabled*/
+ 	if (!bq->cfg.enable_auto_dpdm)
+ 		bq->cfg.use_absolute_vindpm = true;
+ 
+ 	bq->cfg.use_absolute_vindpm = false;
+-	bq2589x_use_absolute_vindpm(bq, bq->cfg.use_absolute_vindpm);
++	ret = bq2589x_use_absolute_vindpm(bq, bq->cfg.use_absolute_vindpm);
++	if (ret < 0)
++		return ret;
+ 
+ 	if (!bq->is_bq25890h) {
+ 		ret = bq2589x_set_vindpm_offset(bq, 600);
+@@ -960,14 +970,19 @@
+ 
+ 	bq->curr_flag = 0;
+ 	//bq2589x_adc_start(bq, false);
+-	bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK,
++	ret = bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK,
+ 		BQ2589X_ENILIM_DISABLE << BQ2589X_ENILIM_SHIFT);
+-	bq2589x_update_bits(bq, BQ2589X_REG_02, 0x8, 1 << 3);
++	if (ret < 0)
++		return ret;
++	ret = bq2589x_update_bits(bq, BQ2589X_REG_02, 0x8, 1 << 3);
++	if (ret < 0)
++		return ret;
+ 	if (bq->is_bq25890h) {
+-		bq2589x_update_bits(bq, BQ2589X_REG_01, 0x2, 0 << 1);
+-		bq2589x_update_bits(bq, BQ2589X_REG_02, 0x4, 0 << 2);
+-	} else
+-		bq2589x_update_bits(bq, BQ2589X_REG_02, 0x4, 0 << 2);
++		ret = bq2589x_update_bits(bq, BQ2589X_REG_01, 0x2, 0 << 1);
++		if (ret < 0)
++			return ret;
++	}
++	ret = bq2589x_update_bits(bq, BQ2589X_REG_02, 0x4, 0 << 2);
+ 
+ 	//bq2589x_update_bits(bq, BQ2589X_REG_08, BQ2589X_BAT_COMP_MASK, 2 << 5);
+ 	//bq2589x_update_bits(bq, BQ2589X_REG_08, BQ2589X_VCLAMP_MASK, 1 << 2);
+@@ -1162,73 +1177,80 @@
+ static void bq2589x_adapter_in_workfunc(struct work_struct *work)
+ {
+ 	struct bq2589x *bq = container_of(work, struct bq2589x, adapter_in_work);
+-	int ret;
++	int ret, input_current;
+ 	union power_supply_propval val = {0,};
+ 
+ 	if (READ_ONCE(bq->stopping))
+ 		return;
+ 
+-	bq2589x_adc_start(bq, false);
++	ret = bq2589x_adc_start(bq, false);
++	if (ret < 0)
++		goto out;
+ 	if (bq->vbus_type == BQ2589X_VBUS_MAXC) {
+-		bq2589x_set_input_volt_limit(bq, 8550);
+-		dev_info(bq->dev, "%s:HVDCP or Maxcharge adapter plugged in\n", __func__);
++		ret = bq2589x_set_input_volt_limit(bq, 8550);
++		if (ret < 0)
++			goto out;
+ 		ret = bq2589x_set_input_current_limit(bq, 2000);
+-		if (ret < 0) 
+-			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+-		else
+-			dev_info(bq->dev, "%s: Set inputcurrent to %dmA successfully\n",__func__,bq->cfg.charge_current);
++		if (ret < 0)
++			goto out;
++		dev_info(bq->dev, "%s:HVDCP input current set to 2000mA\n", __func__);
+ 		if (!READ_ONCE(bq->stopping))
+ 			schedule_delayed_work(&bq->ico_work, msecs_to_jiffies(500));
+-	} else if (bq->vbus_type == BQ2589X_VBUS_USB_DCP) {/* DCP, let's check if it is PE adapter*/
++	} else if (bq->vbus_type == BQ2589X_VBUS_USB_DCP) {
+ 		ret = bq2589x_set_input_current_limit(bq, 2000);
+-		dev_info(bq->dev, "%s:usb dcp adapter plugged in\n", __func__);
++		if (ret < 0)
++			goto out;
+ 		ret = bq2589x_set_charge_current(bq, 1000);
+-		if (ret < 0) 
+-			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+-		else
+-			dev_info(bq->dev, "%s: Set input current to %dmA successfully\n",__func__,bq->cfg.charge_current);
++		if (ret < 0)
++			goto out;
++		dev_info(bq->dev, "%s:DCP input 2000mA, charge current 1000mA\n", __func__);
+ 	} else if (bq->vbus_type == BQ2589X_VBUS_USB_SDP) {
+-		dev_info(bq->dev, "%s:host SDP plugged in\n", __func__);
+ 		ret = bq2589x_set_input_current_limit(bq, 512);
++		if (ret < 0)
++			goto out;
+ 		bq2589x_usb_switch(bq, false);
+-		bq2589x_set_chargevoltage(bq, 4450);
++		ret = bq2589x_set_chargevoltage(bq, 4450);
++		if (ret < 0)
++			goto out;
+ 	} else if (bq->vbus_type == BQ2589X_VBUS_USB_CDP) {
+-		dev_info(bq->dev, "%s:host CDP plugged in\n", __func__);
+-		bq2589x_set_chargevoltage(bq, 4450);
+-		if(bq->batt_psy)
+-			power_supply_get_property(bq->batt_psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+-		if(val.intval == 100)
+-			ret = bq2589x_set_input_current_limit(bq, 500);
+-		else
+-			ret = bq2589x_set_input_current_limit(bq, 1500);
++		ret = bq2589x_set_chargevoltage(bq, 4450);
+ 		if (ret < 0)
+-			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+-		else
+-			dev_info(bq->dev, "%s: Set input current to %dmA successfully\n",__func__,1500);
++			goto out;
++		if (bq->batt_psy) {
++			ret = power_supply_get_property(bq->batt_psy, POWER_SUPPLY_PROP_CAPACITY, &val);
++			if (ret < 0)
++				goto out;
++		}
++		input_current = val.intval == 100 ? 500 : 1500;
++		ret = bq2589x_set_input_current_limit(bq, input_current);
++		if (ret < 0)
++			goto out;
++		dev_info(bq->dev, "%s:CDP input current set to %dmA\n", __func__, input_current);
+ 		bq2589x_usb_switch(bq, false);
+ 	} else if (bq->vbus_type == BQ2589X_VBUS_UNKNOWN) {
+-		dev_info(bq->dev, "%s:host FLOAT plugged in\n", __func__);
+ 		ret = bq2589x_set_input_current_limit(bq, 1000);
+ 		if (ret < 0)
+-			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+-		else
+-			dev_info(bq->dev, "%s: Set input current to %dmA successfully\n",__func__,1500);
++			goto out;
++		dev_info(bq->dev, "%s:FLOAT input current set to 1000mA\n", __func__);
+ 		bq2589x_usb_switch(bq, false);
+ 	} else {
+-		dev_info(bq->dev, "%s:other adapter plugged in,vbus_type is %d\n", __func__, bq->vbus_type);
+ 		ret = bq2589x_set_input_current_limit(bq, 500);
+-		if (ret < 0) 
+-			dev_err(bq->dev, "%s:Failed to set charge current:%d\n", __func__, ret);
+-		else
+-			dev_info(bq->dev, "%s: Set input current to %dmA successfully\n",__func__,1000);
++		if (ret < 0)
++			goto out;
++		dev_info(bq->dev, "%s:other adapter input current set to 500mA\n", __func__);
+ 		bq2589x_usb_switch(bq, false);
+ 		if (!READ_ONCE(bq->stopping))
+ 			schedule_delayed_work(&bq->ico_work, 0);
+ 	}
+ 
+-	if(bq->vbus_type == BQ2589X_VBUS_USB_SDP)
++out:
++	if (ret < 0)
++		dev_err(bq->dev, "%s:adapter configuration failed, type=%d: %d\n",
++			__func__, bq->vbus_type, ret);
++	else if (bq->vbus_type == BQ2589X_VBUS_USB_SDP)
+ 		bq2589x_adjust_absolute_vindpm(bq);
+ 
++	/* Keep notifications and monitoring alive even after a failed transaction. */
+ 	power_supply_changed(bq->usb_psy);
+ 	cancel_delayed_work_sync(&bq->monitor_work);
+ 	if (!READ_ONCE(bq->stopping))
+@@ -1244,6 +1266,9 @@
+ 		return;
+ 
+ 	ret = bq2589x_set_input_current_limit(bq, 500);
++	if (ret < 0)
++		dev_err(bq->dev, "%s:reset input current to 500mA failed:%d\n", __func__, ret);
++	/* Reset VINDPM independently, even when the current-limit write failed. */
+ 	ret = bq2589x_set_input_volt_limit(bq, 4400);
+ 	if (ret < 0)
+ 		dev_err(bq->dev,"%s:reset vindpm threshold to 4400 failed:%d\n",__func__,ret);
