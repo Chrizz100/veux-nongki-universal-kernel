@@ -1,5 +1,5 @@
 {
-  "base_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+  "base_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
   "device_pass_inferred": false,
   "golden_preserved": true,
   "integration_directory": "common/update/current",
@@ -12,12 +12,13 @@
       "device_fixes": [
         {
           "host_tests": true,
-          "id": "charger-diag06",
-          "manifest_sha256": "dba0faed1d98d0dbab0d722f3aae4e51f11da59652b7135fca25a69541790519",
-          "reference_run": "36615353847",
+          "id": "charger-diag08",
+          "manifest_sha256": "efafa9d4436cdd0649de051eb364037763c8681b0aea76e28bae08227cec2551",
+          "reference_run": "36698563062",
           "source_sha256": {
             "drivers/power/supply/qcom/bq2589x_charger.c": "0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241",
-            "drivers/power/supply/qcom/wt_chg.c": "e75f5c793d74311da59343eb46410563750b642e63fd70e1e1f2cabaad3d3e08"
+            "drivers/power/supply/qcom/sc8551_charger.c": "035d1204b1a4796546c90ab1f448f9ba00889164c731719e3096e4fcafc5cd69",
+            "drivers/power/supply/qcom/wt_chg.c": "c8c785d03e2c723c9a23b89f7728e16ee3bb07e888e8cfc221ce406b6f73d1ef"
           }
         }
       ],
@@ -30,17 +31,17 @@
       },
       "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
       "image_bytes": 29843968,
-      "image_sha256": "15cac4bded37d2624917fd3282bd61aad669b1641702e4749c73d2aa234b584b",
+      "image_sha256": "2be07b2ef29bbc8641326087a29c4055eb49cfc957f03f74ce6d0df075f8a9bd",
       "integration_overlay_sha256": "9b699eaaee0f1286eed6fd8c0a0de54043a38e947bedb8df2a1b30bab28b7363",
       "kernel": "5.4.274",
       "kernelrelease": "5.4.274-qgki-g82179e362f33",
       "package": true,
       "package_file": "Kernel_5.4.274_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "b0ad4bc880492d6ff96477b84213c73c22ab5ecf786ae7186dad06f0d4ff25ff",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "package_sha256": "2a171179605441f1e844d9686c99314e658626bace401385d22dbfe8345cf87f",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
-      "static_boot_sha256": "30f8406e4d514dcf022fe539edf32684abe5f2d6c2a48ed8bc257c4b27a81f11",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "static_boot_sha256": "e5a9aa60a2dc2c571e33ac24fe8c1da7664791716afcfa2f92c0b60cdbd24178",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -89,17 +90,17 @@
       },
       "dtb_sha256": "51e74d728f6a344738d29a5afd7221c9caf7d81d135de27f9843fd379e278e25",
       "image_bytes": 33925632,
-      "image_sha256": "07ff6219a157ac4eb4cc077a53ca60cf995dc4c37d943e713401f6412afd3295",
+      "image_sha256": "0ace2e38925224e5d0c8538fdeb288990376388b09c07d33fbd3208b38e992bc",
       "integration_overlay_sha256": "105117cab6f65b86a95394eef94dec7f521f0d1a6a55cab410b3ee484de848bc",
       "kernel": "5.4.292",
       "kernelrelease": "5.4.292-veid-veux",
       "package": true,
       "package_file": "Kernel_5.4.292_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "e87ec18d890a45eb45762ecdffe00de1ace1731c3f7aff22473f03b5b147eec6",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "package_sha256": "9f464a2c79e3e9a53274727ca703e001a1a825b9650a8f0892277f6157b70e63",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
-      "static_boot_sha256": "a290f0a6474da57b2b516b4b4bc00f41b214beaae38ffe6fc69e654a5b2aa5b5",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "static_boot_sha256": "2eb904dc6410736629c2ed81f69e76e4bc38de520574462fa6c5492fbfb09e26",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -148,17 +149,17 @@
       },
       "dtb_sha256": "51e74d728f6a344738d29a5afd7221c9caf7d81d135de27f9843fd379e278e25",
       "image_bytes": 33925632,
-      "image_sha256": "9b66793e3daba836317b9602c7d2664b7bf8174e39743809bac8528052fe4693",
+      "image_sha256": "8c575cbb2caf98d6899c2a8c7bdf7158325f54f1dc30e6993236a8e4d9e0ce78",
       "integration_overlay_sha256": "24addeae371e5df480f63a2ca8986c0d6bc7c4e22027cfccc963f3cb4569e177",
       "kernel": "5.4.293",
       "kernelrelease": "5.4.293-veid-veux",
       "package": true,
       "package_file": "Kernel_5.4.293_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
-      "package_sha256": "5a6c774361f6a90f97e191fe0a7465f3e8f69f6fef5f7f394abd9cadd18dc328",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "package_sha256": "58e9e9f32be3f941ac715e8d344ae5adbcadabf5643d9e0ccee0b1da9af9cc92",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
-      "static_boot_sha256": "a77393c3beb423ec4e9ca170318919a6bc094577cd422a92a0b98bfe5871a8a0",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "static_boot_sha256": "57caf505c9b82774e1e74c6ecb24e82ee67252fd7c5eb9f5876c6f10d3b72af7",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -213,10 +214,10 @@
       "package": true,
       "package_file": "Kernel_5.4.300_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
       "package_sha256": "1aca028eb2a6cb8e70d87f68203a4bf6d30a20d1e3ccf35cec54effbb2258d7c",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
       "static_boot_sha256": "59194678558375b96ed9d0dc1367d1ce03363d5e364e80fe976209901f6db48b",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -271,10 +272,10 @@
       "package": true,
       "package_file": "Kernel_5.4.301_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
       "package_sha256": "fe62c51769881b024568505d1cd3c70aa21cc5f725aae545ea89bc17ff2e056f",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
       "static_boot_sha256": "2c88558bf5413e3b7b1926095e20f4fb724b8f5812eb703116e1edb3a0a0cdcb",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -329,10 +330,10 @@
       "package": true,
       "package_file": "Kernel_5.4.302_ReSukiSU_35187_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
       "package_sha256": "cca9d8188fde899d45422bdf852dfc8020836b9c81e9cf569f06bac212b61ed1",
-      "repository_sha": "e160c246bda3dae7a9d7b0e35216ee23ff00d284",
+      "repository_sha": "920f10d20dd0d48e71f86bdeb9c846e861d8092d",
       "static_boot": true,
       "static_boot_sha256": "98f373c611df6e2a8f2b496c276a41c23d3404489c0c29fdbfcfa772d21a4e2f",
-      "target_manifest_sha256": "caa5c0e334aa62ab0b1533b0074fafbfb22b189533b29d57ab8020d5e55bf5b1",
+      "target_manifest_sha256": "c8d83bf1d2bc80c51f4aaa48a06138b8eb717ce7f4d41fbc5aff16a6102004f9",
       "targets": {
         "nomount": {
           "ahead": 155,
@@ -367,7 +368,7 @@
     }
   },
   "repository_mutation": true,
-  "run_id": "36674397882",
+  "run_id": "36706076742",
   "source_directory": "third_party/current",
   "source_sha256": {
     "nomount/LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
