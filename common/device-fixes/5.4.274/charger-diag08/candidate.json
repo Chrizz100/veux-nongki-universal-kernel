@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "sc8551-adc-read-errors-candidate",
+  "kernel": "5.4.274",
+  "status": "compile-package-static-validated",
+  "enabled_in_v4": true,
+  "source_repository": "dereference23/kernel_xiaomi_sm6375",
+  "source_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632",
+  "source": "drivers/power/supply/qcom/sc8551_charger.c",
+  "before_sha256": "a1cb2401fe8cfb11c71839a38d13c6452e1eeb157f60761e368b32f4c02ee471",
+  "after_sha256": "035d1204b1a4796546c90ab1f448f9ba00889164c731719e3096e4fcafc5cd69",
+  "unchanged_scope_sha256": "74dfe9eda94711268d05f2f189304587f33ce84105751047f2d47ba3ab3d8c5c",
+  "patch": "0001-sc8551-check-adc-read-errors.patch",
+  "patch_sha256": "3035d494246ecb2ecfe0e0b5318e356ee072b3b878bfff64686e2d24d11764c2",
+  "kernel_build": true,
+  "device_test": false,
+  "test_assets_sha256": {
+    "sc8551_reg.h": "8acdc6f1c00881ab76636cd2a38a877bfc7fed9c3c68d46211c8f2e7b73898e5",
+    "qti_power_supply_iio.h": "e51f47ad9b2629f8322ac117a0c45dd1034c797975cfbc09036afc1673c76189"
+  },
+  "test": "test_sc8551_adc.py",
+  "test_sha256": "41e9baeadf41abf6a6ecf012db79e5b6f4f4739da0cb8f34c1c031bdbc71e1b7",
+  "host_validation": {
+    "original_error_reproduced": true,
+    "original_iio_false_success_reproduced": true,
+    "fixed_assertions": 1599,
+    "ubsan": true,
+    "adc_channels": 9,
+    "iio_adc_callers": 7,
+    "chip_variants": 2
+  },
+  "reference_run": "36698563062",
+  "image_sha256": "6b903f52b8139bf8a6f1c033581c4a6b0a93e6674b2e9f4be3453499f85d0603"
+}
