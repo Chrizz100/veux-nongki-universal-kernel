@@ -45,20 +45,26 @@ class DeviceTests(unittest.TestCase):
             recipe_blob=e.config()['lineages']['5.4.274']['blob'], reference_run='fixture', files=rows))
         return repo, src, work, folder, rows
 
-    def test_real_manifest_preserves_exact_diag06_hashes_and_all_host_tests(self):
+    def test_real_manifest_preserves_exact_diag07_hashes_and_all_host_tests(self):
         proof = f.expected('5.4.274')[0]
-        self.assertEqual(proof['id'], 'charger-diag06')
-        self.assertEqual(proof['reference_run'], '36615353847')
+        self.assertEqual(proof['id'], 'charger-diag07')
+        self.assertEqual(proof['reference_run'], '36688871120')
         self.assertEqual(proof['source_sha256']['drivers/power/supply/qcom/bq2589x_charger.c'],
                          '0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241')
         self.assertEqual(proof['source_sha256']['drivers/power/supply/qcom/wt_chg.c'],
-                         'e75f5c793d74311da59343eb46410563750b642e63fd70e1e1f2cabaad3d3e08')
+                         'c8c785d03e2c723c9a23b89f7728e16ee3bb07e888e8cfc221ce406b6f73d1ef')
         _, data, _ = f.load('5.4.274')
         diag05 = json.loads((e.REPO / 'common/device-fixes/5.4.274/charger-diag05/manifest.json').read_text())
         self.assertEqual(data['files'][0], diag05['files'][0])
         self.assertEqual(data['files'][1]['before_sha256'], diag05['files'][1]['before_sha256'])
         tests = {t['test']: t for row in data['files'] for t in f.host_tests(row)}
-        self.assertEqual(set(tests), {'test_bq2589x.py', 'test_usb_voltage.py', 'test_i2c_callers.py', 'test_usb_type.py'})
+        self.assertEqual(set(tests), {'test_bq2589x.py', 'test_usb_voltage.py', 'test_i2c_callers.py', 'test_usb_type.py', 'test_battery_voltage.py'})
+        diag06 = json.loads((e.REPO / 'common/device-fixes/5.4.274/charger-diag06/manifest.json').read_text())
+        self.assertEqual(data['files'][0], diag06['files'][0])
+        self.assertEqual(data['files'][1]['extra_tests'][0], diag06['files'][1]['extra_tests'][0])
+        self.assertEqual(data['files'][1]['test_sha256'], diag06['files'][1]['test_sha256'])
+        self.assertEqual(tests['test_battery_voltage.py']['test_sha256'],
+                         'd5ea2f9075bba88c28b68b8bc268a605d508056ba84e2f87ce9af5e5efff10b0')
         self.assertEqual(tests['test_usb_type.py']['test_sha256'],
                          '21de1bf28aaa03b79106a0f9517aded52b336b3d2b5f65ec2b4f6a48190e3459')
         self.assertEqual(tests['test_usb_type.py']['assets'], [{
@@ -230,7 +236,7 @@ class DeviceTests(unittest.TestCase):
             e.write_json(root / 'bundle/targets.json', {'lineages': ['5.4.274']})
             args = argparse.Namespace(bundle=root/'bundle', artifacts=root/'artifacts')
             old_proofs = []
-            for old_id in ('charger-diag04', 'charger-diag05'):
+            for old_id in ('charger-diag04', 'charger-diag05', 'charger-diag06'):
                 old_manifest = e.REPO / f'common/device-fixes/5.4.274/{old_id}/manifest.json'
                 old_data = json.loads(old_manifest.read_text())
                 old_proofs.append([dict(id=old_data['id'], manifest_sha256=e.digest(old_manifest),
