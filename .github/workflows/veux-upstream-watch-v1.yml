@@ -1,79 +1,300 @@
-name: VEUX Upstream Watch V1
-
+# Save as: .github/workflows/veux-upstream-watch-v1.yml
+# Read-only watcher: validated CURRENT_BUILD and source hashes, no builds or promotion.
+name: VEUX Upstream Watch V1 - current repository
 'on':
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
-    - cron: '17 3 * * *'
-
+  - cron: 17 3 * * *
 permissions:
   contents: read
-
 concurrency:
   group: veux-upstream-watch-v1
   cancel-in-progress: false
-
 jobs:
   watch:
-    name: Check ReSukiSU SUSFS NoMount
+    name: Check ReSukiSU SUSFS NoMount against CURRENT_BUILD
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - name: Checkout project
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
+    - name: Checkout exact project
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Prepare and self-test read-only watcher
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/veux-upstream-watch/reports"
+        cat > "$RUNNER_TEMP/veux-upstream-watch/watch_current.py" <<'PY_WATCH'
+        #!/usr/bin/env python3
+        """Read-only upstream comparison against the validated repository snapshots."""
+        import argparse
+        from concurrent.futures import ThreadPoolExecutor
+        from datetime import datetime, timezone
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+        import sys
 
-      - name: Install parser dependency
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY' || python3 -m pip install --user PyYAML
-          import yaml
-          print(f"PyYAML={yaml.__version__}")
-          PY
+        COMPONENTS = ('resukisu', 'susfs', 'nomount')
+        SOURCES = {
+            'resukisu': 'https://github.com/ReSukiSU/ReSukiSU.git',
+            'susfs': 'https://gitlab.com/simonpunk/susfs4ksu.git',
+            'nomount': 'https://github.com/maxsteeel/nomount.git',
+        }
+        CURRENT = 'common/contracts/CURRENT_BUILD.json'
 
-      - name: Validate upstream controller
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m py_compile common/scripts/upstream_controller.py
-          python3 common/scripts/upstream_controller.py selftest
-          python3 common/scripts/upstream_controller.py validate --repo-root "$GITHUB_WORKSPACE"
 
-      - name: Resolve current remote heads
-        id: upstream
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 common/scripts/upstream_controller.py resolve \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --report "$GITHUB_WORKSPACE/upstream-report.json" \
-            --github-output
+        def require(ok, message):
+            if not ok:
+                raise ValueError(message)
 
-      - name: Upload upstream report
-        uses: actions/upload-artifact@v7
-        with:
-          name: VEUX-upstream-report-${{ github.run_id }}
-          path: upstream-report.json
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
 
-      - name: Final watcher gate
-        shell: bash
-        env:
-          UPDATES_FOUND: ${{ steps.upstream.outputs.updates_found }}
-          RESUKISU_HEAD: ${{ steps.upstream.outputs.resukisu_head }}
-          SUSFS_HEAD: ${{ steps.upstream.outputs.susfs_head }}
-          NOMOUNT_HEAD: ${{ steps.upstream.outputs.nomount_head }}
-        run: |
-          set -euo pipefail
-          test -n "$RESUKISU_HEAD"
-          test -n "$SUSFS_HEAD"
-          test -n "$NOMOUNT_HEAD"
-          echo "UPDATES_FOUND=$UPDATES_FOUND"
-          echo "RESUKISU_REMOTE_HEAD=$RESUKISU_HEAD"
-          echo "SUSFS_REMOTE_HEAD=$SUSFS_HEAD"
-          echo "NOMOUNT_REMOTE_HEAD=$NOMOUNT_HEAD"
-          echo 'VEUX_UPSTREAM_WATCH=PASS'
+        def digest(data):
+            return hashlib.sha256(data).hexdigest()
+
+
+        def exact_sha(value, length=40):
+            return isinstance(value, str) and re.fullmatch('[0-9a-f]{%d}' % length, value) is not None
+
+
+        def json_read(path):
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    require(key not in result, 'duplicate JSON key: ' + key)
+                    result[key] = value
+                return result
+            return json.loads(path.read_text(), object_pairs_hook=pairs)
+
+
+        def inside(base, name):
+            require(isinstance(name, str) and name and not Path(name).is_absolute()
+                    and '..' not in Path(name).parts, 'unsafe repository path')
+            path = base / name
+            require(path.resolve().is_relative_to(base.resolve()), 'path escapes repository: ' + name)
+            return path
+
+
+        def snapshot_hashes(root):
+            require(root.is_dir() and not root.is_symlink(), 'source snapshot directory missing or linked')
+            result = {}
+            for path in root.rglob('*'):
+                name = path.relative_to(root).as_posix()
+                inside(root, name)
+                if path.is_symlink():
+                    require(path.exists(), 'broken source link: ' + name)
+                    result[name] = 'link:' + digest(os.readlink(path).encode())
+                elif path.is_file():
+                    result[name] = digest(path.read_bytes())
+            return result
+
+
+        def validate_current(root):
+            proof = json_read(root / CURRENT)
+            require(proof.get('status') == 'compile-package-static-validated', 'current build is not validated')
+            require(proof.get('device_pass_inferred') is False, 'device PASS may not be inferred')
+            require(proof.get('golden_preserved') is True, 'Golden preservation evidence missing')
+            require(str(proof.get('run_id', '')).isdigit() and int(proof['run_id']) > 0,
+                    'current build run ID missing')
+            require(exact_sha(proof.get('base_sha')), 'current build base SHA invalid')
+            require(proof.get('source_directory') == 'third_party/current', 'unexpected source directory')
+            require(proof.get('integration_directory') == 'common/update/current', 'unexpected integration directory')
+            targets = proof.get('targets', {})
+            require(set(targets) == set(COMPONENTS), 'current component set incomplete')
+            for name, row in targets.items():
+                require(exact_sha(row.get('commit')), name + ': current commit invalid')
+                require(isinstance(row.get('version'), str) and
+                        re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', row['version']), name + ': version invalid')
+                require(row.get('url') == SOURCES[name], name + ': unexpected upstream URL')
+                ref = row.get('ref', '')
+                require(isinstance(ref, str) and ref.startswith('refs/heads/'), name + ': expected branch ref')
+                require(subprocess.run(['git', 'check-ref-format', ref], capture_output=True).returncode == 0,
+                        name + ': invalid branch ref')
+            recipes = json_read(root / 'common/update/source-recipes.json')['lineages']
+            lineages = proof.get('lineages', {})
+            require(lineages and set(lineages) == set(recipes), 'current build/source lineage mismatch')
+            for kernel, row in lineages.items():
+                require(re.fullmatch(r'5\.4\.[0-9]+', kernel) and row.get('kernel') == kernel,
+                        'invalid lineage identity')
+                require(all(row.get(key) is True for key in ('compile', 'package', 'static_boot')),
+                        kernel + ': compile/package/static validation incomplete')
+                require(row.get('device') is False, kernel + ': CI must not infer device PASS')
+                require(row.get('targets') == targets, kernel + ': component targets differ')
+                require(row.get('repository_sha') == proof['base_sha'], kernel + ': build base mismatch')
+                for key in ('image_sha256', 'package_sha256', 'static_boot_sha256', 'integration_overlay_sha256'):
+                    require(exact_sha(row.get(key), 64), kernel + ': missing ' + key)
+                folder = root / 'common/update/current' / kernel
+                overlay_path = folder / 'overlay.json'
+                require(digest(overlay_path.read_bytes()) == row['integration_overlay_sha256'],
+                        kernel + ': integration manifest hash mismatch')
+                overlay = json_read(overlay_path)
+                require(overlay.get('kernel') == kernel and overlay.get('targets') == targets,
+                        kernel + ': integration target mismatch')
+                require(overlay.get('recipe_blob') == recipes[kernel]['blob'], kernel + ': source recipe mismatch')
+                for name, edit in overlay['edits'].items():
+                    after = edit.get('after')
+                    if after and 'sha256' in after:
+                        payload = inside(folder / 'files', name)
+                        require(not payload.is_symlink() and digest(payload.read_bytes()) == after['sha256'],
+                                kernel + ': integration payload mismatch: ' + name)
+            actual = snapshot_hashes(root / proof['source_directory'])
+            require(actual and actual == proof.get('source_sha256'), 'current source snapshot hash mismatch')
+            return proof
+
+
+        def parse_remote(text, ref):
+            lines = [line.split() for line in text.splitlines() if line.strip()]
+            require(len(lines) == 1 and len(lines[0]) == 2, 'upstream ref missing or ambiguous')
+            sha, returned_ref = lines[0]
+            require(returned_ref == ref and exact_sha(sha), 'invalid upstream ref response')
+            return sha
+
+
+        def remote_head(url, ref):
+            errors = []
+            for attempt in range(2):
+                try:
+                    result = subprocess.run(
+                        ['git', '-c', 'http.lowSpeedLimit=1', '-c', 'http.lowSpeedTime=20',
+                         'ls-remote', '--exit-code', '--refs', url, ref],
+                        text=True, capture_output=True, timeout=45,
+                        env=dict(os.environ, GIT_TERMINAL_PROMPT='0'))
+                    require(result.returncode == 0, 'git ls-remote failed: ' + result.stderr.strip()[-500:])
+                    return parse_remote(result.stdout, ref)
+                except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+                    errors.append(str(exc))
+            raise ValueError('; '.join(errors))
+
+
+        def resolve(proof, fetch=remote_head):
+            def one(name):
+                target = proof['targets'][name]
+                row = {'current_version': target['version'], 'current_commit': target['commit'],
+                       'source': target['url'], 'track_ref': target['ref']}
+                try:
+                    head = fetch(target['url'], target['ref'])
+                    require(exact_sha(head), 'remote commit invalid')
+                    row.update(remote_head=head, update_available=head != target['commit'], status='PASS')
+                except Exception as exc:
+                    row.update(remote_head=None, update_available=None, status='ERROR', error=str(exc))
+                return name, row
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                rows = dict(pool.map(one, COMPONENTS))
+            complete = all(row['status'] == 'PASS' for row in rows.values())
+            return rows, (any(row['update_available'] for row in rows.values()) if complete else None)
+
+
+        def summary(report):
+            lines = ['# VEUX Upstream Watch', '', 'Status: **' + report['status'] + '**',
+                     '', 'Reference: `' + CURRENT + '`',
+                     'Repository mutation: NO', 'Device PASS inferred: NO', '']
+            if 'reference_run' in report:
+                lines += ['Validated build run: ' + report['reference_run'],
+                          'Validated kernel lineages: ' + ', '.join(report['lineages']), '']
+            lines += ['| Component | Repository version | Repository commit | Remote commit | Result |',
+                      '|---|---|---|---|---|']
+            for name, row in report['components'].items():
+                state = 'ERROR' if row['status'] != 'PASS' else ('UPDATE AVAILABLE' if row['update_available'] else 'UP TO DATE')
+                lines.append('| ' + ' | '.join((name, row['current_version'], row['current_commit'],
+                                               row['remote_head'] or '-', state)) + ' |')
+            if report.get('errors'):
+                lines += ['', 'Errors:', *['- ' + x.replace('\n', ' ') for x in report['errors']]]
+            lines += ['', 'New upstream commits are detected, not built or promoted by this watcher.']
+            return '\n'.join(lines) + '\n'
+
+
+        def check(root, directory, fetch=remote_head):
+            directory.mkdir(parents=True, exist_ok=True)
+            report = {'schema': 2, 'checked_at': datetime.now(timezone.utc).isoformat(),
+                      'repository_sha': os.environ.get('GITHUB_SHA', ''), 'reference': CURRENT,
+                      'status': 'ERROR', 'repository_mutation': False, 'device_pass_inferred': False,
+                      'components': {}, 'updates_found': None, 'errors': []}
+            try:
+                proof = validate_current(root)
+                report.update(reference_run=str(proof['run_id']), lineages=sorted(proof['lineages']),
+                              repository_validation='PASS')
+                report['components'], report['updates_found'] = resolve(proof, fetch)
+                report['errors'] = [name + ': ' + row['error'] for name, row in report['components'].items()
+                                    if row['status'] == 'ERROR']
+                if not report['errors']:
+                    report['status'] = 'PASS'
+            except Exception as exc:
+                report['errors'].append(str(exc))
+            content = json.dumps(report, indent=2, sort_keys=True) + '\n'
+            (directory / 'upstream-report.json').write_text(content)
+            text = summary(report)
+            (directory / 'upstream-summary.md').write_text(text)
+            if os.environ.get('GITHUB_STEP_SUMMARY'):
+                with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                    f.write(text)
+            print(content, end='')
+            print('VEUX_UPSTREAM_WATCH=' + report['status'])
+            return 0 if report['status'] == 'PASS' else 1
+
+
+        def selftest():
+            ref = 'refs/heads/main'
+            assert parse_remote('a' * 40 + '\t' + ref + '\n', ref) == 'a' * 40
+            for invalid in ('', 'bad ' + ref, 'a' * 40 + ' refs/heads/other',
+                            ('a' * 40 + ' ' + ref + '\n') * 2):
+                try:
+                    parse_remote(invalid, ref)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError('invalid upstream response accepted')
+            proof = {'targets': {c: {'url': SOURCES[c], 'ref': ref, 'version': '1', 'commit': 'a' * 40}
+                                 for c in COMPONENTS}}
+            _, changed = resolve(proof, lambda url, branch: 'a' * 40)
+            assert changed is False
+            _, changed = resolve(proof, lambda url, branch: 'b' * 40)
+            assert changed is True
+            def unavailable(url, branch):
+                raise OSError('simulated unavailable upstream')
+            rows, changed = resolve(proof, unavailable)
+            assert changed is None and all(row['status'] == 'ERROR' for row in rows.values())
+            print('UPSTREAM_WATCH_SELFTEST=PASS')
+
+
+        if __name__ == '__main__':
+            parser = argparse.ArgumentParser()
+            parser.add_argument('--repo-root', default='.')
+            parser.add_argument('--report-dir')
+            parser.add_argument('--selftest', action='store_true')
+            args = parser.parse_args()
+            if args.selftest:
+                selftest()
+            else:
+                require(args.report_dir, '--report-dir is required')
+                raise SystemExit(check(Path(args.repo_root).resolve(), Path(args.report_dir).resolve()))
+        PY_WATCH
+        python3 "$RUNNER_TEMP/veux-upstream-watch/watch_current.py" --selftest
+    - name: Validate current sources and resolve upstream heads
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$RUNNER_TEMP/veux-upstream-watch/watch_current.py" \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --report-dir "$RUNNER_TEMP/veux-upstream-watch/reports"
+    - name: Verify repository remains unchanged
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo "REPOSITORY_MUTATION=NO"
+    - name: Upload upstream report and diagnostics
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-upstream-report-${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-upstream-watch/reports/
+        if-no-files-found: error
+        retention-days: 30
+        compression-level: 6
