@@ -1,0 +1,156 @@
+SWEET – QUELLPRÜFUNG R3 UND AUSFÜHRBARER KCONFIG-PRÜFLAUF
+Datum: 02.10.2026
+Ziel: Redmi Note 10 Pro / sweet / MIUI V14.0.9.0.TKFEUXM
+Zielartefakte des Gesamtprojekts: ReSukiSU + SUSFS + NoMount, AK3 und boot.img.
+
+ERGEBNIS
+Der neuere offizielle Xiaomi-Quellstand ist als unveränderte Gesamtbasis
+weiterhin nicht freigegeben. Die zusätzliche Prüfung zeigt nicht nur
+abweichende Vorgaben: In den tatsächlich gelesenen Build-Dateien wird der
+Stock-Fingerabdrucktreiber nicht mehr eingebunden und die bisherige
+AW8624-Haptik-Einbindung ist auskommentiert.
+
+Ein eigener SWEET-GitHub-Actions-Prüflauf wurde lokal erstellt und geprüft.
+Er dient dem vollständigen Quellenabruf und der echten Kconfig-Auflösung auf
+GitHub, nicht der Kernelkompilierung oder Freigabe eines flashbaren Images.
+Im aktuellen Schritt wurden keine Remote-Dateien geändert oder Workflows gestartet.
+
+1. BELEGTE QUELLSTÄNDE
+Repository: MiCode/Xiaomi_Kernel_OpenSource
+sweet-r-oss:     758bb7ef50af360e728662a1ed3b3a1b977a2f13
+sweet_k6a-r-oss: 10c33d40a11ecdc75cc1dadb5bd07894bab05815
+Beide Makefile-Versionen laut R2: 4.14.180.
+Stock-Binärreferenz: 4.14.190-perf-g7da93debc0ee.
+Die fehlenden Quelländerungen zwischen diesen Ständen sind noch nicht aufgelöst.
+Es wurde keine Versionszeichenkette auf 4.14.190 umetikettiert.
+
+Die neuere sweet_user_defconfig wurde vollständig in drei Textbereichen gelesen.
+Die daraus lokal hergestellten 20.167 Bytes / 795 Zeilen entsprechen exakt dem
+Git-Blob 9dcd7cbb1f6de1aa3cdecad67843f62a3bc221f3. Die alte vollständige
+Defconfig aus R2 wurde ebenfalls erneut gegen ihren Git-Blob geprüft.
+
+2. NEUE HARDWARE-/BUILD-BEFUNDE
+A. Fingerabdruck
+Stock: CONFIG_FINGERPRINT_FS_TEE=y.
+Neuere OEM-Defconfig: CONFIG_FINGERPRINT_FPC_1540=y; FS_TEE nicht eingetragen.
+Entscheidend: drivers/input/fingerprint/Kconfig führt im neueren Stand nur
+fpc_1540/Kconfig ein, und dessen Makefile bindet nur fpc_1540/ ein.
+Der ältere Stand führt dagegen auch fs_tee/Kconfig ein.
+Das ist ein konkret belegtes Problem der betrachteten Build-Einbindung; es ist
+kein vollständiger Quellbaum-Nachweis, dass nirgendwo weitere Kopien existieren.
+
+B. Vibration / Haptik
+Stock: CONFIG_INPUT_AW8624_HAPTIC=y.
+Neuere OEM-Defconfig: CONFIG_INPUT_AW862XX_HAPTIC=y.
+In drivers/input/misc/Makefile ist die AW8624-Zeile auskommentiert;
+aktiv bleibt die Einbindung von aw862xx_haptic/.
+Die Kompatibilität des Ersatztreibers mit Stock-DT und Hardware wurde nicht
+bewiesen. Nicht ungeprüft übernehmen und nicht bloß die Schalter umbenennen.
+
+C. Akkuverifikation / weitere Vorgaben
+Stock hat CONFIG_ONEWIRE_GPIO=y und CONFIG_BATT_VERIFY_BY_DS28E16=y.
+Die neuere OEM-Defconfig setzt beide ausdrücklich auf n.
+Stock hat SERIAL_MSM_GENI_CONSOLE=n und LEDS_QPNP_VIBRATOR_LDO=n;
+die neuere Defconfig setzt beide auf y.
+Außerdem fehlen dort die ausdrücklich gesetzten Stock-UFSFEATURE/UFSHPB/UFSTW/
+UFSTW_IGNORE_GUARANTEE_BIT/SCSI_SKHPB-Zeilen. Fehlende Defconfig-Zeilen sind
+jedoch NICHT automatisch fehlender Quellcode oder ein endgültiges n.
+
+D. Nützliche K6-Einbindungen bleiben bestätigt
+Die neuere Defconfig aktiviert dieselben K6-Goodix-/FTS-/LN8000-Optionen wie
+Stock. Die vollständigen betrachteten Goodix-, FocalTech- und TI-Makefiles
+wurden gelesen. Der LN8000-Zweig nutzt neben den beiden LN8000-Objekten auch
+pd_policy_manager.o und cp_qc30.o. Ein Übertragen nur einzelner C-Dateien ohne
+Abhängigkeiten wäre damit weiterhin keine belastbare Integration.
+
+FOLGERUNG
+Nicht einfach sweet_k6a-r-oss plus Stock-Konfiguration bauen und als Stock-Ersatz
+anbieten. Erst die vollständigen Quellstände und aufgelösten Konfigurationen
+gegenüberstellen. Die Stock-Fingerabdruck-, Haptik- und Akkuunterstützung darf
+bei der K6-Treiberübernahme nicht unbemerkt verloren gehen.
+
+3. LITERALER DEFCONFIG-VERGLEICH
+Alte Defconfig:   782 eindeutige Zuweisungen; 763 gleich; 2 abweichend;
+                 17 OEM-Zuweisungen nicht in der endgültigen Stock-Konfiguration.
+Neuere Defconfig: 782 eindeutige Zuweisungen; 757 gleich; 5 abweichend;
+                 20 OEM-Zuweisungen nicht in der endgültigen Stock-Konfiguration.
+Die vollständigen Listen einschließlich der Stock-only-Einstellungen liegen bei.
+
+Wichtig: Der Vergleich ist weiterhin KEINE Kconfig-Abhängigkeitsauflösung.
+'# CONFIG_FOO is not set' und '#CONFIG_FOO is not set' wurden bewusst nicht
+verwechselt. Im betrachteten Xiaomi-confdata.c wird nur die erste Schreibweise
+als ausgeschaltete Einstellung gelesen; die zweite ist bloß ein Kommentar.
+
+4. ERSTELLTER PRÜFLAUF
+Datei: .github/workflows/sweet-oem-source-audit.yml
+Programm: sweet-oem-audit/audit.py
+Nur workflow_dispatch, contents: read, keine Push-/Release-/Flash-Aktion.
+Zwei unabhängige Jobs für die oben festgehaltenen OEM-Commits.
+
+Ablauf:
+- Audit-Selbsttests und Installation der nötigen Runner-Werkzeuge.
+- Exakter Git-Fetch und Checkout, git fsck, sauberer Quellbaum.
+- Quellsicherung vor dem Konfigurationslauf. Alle archivierten Git-Blobs und
+  Symlink-Ziele werden gegen den gepinnten Git-Baum überprüft; fehlende Dateien
+  und Inhaltsänderungen sind Fehler. Archive enthalten keine Git-Historie.
+- Vollständige lexikalische Kconfig-Bestandsaufnahme, getrennt von Erreichbarkeit.
+- Stock-Konfiguration als Eingabe; olddefconfig in eigenem O=-Ausgabeordner.
+- Vollständiger Diff und 43 ausdrückliche Stock-Schutzprüfungen.
+- Zweiter olddefconfig-Lauf muss byteidentisch sein.
+- Stock-Referenz und Quellbaum dürfen nicht verändert worden sein.
+- Artefakte inklusive Quellen, Konfigurationen, Logs und Prüfsummen; Upload
+  wird auch nach Fehlern versucht. Namen enthalten Branch, Run-ID und Versuch.
+
+Grün bedeutet hier nur: Beweissammlung erfolgreich ausgeführt. Konfigurations-
+verluste stehen ausdrücklich als critical_config_gate.passed=false im Bericht.
+Es gibt im Programm keine Flashfreigabe: release_eligible, kernel_built,
+device_tested und artifacts_flashable bleiben false.
+
+5. TATSÄCHLICH AUSGEFÜHRTE LOKALE PRÜFUNGEN
+36 Selbsttests bestanden, 0 Fehler. Darunter Parser- und Referenzprüfungen,
+Negativtests für wichtige Stock-Schalter, echte lokale Git-Checkouts und
+Archiv-/Symlink-/Git-Blob-Prüfungen einschließlich manipulierter/fehlender Daten.
+35 weitere statische Struktur-/Syntax-/Dateiprüfungen bestanden; siehe JSON.
+
+YAML 1.2 ohne doppelte Schlüssel geparst; manuelle Trigger, Berechtigungen,
+Matrix, Pfade, Commit-Pins und Inputs der beiden Actions geprüft.
+Alle drei Run-Blöcke mit bash -n und beide Python-Dateien syntaktisch geprüft.
+Die definierten Inputs wurden an den festgepinnten action.yml-Dateien überprüft.
+KEIN actionlint- oder shellcheck-Lauf: diese Werkzeuge waren lokal nicht vorhanden.
+
+KEIN tatsächlicher GitHub-Actions-Lauf und KEIN nachgewiesener Kernel-Green-Pass.
+Die echte Xiaomi-olddefconfig-Ausführung muss der vorbereitete Workflow erst
+liefern. Die lokalen Git-Testrepositories sind Testdaten, nicht Xiaomi-Quellen.
+
+6. ORIGINALDATEIEN / INTEGRITÄT
+Alle drei erneut gelesen und unverändert:
+boot.img    134217728 Bytes
+SHA256 4123ddc071662ed266c871ef45a93f637b3f1ae1c9775cfcabf13793b5040015
+dtbo.img     33554432 Bytes
+SHA256 a99eb0e607e980d8f95e207a6c4da97d207c94984bbd33463df95852f1de7348
+vbmeta.img       8192 Bytes
+SHA256 bfef88faa896ca422de041ac0bcd92335ec47c7a0c736e5ea6f4a14662879b51
+Stock-Konfiguration:
+SHA256 b8821ce37644106a92be29b1d8350ea517fade58a2d924e4e97bc9624e441ca5
+Die RSA-/AVB-Detailprüfung aus R1 wurde in R3 nicht erneut durchgeführt.
+
+7. NOCH OFFEN
+Vollständige Xiaomi-Quellen lokal, echte olddefconfig-Ergebnisse, C-/Header-/DT-
+Abhängigkeiten, Versionslücke 4.14.180 -> tatsächlicher OEM-4.14.190-Stand,
+Vendor-Module/ABI, geeignete Release-Toolchain, ReSukiSU-/SUSFS-/NoMount-Backport,
+Kernelcompile, AK3-/boot.img-Paketierung und kontrollierter Gerätetest.
+
+Der vollständige Archivdownload war in der aktuellen Umgebung nicht verfügbar;
+dateiweise GitHub-Textabfragen funktionierten. Das ist eine konkrete Zugriffs-
+grenze, kein Beleg für Unlösbarkeit des Kernelprojekts. Der vorbereitete
+GitHub-Runner-Schritt dient der Beschaffung der fehlenden tatsächlichen Daten.
+
+8. DATEIEN UND FORTSETZUNG
+SWEET_OEM_SourceAudit_R3_2026-10-02.zip enthält den Workflow, das ausführbare
+Prüfprogramm, Tests, Stock-Konfiguration, beide geprüften OEM-Defconfigs,
+Vergleiche, Prüflog, Validierungs-JSON und Quellbelege mit genauen Commits.
+README_SWEET_R3.txt beschreibt die Installation und den manuellen Start.
+Nach dem Lauf dessen GitHub-Link zur weiteren Prüfung zurückgeben.
+
+Quelleinzelheiten: sweet-oem-audit/evidence/source_receipts_r3.json.
+Keine neue boot.img, kein AK3, nichts aus diesem Paket flashen.
