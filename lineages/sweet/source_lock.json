@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "mode": "source_and_kconfig_audit_only",
+  "repository": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git",
+  "stock_config_sha256": "b8821ce37644106a92be29b1d8350ea517fade58a2d924e4e97bc9624e441ca5",
+  "sources": {
+    "sweet-r-oss": {
+      "commit": "758bb7ef50af360e728662a1ed3b3a1b977a2f13",
+      "defconfig_path": "arch/arm64/configs/vendor/sweet_user_defconfig",
+      "defconfig_blob": "6c6d692f68b50f72c3364d8163bca2cf9c292352",
+      "declared_kernel_version": "4.14.180"
+    },
+    "sweet_k6a-r-oss": {
+      "commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+      "defconfig_path": "arch/arm64/configs/vendor/sweet_user_defconfig",
+      "defconfig_blob": "9dcd7cbb1f6de1aa3cdecad67843f62a3bc221f3",
+      "declared_kernel_version": "4.14.180"
+    }
+  },
+  "device": "sweet",
+  "rom_reference": "V14.0.9.0.TKFEUXM",
+  "stock_kernel_reference": "4.14.190-perf-g7da93debc0ee",
+  "release_eligible": false
+}
