@@ -1,0 +1,179 @@
+name: SWEET
+
+# Einmaliger Starter. Updates erfolgen anschliessend nur ueber SWEET.zip.
+# Nur manuell. Keine Repository-Schreibrechte und keine automatischen Push-Laeufe.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweet-mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sweet:
+    name: SWEET-Paket ausfuehren
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      LC_ALL: C.UTF-8
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Nur SWEET.zip laden
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            /SWEET.zip
+          sparse-checkout-cone-mode: false
+
+      - name: Paket pruefen, entpacken und ausfuehren
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY_LOADER'
+          """Stable SWEET package loader. Only writes to the Actions temporary directory."""
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import stat
+          import subprocess
+          import sys
+          import traceback
+          import zipfile
+          
+          MAX_ZIP = 24 * 1024 * 1024
+          MAX_TOTAL = 128 * 1024 * 1024
+          MAX_FILE = 24 * 1024 * 1024
+          MAX_FILES = 2000
+          
+          
+          def unique_keys(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f'Doppelter JSON-Schluessel: {key}')
+                  result[key] = value
+              return result
+          
+          
+          def valid_name(name):
+              path = PurePosixPath(name)
+              if (not name or path.is_absolute() or path.as_posix() != name
+                      or any(part in ('..', '.', '.git') for part in path.parts)
+                      or '\\' in name or ':' in name
+                      or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+                  raise ValueError(f'Ungueltiger Archivpfad: {name!r}')
+              return path
+          
+          
+          def read_package(archive):
+              if archive.is_symlink() or not archive.is_file():
+                  raise ValueError('SWEET.zip fehlt. Die ZIP unveraendert ins Hauptverzeichnis hochladen.')
+              if archive.stat().st_size > MAX_ZIP:
+                  raise ValueError('SWEET.zip ist groesser als 24 MiB.')
+              with zipfile.ZipFile(archive) as package:
+                  infos = package.infolist()
+                  if not 1 <= len(infos) <= MAX_FILES:
+                      raise ValueError('Ungueltige Dateianzahl im Paket.')
+                  names = set()
+                  total = 0
+                  for item in infos:
+                      valid_name(item.filename)
+                      if item.filename in names:
+                          raise ValueError('Doppelter Archivpfad.')
+                      names.add(item.filename)
+                      mode = item.external_attr >> 16
+                      if item.is_dir() or stat.S_IFMT(mode) not in (0, stat.S_IFREG):
+                          raise ValueError('Nur regulaere Dateien im Paket erlaubt, keine Links.')
+                      if item.flag_bits & 1:
+                          raise ValueError('Verschluesselte ZIP-Dateien sind nicht erlaubt.')
+                      if item.file_size > MAX_FILE:
+                          raise ValueError('Einzeldatei zu gross.')
+                      total += item.file_size
+                  if total > MAX_TOTAL:
+                      raise ValueError('Entpacktes Paket zu gross.')
+                  for name in names:
+                      if any(str(parent) in names for parent in PurePosixPath(name).parents):
+                          raise ValueError('Datei-/Verzeichniskonflikt im Paket.')
+                  if 'PAKET.json' not in names:
+                      raise ValueError('PAKET.json fehlt: kein SWEET-Starterpaket.')
+                  raw_manifest = package.read('PAKET.json')
+                  manifest = json.loads(raw_manifest, object_pairs_hook=unique_keys)
+                  if (not isinstance(manifest, dict) or manifest.get('schema') != 1
+                          or manifest.get('entrypoint') != 'START.py'):
+                      raise ValueError('Nicht unterstuetztes Paketformat.')
+                  files = manifest.get('files')
+                  if not isinstance(files, dict) or set(files) != names - {'PAKET.json'}:
+                      raise ValueError('Dateiliste und Manifest stimmen nicht ueberein.')
+                  if 'START.py' not in files:
+                      raise ValueError('START.py fehlt.')
+                  payload = {'PAKET.json': raw_manifest}
+                  for name, expected in files.items():
+                      if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
+                          raise ValueError('Ungueltige Pruefsumme im Manifest.')
+                      data = package.read(name)  # also checks ZIP CRC
+                      if hashlib.sha256(data).hexdigest() != expected:
+                          raise ValueError(f'Pruefsummenfehler: {name}')
+                      payload[name] = data
+              return manifest, payload
+          
+          
+          def launch():
+              workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+              temporary = Path(os.environ['RUNNER_TEMP']).resolve()
+              if temporary == workspace or temporary.is_relative_to(workspace):
+                  raise ValueError('Arbeitsverzeichnis muss ausserhalb des Repositorys liegen.')
+              output = temporary / 'SWEET-Ergebnis'
+              target = temporary / 'SWEET-Arbeitskopie'
+              if target.exists() or target.is_symlink() or output.exists() or output.is_symlink():
+                  raise FileExistsError('Vorhandene Arbeitsdaten werden nicht ueberschrieben.')
+              output.mkdir()
+              try:
+                  archive = workspace / 'SWEET.zip'
+                  manifest, payload = read_package(archive)
+                  target.mkdir()
+                  for name, data in payload.items():
+                      destination = target / name
+                      destination.parent.mkdir(parents=True, exist_ok=True)
+                      with destination.open('xb') as stream:
+                          stream.write(data)
+                  receipt = {'package_version': manifest.get('version'),
+                             'zip_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+                             'verified_files': len(payload) - 1,
+                             'repository_commit': os.environ.get('GITHUB_SHA'),
+                             'extraction_directory': str(target),
+                             'repository_files_modified_by_loader': False}
+                  (output / 'PAKETPRUEFUNG.json').write_text(json.dumps(receipt, indent=2) + '\n')
+                  env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
+                             SWEET_RUNNER_ABI='1', SWEET_WORK=str(temporary / 'SWEET-Work'))
+                  subprocess.run([sys.executable, '-B', str(target / 'START.py'),
+                                  '--output', str(output)], cwd=target, env=env, check=True)
+                  print('SWEET: Paket ausgefuehrt. Ergebnis steht im Actions-Artefakt.')
+              except Exception:
+                  (output / 'STARTFEHLER.txt').write_text(traceback.format_exc(), encoding='utf-8')
+                  raise
+          
+          
+          if __name__ == '__main__':
+              launch()
+          PY_LOADER
+
+      - name: Ergebnis sichern
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: SWEET-Ergebnis-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/SWEET-Ergebnis/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          archive: true
