@@ -1,1 +1,36 @@
+SWEET R4.2 – Installation des Quellenprüfungs-Fixes
+================================================
+Voraussetzung: Die R4-Ordnerstruktur und R4.1 sind bereits in derselben Repo vorhanden.
+Dieses Paket enthält nur geänderte/zusätzliche SWEET-Dateien. Es ist kein Voll-Repository.
 
+In das Repository-Stammverzeichnis mit unveränderten Pfaden übernehmen:
+  .github/workflows/sweet-oem-source-audit.yml       ERSETZEN
+  common/scripts/sweet/audit.py                    ERSETZEN
+  common/update/sweet/tests/test_source_mutation.py NEU
+  docs/sweet/r4.2/                                 NEU
+
+Nicht nur die YAML ersetzen. Die neue Quellenprüfung benötigt das neue audit.py;
+der neue Test wird automatisch zusammen mit den vorhandenen Tests entdeckt.
+Vorhandene Ordner zusammenführen, nicht löschen. Keine VEUX-Datei ersetzen.
+Stock-Konfiguration, source_lock.json und vorhandene OEM-Defconfigs behalten.
+
+Nach Commit auf main:
+  Actions -> SWEET OEM Quellenpruefung R4.2 -> Run workflow -> main
+Einen NEUEN Lauf starten; der bisherige R4.1-Lauf bleibt dessen alter Commit.
+Der Workflow ist manuell und hat nur contents: read. Keine automatische Flash-
+oder Kernel-Build-Aktion. Ein grüner Sammellauf ist ausdrücklich kein Kernel-Pass.
+
+Der eigentliche Abbruch ist korrigiert: Kconfig arbeitet jetzt in einem separaten
+Git-Worktree. Das ursprüngliche Quellarchiv und dessen Checkout bleiben unverändert.
+Die sechs vom gepinnten Xiaomi-Makefile erzeugten Platzhalter/Links werden genau
+auf Typ, Inhalt und Linkziel geprüft. Andere Änderungen bleiben Fehler.
+
+Gelbe Stock-Konfigurationswarnungen sind weiterhin erwartete fachliche Befunde:
+8/43 kritische Optionen fehlen im alten, 7/43 im neuen Quellstand. Diese Warnungen
+werden nicht versteckt. Sie sind von der früheren Node20-Warnung zu unterscheiden.
+
+Die beiden bisherigen Artefakte sind vollständig heruntergeladen und geprüft;
+ein erneuter Upload durch den Nutzer ist nicht nötig. R4.2 selbst wurde noch
+nicht auf GitHub ausgeführt. Lokale Tests und Grenzen: PRUEFBERICHT.txt.
+
+Keine AK3-Datei, kein neuer Kernel, keine neue boot.img enthalten. Nicht flashen.

@@ -1,0 +1,217 @@
+SWEET R4.2 – REPOSITORY-, LAUF- UND ARTEFAKTPRÜFUNG
+Datum: 03.10.2026
+Repo: Chrizz100/veux-nongki-universal-kernel
+Geprüfter main-/Run-Commit: 500fea9b73fe2dcf5c4f463c9b545ce1520d325c
+Workflow-Lauf: 37094699976, Versuch 1
+
+ERGEBNIS
+Beide Originalartefakte sind vollständig heruntergeladen, intern konsistent und
+enthalten unveränderte, exakt den offiziellen Git-Quellbäumen entsprechende
+OEM-Quellarchive. Der rote K6A-Job ist kein fehlgeschlagener Kernelbuild und kein
+beschädigter Download. Die letzte Unverändert-Prüfung des Auditprogramms bricht ab,
+nachdem beide olddefconfig-Aufrufe schon erfolgreich und byte-idempotent waren.
+
+1. PRÄZISE URSACHE
+Das gepinnte K6A-Makefile erzeugt beim Einlesen – trotz externem O=Buildverzeichnis –
+vier leere Dateien und zwei absolute Symlinks im Quellbaum (LINK_DUM, Zeilen293–302):
+  drivers/staging/ktrace/Kconfig
+  drivers/staging/ktrace/Makefile
+  drivers/staging/rtmm/Kconfig
+  drivers/staging/rtmm/Makefile
+  include/linux/ktrace.h -> <Quellbaum>/include/dum/ktrace.h
+  include/linux/rtmm.h   -> <Quellbaum>/include/dum/rtmm.h
+R4.1 wertete jeden nichtleeren Git-Status pauschal als unerwartete Mutation.
+Die konkrete Dateiliste/das Diff fehlten im Fehlerbericht. Das war eine fehlerhafte
+Annahme unseres Prüfskripts über die Nebenwirkungen dieses OEM-Makefiles.
+Die gleichen sechs Einträge wurden lokal mit der echten Quelle reproduziert;
+keine versionierten Quelldateien wurden dabei geändert. Nicht nur nachgestellt
+mit einer künstlichen Fehlermeldung. Details: evidence/r41_failure_reproduction.json.
+Diese Platzhalter stellen fehlende RTMM/KTRACE-Funktionen NICHT wieder her.
+
+2. BEIDE ARTEFAKTE
+
+sweet-r-oss
+  ZIP: SWEET-R4.1-sweet-r-oss-37094699976-1.zip
+  ZIP-Größe: 177153450 Bytes
+  ZIP-SHA256: 9a469afc9b9c3d4e8d56c695f39d5e7cd077a00f0acf4c542773f2045fcc9fe8
+  Vergleich mit GitHub-Digest: PASS; ZIP-CRC aller Einträge: PASS.
+  ZIP-Dateien: 16; SHA256-Manifest: 15/15 PASS.
+  Quellarchiv-SHA256: 1884dfdf4b8530960feeb69d35023fd2a86517015cda8b5d8e5f2e6d4668639f
+  Datei-/Symlinkeiträge: 66901; davon Symlinks: 40.
+  Offizieller und unabhängig rekonstruierter Git-Tree: 973be06bdb997a9c9e6ae78bce8fbc7329adb95a
+  Tree-Abgleich: PASS.
+  Beide olddefconfig-Aufrufe im ursprünglichen CI: erfolgreich, byte-idempotent.
+  Kritische Stock-Optionen: 8 von 43 nicht erhalten.
+  Insgesamt aktive Stock-y/m-Optionen nicht erhalten: 23.
+  Original-Jobstatus: success.
+
+sweet_k6a-r-oss
+  ZIP: SWEET-R4.1-sweet_k6a-r-oss-37094699976-1.zip
+  ZIP-Größe: 180028220 Bytes
+  ZIP-SHA256: 622d8c2ad9a8f60d3c7786f60c1536b6b6c508f8652047dfc4ffee5bf64f001c
+  Vergleich mit GitHub-Digest: PASS; ZIP-CRC aller Einträge: PASS.
+  ZIP-Dateien: 17; SHA256-Manifest: 16/16 PASS.
+  Quellarchiv-SHA256: 75ef98576fd1c224cde32fd021d5d0d275b61cb6f5f21d042b6e86b4fbe60860
+  Datei-/Symlinkeiträge: 67141; davon Symlinks: 43.
+  Offizieller und unabhängig rekonstruierter Git-Tree: 5f23e786f02e80d181217ece9355f5702af23fbe
+  Tree-Abgleich: PASS.
+  Beide olddefconfig-Aufrufe im ursprünglichen CI: erfolgreich, byte-idempotent.
+  Kritische Stock-Optionen: 7 von 43 nicht erhalten.
+  Insgesamt aktive Stock-y/m-Optionen nicht erhalten: 16.
+  Original-Jobstatus: failure (abschließende Git-Status-Prüfung).
+
+Methode: Zusätzlich zu ZIP-CRC und SHA256 wurden beide inneren Quellarchive
+entpackt und sämtliche Datei-/Symlinkobjekte und Git-Modi in einen lokalen Git-
+Index aufgenommen. git write-tree ergibt genau den offiziellen Upstream-Tree.
+Bei der sicheren Tar-Extraktion normalisierte der Extraktor einen Linktext;
+der ursprüngliche, geprüfte Linktext aus dem Archiv wurde vor dem Tree-Abgleich
+wiederhergestellt. Das ZIP/Quellarchiv selbst wurde nicht geändert.
+Lokale Reproduktions-Commits sind synthetische Snapshots mit identischen Trees;
+sie werden NICHT als ursprüngliche Upstream-Commitobjekte ausgegeben.
+
+3. STOCK-KOMPATIBILITÄT: WEITERHIN NICHT FREIGEGEBEN
+Der grüne alte Job bedeutete erfolgreiche Beweissammlung, nicht passenden Kernel.
+Die alte Quelle verliert unter anderem K6-Goodix, FocalTech-K6 und LN8000.
+Die neue Quelle verliert den Stock-Fingerabdruckschalter FS_TEE und AW8624-Haptik.
+Beide verlieren die fünf Stock-UFS-Erweiterungsschalter UFSFEATURE, UFSHPB, UFSTW,
+UFSTW_IGNORE_GUARANTEE_BIT und SCSI_SKHPB. Die grundlegenden UFS-Hostcontroller-
+Schalter bleiben erhalten; es wird kein vollständiger Ausfall des Speichers
+behauptet. Weitere MIUI-spezifische Stock-Optionen fehlen ebenfalls.
+Eine fehlende Option ist ein belegter Konfigurationsunterschied, nicht schon ein
+isolierter Beweis für einen späteren Laufzeitfehler. Keine Abschaltung der
+Prüfung als Ersatz für einen fachlichen Treiber-/Abhängigkeitsabgleich.
+
+Vollständige Liste verlorener aktiver Stock-Optionen:
+
+sweet-r-oss:
+  CONFIG_CHARGER_LN8000
+  CONFIG_CJSON
+  CONFIG_HWCONF_MANAGER
+  CONFIG_MIGT
+  CONFIG_MIHW
+  CONFIG_MILLET
+  CONFIG_MIUI_ZRAM_MEMORY_TRACKING
+  CONFIG_MI_MEMORY_SYSFS
+  CONFIG_MI_RECLAIM
+  CONFIG_NEW_TOUCH_GAMEMODE
+  CONFIG_PERF_CRITICAL_RT_TASK
+  CONFIG_RTMM
+  CONFIG_SCSI_SKHPB
+  CONFIG_SF_BINDER
+  CONFIG_TOUCHSCREEN_FTS_K6
+  CONFIG_TOUCHSCREEN_GOODIX_GTX9896_GESTURE
+  CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6
+  CONFIG_TOUCHSCREEN_GOODIX_GTX9896_TOOLS
+  CONFIG_TOUCHSCREEN_GOODIX_GTX9896_UPDATE
+  CONFIG_UFSFEATURE
+  CONFIG_UFSHPB
+  CONFIG_UFSTW
+  CONFIG_UFSTW_IGNORE_GUARANTEE_BIT
+
+sweet_k6a-r-oss:
+  CONFIG_FINGERPRINT_FS_TEE
+  CONFIG_INPUT_AW8624_HAPTIC
+  CONFIG_MIGT
+  CONFIG_MIHW
+  CONFIG_MILLET
+  CONFIG_MIUI_ZRAM_MEMORY_TRACKING
+  CONFIG_MI_MEMORY_SYSFS
+  CONFIG_MI_RECLAIM
+  CONFIG_PERF_CRITICAL_RT_TASK
+  CONFIG_RTMM
+  CONFIG_SCSI_SKHPB
+  CONFIG_SF_BINDER
+  CONFIG_UFSFEATURE
+  CONFIG_UFSHPB
+  CONFIG_UFSTW
+  CONFIG_UFSTW_IGNORE_GUARANTEE_BIT
+
+Beide OEM-Quellen bleiben 4.14.180; die Stock-Referenz ist 4.14.190.
+Die Versionslücke ist nicht durch Umbenennen behoben. ReSukiSU, SUSFS und NoMount
+wurden in diesem Prüfschritt nicht in einen Kernel integriert oder kompiliert.
+
+4. R4.2-KORREKTUR
+- Separater, an denselben Commit gebundener Git-Worktree für Kconfig.
+- Ursprünglicher Archiv-Checkout vor und nach Kconfig separat auf Unverändertheit geprüft.
+- Nur für den exakten K6A-Pin werden die vier tatsächlich leeren regulären Dateien
+  und die zwei Symlinks mit exakten absoluten Zielen im abgeleiteten Worktree
+  akzeptiert; unvollständige Sets, andere Inhalte/Ziele/Typen bleiben Fehler.
+- Versionierte Änderungen, zusätzliche Dateien und auch Git-ignorierte zusätzliche
+  Dateien werden geprüft. Keine gitignore-Erweiterung, kein Reset, keine pauschale
+  Fehlerunterdrückung und kein continue-on-error.
+- Vorher-/Nachher-Zustände und Diff werden als Artefakt gesichert; Fehlerdiagnose
+  bleibt auch bei fehlgeschlagenem Kconfig erhalten.
+- Vollständige Liste verlorener aktiver Stock-Optionen ergänzt. Die unveränderte
+  43er-Fachprüfung erscheint bei Befunden ausdrücklich als Warnung/Blocker.
+- Die zwei Actions sind auf am 03.10.2026 gelesene Commit-Pins mit tatsächlich
+  dokumentiertem node24 umgestellt:
+  checkout fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 (v5)
+  upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a (v7)
+  ZIP-Ausgabe explizit archive: true. Nicht bloß ein höheres Tag angenommen.
+- Der vorherige runner.temp-Kontextfix bleibt bestehen. Die neue Workflow-
+  Regression wird durch Mitnahme genau dieser YAML im Sparse-Checkout ausführbar.
+
+5. TATSÄCHLICH AUSGEFÜHRTE VALIDIERUNG
+72 lokale Selbsttests erfolgreich: 44 bisherige + 28 zusätzliche Tests.
+Die 72 Tests erneut nach einem echten lokalen Git-Sparse-Checkout und aus fremdem
+Arbeitsverzeichnis erfolgreich; VEUX-Sentinels nicht eingecheckt, Checkout danach
+unverändert. Das war ein lokaler Layouttest, kein GitHub-Actions-Lauf.
+
+Der neue Kconfig-Ausführungsteil wurde zusätzlich gegen BEIDE vollständigen
+OEM-Quellbäume mit je zwei echten make olddefconfig-Aufrufen ausgeführt. Alle vier
+Aufrufe erfolgreich. Beide Ergebnisse byte-identisch zu den ursprünglich im CI
+unter GCC11 erzeugten resolved.config-Dateien. Zweite Aufrufe byte-idempotent.
+Originale Quellcheckouts sauber; abgeleitete K6A-Arbeitskopie nur mit den sechs
+exakt erwarteten Outputs. Details/Logs in evidence/local_kconfig/.
+Lokal kam Host-GCC14 mit ARCH=arm64 für die Kconfig-Reproduktion zum Einsatz,
+NICHT zur Kompilierung eines ARM64-Kernels. CI bleibt beim AArch64-GCC für diesen
+Konfigurationsaudit; eine spätere Release-Clang-Toolchain wurde nicht ersetzt.
+
+YAML1.2 ohne doppelte Schlüssel geparst, dokumentierte Action-Inputs und Pins
+gegen die gelesenen action.yml-Dateien geprüft. Kontextplatzierung und Pfade
+kontrolliert. Alle drei Shellblöcke mit bash -n erfolgreich. Python-Syntax aller
+vier Skript-/Testdateien mit Python3.10-Grammatik geprüft.
+Stock-Konfiguration, beide OEM-Defconfigs und Quell-Pins bytegleich zu R4 erhalten.
+Die ursprünglichen boot.img, dtbo.img und vbmeta.img sind nach SHA256 unverändert.
+
+NICHT AUSGEFÜHRT / NICHT BEHAUPTET:
+actionlint, shellcheck, kompletter GitHub-Actions-Lauf von R4.2, vollständiger
+End-to-End-Test von erneutem Remote-Clone bis GitHub-Upload mit den neuen Actions,
+Kernelcompile, Vendor-Modul-ABI-Prüfung, Gerätetest, Flashen.
+Die lokalen Kconfig-Tests testen die neue Ausführungsfunktion direkt; der komplette
+Remote-Download-/Uploadpfad wurde dabei nicht vorgetäuscht.
+Kein Green Pass für Kernel/AK3/boot.img; nur die beschriebenen lokalen Prüfungen.
+
+6. PRÜFUMFANG UND REPOSITORY-SCHUTZ
+Gelesen/geprüft: konkreter Run und Fehlerlog, SWEET-Workflow, vollständiges
+Auditprogramm und vorhandene lokale SWEET-Tests/Referenzen, beide Artefakte,
+vollständige Quellarchiv-/Tree-Integrität, Quellbaum-Dateidifferenzen und die
+relevanten Kconfig-/Makefile-Befunde. Kein semantisches Vollaudit jeder C-Datei
+und keine vollständige Regression aller unabhängigen VEUX-Workflows.
+Datei-/Objektvergleich neu gegen alt: 284 hinzugefügt, 44 entfernt, 882 geändert; keine Aussage über Vollständigkeit eines nötigen Backports.
+Keine Datei in GitHub geändert, kein Workflow gestartet, keine Quelle gepatcht.
+Das Downloadpaket verändert ausschließlich SWEET-Workflow/Prüfcode/Tests/Belege;
+keine vorhandenen VEUX-Dateien oder globalen Updater-Manifeste.
+
+7. INSTALLATION
+Die .github- und common-Ordner des Pakets mit ihren vollständigen Pfaden in die
+bestehende Repo übernehmen, docs/sweet/r4.2 ergänzen. YAML UND audit.py ersetzen,
+neue test_source_mutation.py hinzufügen. Keine Ordner vollständig löschen.
+Danach einen neuen manuellen R4.2-Lauf auf main starten, nicht den alten Commit
+wiederholen. Die bereits geprüften Originalartefakte brauchen keinen neuen Upload.
+Installationsdetails: docs/sweet/r4.2/INSTALLATION.txt.
+
+Originalartefakte sind Analyse-/Quellenpakete, keine AK3-Pakete. Auch R4.2 enthält
+keinen Kernel, keine neue boot.img und ist nicht flashbar.
+
+QUELLENNACHWEISE (am 03.10.2026 live gelesen)
+repository_snapshot: https://github.com/Chrizz100/veux-nongki-universal-kernel/tree/500fea9b73fe2dcf5c4f463c9b545ce1520d325c
+run: https://github.com/Chrizz100/veux-nongki-universal-kernel/actions/runs/37094699976
+original_workflow: https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/500fea9b73fe2dcf5c4f463c9b545ce1520d325c/.github/workflows/sweet-oem-source-audit.yml
+original_audit: https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/500fea9b73fe2dcf5c4f463c9b545ce1520d325c/common/scripts/sweet/audit.py
+oem_makefile_side_effect: https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/10c33d40a11ecdc75cc1dadb5bd07894bab05815/Makefile#L293-L302
+old_upstream_tree: https://api.github.com/repos/MiCode/Xiaomi_Kernel_OpenSource/git/trees/973be06bdb997a9c9e6ae78bce8fbc7329adb95a
+new_upstream_tree: https://api.github.com/repos/MiCode/Xiaomi_Kernel_OpenSource/git/trees/5f23e786f02e80d181217ece9355f5702af23fbe
+checkout_action_yml: https://github.com/actions/checkout/blob/fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09/action.yml
+upload_action_yml: https://github.com/actions/upload-artifact/blob/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/action.yml
+artifact_metadata: https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel/actions/runs/37094699976/artifacts
