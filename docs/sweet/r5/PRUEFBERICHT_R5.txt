@@ -1,0 +1,237 @@
+SWEET – PRÜFSCHRITT R5: ABGELEITETER QUELLKANDIDAT UND OFFENE BUILD-HÜRDEN
+Datum: 03.10.2026
+Gerät: Redmi Note 10 Pro / sweet / Stock-Referenz V14.0.9.0.TKFEUXM
+Ziel: stocknaher Non-GKI-Kernel mit ReSukiSU, SUSFS und NoMount; später AK3 und boot.img.
+
+KURZERGEBNIS
+Eine separate K6A-basierte Testquelle wurde hergestellt und aus den ausgelieferten
+Patchdateien unabhängig erneut erzeugt. In ihr sind FortSense-Fingerabdruck und
+AW8624-Haptik wieder im tatsächlichen Kconfig-Ergebnis enthalten. Die übrigen
+bereits vorhandenen Konfigurationswerte bleiben dabei unverändert.
+
+Fortschritt gegenüber der unveränderten K6A-Quelle:
+- aktive Stock-Abweichungen: 16 -> 14;
+- Abweichungen in der bisherigen ausgewählten 43er-Prüfung: 7 -> 5;
+- Kconfig-Parserwarnungen: 17 -> 0 pro geprüfter Konfigurationsauflösung.
+Diese Zählwerte sind KEINE prozentuale Geräte-, Treiber- oder ABI-Freigabe.
+
+Neu bestätigt ist ein konkretes Build-Hindernis: linux/millet.h fehlt im
+vollständigen K6A-Quellbaum, wird aber in kernel/signal.c:47 und
+ drivers/android/binder.c:74 ohne CONFIG_MILLET-Guard eingebunden.
+Die separate Header-Verfügbarkeitsprobe schlägt entsprechend fehl.
+Das wurde NICHT als voller Kernel-Compile ausgegeben.
+
+STATUS
+SOURCE_PREPARATION: PASS für den unten festgelegten K6A-Baum.
+KCONFIG_REPRODUKTION: PASS, mit weiterhin 14 aktiven Stock-Abweichungen.
+KERNEL_COMPILE / MODUL-ABI / GERÄTETEST: NICHT AUSGEFÜHRT.
+AK3 / GEÄNDERTE BOOT.IMG: NICHT ERZEUGT.
+FLASHFREIGABE: NEIN.
+
+1. QUELLEN UND ABGRENZUNG
+Die Repo main wurde zu Beginn live gelesen:
+0272e50b6c9cc27cf7a71bb58b9d5d5ebf23fae0 (unveränderter R4.2-Stand).
+Kein Remote-Schreibzugriff und kein Workflow-Start wurden durchgeführt.
+
+Basis: MiCode/Xiaomi_Kernel_OpenSource
+Branch: sweet_k6a-r-oss
+Commit: 10c33d40a11ecdc75cc1dadb5bd07894bab05815
+Vollständiger Basis-Tree: 5f23e786f02e80d181217ece9355f5702af23fbe
+
+FortSense-Spender: offizielle sweet-r-oss-Quelle
+Commit: 758bb7ef50af360e728662a1ed3b3a1b977a2f13
+Die neun Dateien des fs_tee-Unterordners wurden unverändert übernommen.
+Keine weiteren Fingerabdrucktreiber aus der alten Quelle wurden kopiert.
+
+Eingaben sind die bereits geprüften CI-Artefakte aus Run 37097222009.
+Ihre ZIP-SHA256 wurden erneut verifiziert. Die entpackten Originalquellen
+wurden nicht durch make verändert. Die Roharchive bleiben unverändert.
+Hinweis zur Extraktion: Python tarfile data_filter normalisierte den Text
+EINES PowerPC-Test-Symlinks. Dieser lokale Extraktionseffekt wurde erkannt
+und auf den exakten Linktext aus dem Archiv zurückgeführt. Danach stimmt
+auch der direkt vom Dateisystem berechnete gesamte Basis-Git-Tree exakt.
+Die Abweichung betraf keine Android-Treiber und keine Archivbytes.
+
+2. HERGESTELLTE PATCHREIHE: VIER GETRENNTE PATCHES, 17 DATEIEN
+0001-sweet-restore-fortsense-aw8624.patch
+- Neun Originaldateien unter drivers/input/fingerprint/fs_tee/ ergänzt.
+- FortSense in übergeordnetem Fingerprint-Kconfig und Makefile angebunden.
+- Vorhandene AW8624-Kconfig-/Makefile-Einbindung wieder aktiviert.
+- AW8624-C- und Headerdateien aus K6A NICHT durch den älteren Stand ersetzt.
+- FPC1540 und AW862XX bleiben in der stockbasierten .config ausgeschaltet.
+
+Der K6A-AW8624-Treiber unterscheidet sich vom älteren offiziellen Stand in
+IRQ-Zustandsführung, Standby-/Playback-Interrupts, RTP-Dateiliste und einem
+Fehlerpfad für Speicherfreigabe. Diese Unterschiede sind keine bloßen
+Namensänderungen. Ihre Gerätelauffähigkeit wurde hier nicht bestätigt.
+
+0002-k6a-kconfig-lf-only.patch
+- Ausschließlich CRLF -> LF in genau ZWEI Dateien:
+  drivers/input/touchscreen/k6_focaltech_3658u/Kconfig (14 CRLF)
+  drivers/input/misc/aw862xx_haptic/Kconfig (12 CRLF).
+- Der übergeordnete drivers/input/touchscreen/Kconfig enthält KEIN CR.
+  Seine in Logs genannte Zeile ist Include-Kontext. Frühere Formulierungen
+  von drei tatsächlich betroffenen Dateien waren zu weitgehend.
+
+0003-remove-unused-perf-helper-kconfig.patch
+- Nur die untypisierte, unbenutzte PERF_HELPER-Kconfig-Definition entfernt.
+- Volltextprüfung ergab als CONFIG_PERF_HELPER-Referenz lediglich die bereits
+  auskommentierte Makefile-Zeile. Keine aktive select/depends/C-Abfrage gefunden.
+- Tatsächlich wird perf_helper.o bereits über obj-y eingebaut!
+- Der Patch schaltet diesen vorhandenen Code NICHT aus und fügt kein
+  irreführendes neues CONFIG_PERF_HELPER=y hinzu.
+
+0004-perf-helper-bounds-and-format.patch
+- Der lokale Schreibpuffer besitzt nun ein zusätzliches Nullterminator-Byte.
+  Die akzeptierte maximale Eingabelänge bleibt 128 Byte.
+- Fehlendes __func__-Argument in einer printk-Zeile mit %s ergänzt.
+- Bei exakt 128 Nicht-Null-Bytes überschreibt die Originalfassung alle
+  initialen Nullbytes, bevor sie den Puffer als String weitergibt.
+- Ein isolierter C-Test mit der extrahierten Schreibfunktion und derselben
+  snprintf-Stringoperation reproduziert den Fehler mit AddressSanitizer.
+- Längen 0, 127 und 129: Originaltest erwartungsgemäß bestanden.
+- Länge 128: Originaltest ASan stack-buffer-overflow (Lesen über das Ende).
+- Korrigierte Fassung: alle vier Grenzfälle bestanden.
+- Das ist ein lokaler Userspace-Grenzwerttest mit Kernel-API-Ersatzfunktionen,
+  KEIN Test auf dem Telefon und kein Nachweis einer ausnutzbaren Geräteschwachstelle.
+
+3. ECHTE KONFIGURATIONSAUFLÖSUNG UND REPRODUKTION
+Zunächst wurde die unveränderte K6A-Quelle in einer getrennten Kopie mit der
+Stock-Eingabe konfiguriert. Das Ergebnis ist BYTEGLEICH zur resolved.config
+aus dem erfolgreichen GitHub-Lauf.
+
+Anschließend zwei echte olddefconfig-Aufrufe am R5-Testbaum:
+make -C KANDIDAT O=SEPARATER_OUTPUT ARCH=arm64 CC=gcc HOSTCC=gcc CROSS_COMPILE= olddefconfig
+Beide erfolgreich; zweiter Aufruf byte-idempotent.
+
+Danach der ausgelieferte Quellen-Assembler prepare_candidate_r5.py auf einer
+neuen Kopie: vollständige Eingabe-Treeprüfung, Patch-SHA256, git apply --check,
+Patchanwendung, vollständiger Dateibaumvergleich und erneute Originalprüfung.
+Es wurden exakt 17 erwartete Dateiobjekte geändert/ergänzt, keine anderen.
+Kandidaten-Tree VOR make: 1b8d187a75cebf4b83096474a965d62a81b3e10b
+
+Am neu erzeugten Baum wiederum zwei echte olddefconfig-Aufrufe:
+Beide erfolgreich, byte-idempotent und bytegleich zum ersten R5-Testbaum.
+
+Ergebnis-SHA256 der aufgelösten R5-Konfiguration:
+705720e2e9443b41a2ad60a1ac79306bc3b4dd98a6e44c893f88d66f00066bd9
+
+Es kommen gegenüber der K6A-Baseline genau diese beiden Werte hinzu:
+CONFIG_FINGERPRINT_FS_TEE=y
+CONFIG_INPUT_AW8624_HAPTIC=y
+Keine bestehenden Werte geändert; keine Konfigurationswerte entfernt.
+Die Stock-Eingabe blieb unverändert.
+
+Konfigurationstoolchain: Host-GCC 14.2.0, ARCH=arm64, ohne Cross-Compiler.
+Das genügt hier für die ausgeführten Kconfig-Hostprogramme, ist aber NICHT
+unsere freigegebene ARM64-Kerneltoolchain. Clang-Stock-Build nicht ausgeführt.
+Bei frischem Bau des alten Kconfig-Hostprogramms gab GCC14 weiterhin eine
+separate dangling-pointer-Warnung aus. Die Aussage 17 -> 0 betrifft die
+Kconfig-Parserwarnungen, nicht pauschal jede Compilerwarnung im Log.
+
+4. HARDWARE- UND HEADERABGLEICH
+Der SWEET-DTBO-Eintrag 16 wurde erneut aus der ORIGINAL-dtbo.img extrahiert
+und mit der gesicherten Referenz bytegleich verglichen. Er enthält:
+- fs,fingerprint (FortSense);
+- awinic,aw8624_haptic;
+- goodix,gt9896;
+- focaltech,fts_K6;
+- lionsemi,ln8000.
+Das sind Beschreibungen möglicher Hardwarevarianten, keine Erkennung der
+tatsächlich im einzelnen Gerät bestückten oder aktiven Bauteile.
+
+FortSense sf_user.h wählt Qualcomm QSEE, nicht die MediaTek-Treiberpfade.
+Das wurde zusätzlich per C-Präprozessor-Makroauflösung geprüft. Die erwarteten
+DRM-Anmeldungen und dsi_bridge_interface_enable sind im K6A-Quellbaum samt
+Deklarationen vorhanden. Dies ist ein konkreter Abhängigkeitsabgleich,
+kein vollständiger Treiber-Linktest.
+
+Eine naive Include-Suche meldet im FortSense-Code auch wakelock.h,
+earlysuspend.h und tee_fp.h als fehlend. Diese liegen im geprüften Stock-/QSEE-
+Profil jedoch in nicht aktiven Alternativpfaden. linux/version.h ist ein
+normal generierter Kernelheader. Diese Fälle wurden NICHT mit dem echten
+fehlenden linux/millet.h gleichgesetzt.
+
+5. WICHTIGSTE NOCH OFFENE BUILD-HÜRDE: MILLET
+In K6A fehlen linux/millet.h und die vollständige zugehörige Implementierung.
+Trotzdem existieren MILLET-Aufrufstellen in Binder- und Signal-Code.
+Zwei Header-Includes sind nicht durch CONFIG_MILLET geschützt:
+  kernel/signal.c:47
+  drivers/android/binder.c:74
+Binder_alloc.c bindet den Header dagegen innerhalb eines CONFIG_MILLET-Guards ein.
+
+Die gezielte Header-Probe mit gcc -E -nostdinc -I.../include -include linux/millet.h
+scheitert an der fehlenden Datei. Sie bildet NICHT einen vollständigen Kernelbuild ab.
+Aus Quellcode und fehlendem Header folgt jedoch ein konkretes Hindernis für
+unverändertes Kompilieren dieser Dateien mit den vorhandenen Headern.
+
+Keine leere Ersatz-millet.h und kein kommentarloses Entfernen dieser Includes
+wurden als Lösung verwendet. Eine solche Maßnahme würde keine Stock-MILLET-
+Unterstützung wiederherstellen. Gefundene öffentliche Fremdgeräte-Treffer sind
+noch keine freigegebenen Spender für SWEET.
+
+6. VERBLEIBENDE 14 AKTIVE STOCK-ABWEICHUNGEN
+UFS (fünf):
+CONFIG_UFSFEATURE
+CONFIG_UFSHPB
+CONFIG_UFSTW
+CONFIG_UFSTW_IGNORE_GUARANTEE_BIT
+CONFIG_SCSI_SKHPB
+
+MIUI-/Speicher-/Scheduler-/Binder-Erweiterungen (neun):
+CONFIG_MIGT
+CONFIG_MIHW
+CONFIG_MILLET
+CONFIG_MIUI_ZRAM_MEMORY_TRACKING
+CONFIG_MI_MEMORY_SYSFS
+CONFIG_MI_RECLAIM
+CONFIG_PERF_CRITICAL_RT_TASK
+CONFIG_RTMM
+CONFIG_SF_BINDER
+
+Die grundlegenden UFS-/Qualcomm-Hostcontroller, vorhandene Verschlüsselung,
+SELinux, Modulversionsprüfung, Akkuverifikation, K6-Touch und Laden bleiben
+in dieser Konfigurationsstufe erhalten. Das ersetzt keine Vendor-ABI-Prüfung.
+RTMM wird im OEM-Baum teilweise durch Dummy-Header mit false-Rückgaben ersetzt;
+diese sind keine vollständige Stock-RTMM-Implementierung.
+
+7. REIHENFOLGE BIS ZU AK3 UND BOOT.IMG
+A. MILLET und weitere fehlende MIUI-Bestandteile samt Aufrufstellen vollständig
+   abgleichen; UFS-Erweiterungen und ihre Host-/SCSI-Abhängigkeiten klären.
+B. Versionsdelta 4.14.180 -> 4.14.190 anhand echter Änderungen abgleichen.
+   Bloße Änderung des Makefile-SUBLEVEL ist nicht vorgesehen. Es ist weiterhin
+   keine bitgenaue Reproduktion von g7da93debc0ee zugesagt.
+C. Geeignete Release-Toolchain festlegen, echte ARM64-Baseline kompilieren und
+   alle neuen Hardwaretreiber samt Link-Abhängigkeiten prüfen.
+D. Vendor-Module/.ko und Symbolversionsverträglichkeit prüfen. Die drei
+   ursprünglichen Images enthalten dafür nicht die vollständigen Vendor-Module.
+E. Passende festgelegte 4.14-Integration von ReSukiSU + SUSFS + NoMount bauen.
+   Keine pauschale Übernahme des VEUX-5.4-Patchsatzes.
+F. Erst dann AK3 und boot.img paketieren, Stock-Ramdisk/Boot-v2-DTB-Layout
+   erhalten, Integritäts-/Paketprüfungen durchführen und getrennt Gerätetests
+   (Boot, Touch, Fingerabdruck, Vibration, Kamera, WLAN, USB/MTP, Off-Laden, Suspend).
+
+8. LOKALE TESTS, LIEFERUNG UND GRENZEN
+9 neue Selbsttests des Quellen-Assemblers bestanden, darunter Vergleich der
+Tree-Berechnung mit echtem Git, Symlink-/Modusfälle, falsche Quelle, falscher
+Patch, unerwartete Änderungen und Schutz bestehender Ausgabeverzeichnisse.
+Die echte Patchanwendung wurde zusätzlich am gesamten gepinnten Baum ausgeführt.
+Die 72 bestehenden R4.2-Tests wurden in diesem R5-Schritt nicht erneut ausgeführt;
+es wird kein neuer 81er-CI-Pass behauptet.
+
+Keine neue YAML erzeugt, keine bestehenden SWEET-/VEUX-Repo-Dateien geändert.
+R4.2 bleibt die Prüfung UNVERÄNDERTER Referenzen. Diese R5-Patches dürfen nicht
+still in seinen gepinnten OEM-Checkout eingebaut und als Original ausgegeben werden.
+R5 ist ein lokaler, nachvollziehbarer Quellkandidat für den folgenden Buildschritt,
+keine Kernel-Freigabe und noch kein auszuführender neuer GitHub-Workflow.
+
+Die Original-Images sind nach erneuter SHA256-Prüfung unverändert.
+Alle Ergebnisdateien, Quell- und Patchprovenienz liegen im R5-Paket.
+
+QUELLEN
+https://github.com/Chrizz100/veux-nongki-universal-kernel/tree/0272e50b6c9cc27cf7a71bb58b9d5d5ebf23fae0
+https://github.com/MiCode/Xiaomi_Kernel_OpenSource/tree/10c33d40a11ecdc75cc1dadb5bd07894bab05815
+https://github.com/MiCode/Xiaomi_Kernel_OpenSource/tree/758bb7ef50af360e728662a1ed3b3a1b977a2f13
+https://docs.kernel.org/kbuild/kconfig-language.html
+Konkrete neue Quellstellen: drivers/misc/Makefile:76-77,
+drivers/misc/perf_helper.c:92-123, kernel/signal.c:47, drivers/android/binder.c:74.
