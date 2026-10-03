@@ -1,0 +1,21 @@
+diff --git a/drivers/misc/perf_helper.c b/drivers/misc/perf_helper.c
+--- a/drivers/misc/perf_helper.c
++++ b/drivers/misc/perf_helper.c
+@@ -91,7 +91,7 @@
+ static ssize_t perflock_records_write(struct file *file, const char __user *userbuf,
+ 		size_t count, loff_t *data)
+ {
+-	char buf[MAX_ONE_RECORD_SIZE] = {0};
++	char buf[MAX_ONE_RECORD_SIZE + 1] = {0};
+ 
+ 	if (count > MAX_ONE_RECORD_SIZE)
+ 		return -EINVAL;
+@@ -118,7 +118,7 @@
+ 
+ 	entry = proc_create("perflock_records", 0664, NULL, &perflock_records_ops);
+ 	if (!entry)
+-		printk(KERN_ERR "%s: create perflock_records node failed\n");
++		printk(KERN_ERR "%s: create perflock_records node failed\n", __func__);
+ 
+ 	return 0;
+ }

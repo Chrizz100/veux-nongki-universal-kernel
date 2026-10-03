@@ -1,0 +1,62 @@
+diff --git a/drivers/input/misc/aw862xx_haptic/Kconfig b/drivers/input/misc/aw862xx_haptic/Kconfig
+--- a/drivers/input/misc/aw862xx_haptic/Kconfig
++++ b/drivers/input/misc/aw862xx_haptic/Kconfig
+@@ -1,12 +1,12 @@
+-config INPUT_AW862XX_HAPTIC
+-	tristate "Awinic AW862XX haptic driver"
+-	depends on I2C
+-	help
+-	  Say Y here if you have Awinic AW862XX haptic controller
+-	  chip in your system.
+-	  If unsure, say N.
+-	  To compile this driver as a module, choose M here: the
+-	  module will be called aw862xx haptic driver.
+-
+-
+-
++config INPUT_AW862XX_HAPTIC
++	tristate "Awinic AW862XX haptic driver"
++	depends on I2C
++	help
++	  Say Y here if you have Awinic AW862XX haptic controller
++	  chip in your system.
++	  If unsure, say N.
++	  To compile this driver as a module, choose M here: the
++	  module will be called aw862xx haptic driver.
++
++
++
+diff --git a/drivers/input/touchscreen/k6_focaltech_3658u/Kconfig b/drivers/input/touchscreen/k6_focaltech_3658u/Kconfig
+--- a/drivers/input/touchscreen/k6_focaltech_3658u/Kconfig
++++ b/drivers/input/touchscreen/k6_focaltech_3658u/Kconfig
+@@ -1,15 +1,15 @@
+-#
+-# Focaltech Touchscreen driver configuration
+-#
+-
+-config TOUCHSCREEN_FTS_K6
+-    bool "Focaltech Touchscreen"
+-    default n
+-    help
+-      Say Y here if you have Focaltech touch panel.
+-      If unsure, say N.
+-
+-config TOUCHSCREEN_FTS_DIRECTORY
+-    string "Focaltech ts directory name"
+-    default "focaltech_touch"
++#
++# Focaltech Touchscreen driver configuration
++#
++
++config TOUCHSCREEN_FTS_K6
++    bool "Focaltech Touchscreen"
++    default n
++    help
++      Say Y here if you have Focaltech touch panel.
++      If unsure, say N.
++
++config TOUCHSCREEN_FTS_DIRECTORY
++    string "Focaltech ts directory name"
++    default "focaltech_touch"
+     depends on TOUCHSCREEN_FTS_K6
+\ No newline at end of file

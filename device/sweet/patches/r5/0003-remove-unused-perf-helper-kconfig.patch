@@ -1,0 +1,15 @@
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -620,11 +620,6 @@
+         bool  "multi ldo wl2866d"
+         ---help---
+         This option enables multi ldo wl2866d.
+-
+-config PERF_HELPER
+-	default y
+-	help
+-	  this module support record perf lock history and other perf messages.
+ 
+ source "drivers/misc/c2port/Kconfig"
+ source "drivers/misc/eeprom/Kconfig"
