@@ -44,6 +44,6 @@ test_source_lock_is_in_sweet_lineage (test_layout.LayoutTests.test_source_lock_i
 test_sweet_not_selected_by_existing_veux_glob (test_layout.LayoutTests.test_sweet_not_selected_by_existing_veux_glob) ... ok
 
 ----------------------------------------------------------------------
-Ran 44 tests in 2.145s
+Ran 44 tests in 2.456s
 
 OK

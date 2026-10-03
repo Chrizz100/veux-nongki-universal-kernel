@@ -1,0 +1,232 @@
+{
+  "revision": "R4",
+  "scope": "Repository layout and local regression, NOT kernel or full CI validation",
+  "checks": [
+    {
+      "name": "YAML 1.2 without duplicate keys",
+      "passed": true
+    },
+    {
+      "name": "manual trigger only",
+      "passed": true
+    },
+    {
+      "name": "read-only repository permission",
+      "passed": true
+    },
+    {
+      "name": "separate SWEET concurrency",
+      "passed": true
+    },
+    {
+      "name": "two pinned OEM branches",
+      "passed": true
+    },
+    {
+      "name": "no automatic run or push permission",
+      "passed": true
+    },
+    {
+      "name": "sparse checkout exactly isolated namespaces",
+      "passed": true
+    },
+    {
+      "name": "credentials not persisted",
+      "passed": true
+    },
+    {
+      "name": "checkout path exists /common/scripts/sweet/",
+      "passed": true
+    },
+    {
+      "name": "checkout path exists /common/update/sweet/",
+      "passed": true
+    },
+    {
+      "name": "checkout path exists /device/sweet/",
+      "passed": true
+    },
+    {
+      "name": "checkout path exists /lineages/sweet/",
+      "passed": true
+    },
+    {
+      "name": "full action commit actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+      "passed": true
+    },
+    {
+      "name": "bash syntax Lokale Selbsttests",
+      "passed": true
+    },
+    {
+      "name": "bash syntax Werkzeuge fuer echte Kconfig-Aufloesung installieren",
+      "passed": true
+    },
+    {
+      "name": "bash syntax Gepinnte Quellen und olddefconfig pruefen",
+      "passed": true
+    },
+    {
+      "name": "full action commit actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "passed": true
+    },
+    {
+      "name": "temp output matches artifact upload",
+      "passed": true
+    },
+    {
+      "name": "SWEET artifact namespace",
+      "passed": true
+    },
+    {
+      "name": "Python AST common/update/sweet/tests/test_layout.py",
+      "passed": true
+    },
+    {
+      "name": "Python AST common/update/sweet/tests/test_audit.py",
+      "passed": true
+    },
+    {
+      "name": "Python AST common/scripts/sweet/audit.py",
+      "passed": true
+    },
+    {
+      "name": "reference preserved device/sweet/reference/stock.config",
+      "passed": true
+    },
+    {
+      "name": "reference preserved lineages/sweet/source_lock.json",
+      "passed": true
+    },
+    {
+      "name": "reference preserved lineages/sweet/reference/sweet-r-oss.defconfig",
+      "passed": true
+    },
+    {
+      "name": "reference preserved lineages/sweet/reference/sweet_k6a-r-oss.defconfig",
+      "passed": true
+    },
+    {
+      "name": "no VEUX build profile added",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file lineages/sweet/source_lock.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file lineages/sweet/README.md",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file lineages/sweet/reference/sweet_k6a-r-oss.defconfig",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file lineages/sweet/reference/sweet-r-oss.defconfig",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file device/sweet/README.md",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file device/sweet/reference/stock.config",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file common/update/sweet/README.md",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file common/update/sweet/tests/test_layout.py",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file common/update/sweet/tests/test_audit.py",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file common/scripts/sweet/audit.py",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/PRUEFUNG_R4.txt",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/README.md",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/evidence/sparse_checkout_tests.log",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/evidence/validation_r4.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/evidence/unit_tests.log",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/evidence/repository_layout_sources.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/PRUEFBERICHT_R3.txt",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/source_receipts_r3.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/oem_defconfig_diff.patch",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/validation_r3.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/sweet-r-oss_literal_comparison.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/sweet_k6a-r-oss_literal_comparison.json",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file docs/sweet/history/r3/evidence/local_selftests.log",
+      "passed": true
+    },
+    {
+      "name": "SWEET-only file .github/workflows/sweet-oem-source-audit.yml",
+      "passed": true
+    },
+    {
+      "name": "real sparse checkout excludes all VEUX fixture files",
+      "passed": true
+    },
+    {
+      "name": "44 unit tests pass after actual sparse checkout and unrelated cwd",
+      "passed": true
+    },
+    {
+      "name": "sparse checkout remains unchanged",
+      "passed": true
+    }
+  ],
+  "unit_tests": 44,
+  "unit_tests_passed": true,
+  "real_local_sparse_checkout_passed": true,
+  "kernel_built": false,
+  "github_actions_run": false,
+  "device_tested": false,
+  "release_eligible": false,
+  "actionlint_executed": false,
+  "shellcheck_executed": false,
+  "remote_changes": false
+}

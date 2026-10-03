@@ -1,0 +1,27 @@
+{
+  "repository": "Chrizz100/veux-nongki-universal-kernel",
+  "commit": "c9a02ed301336400fd184eddd6144f2595b444b4",
+  "read_date": "2026-10-02",
+  "reads": [
+    {
+      "url": "https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/c9a02ed301336400fd184eddd6144f2595b444b4/common/scripts/discover_build_matrix.py",
+      "scope": "full file",
+      "blob": "75815d8bc47e266ecd109d05f6b9882c735f64c4"
+    },
+    {
+      "url": "https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/c9a02ed301336400fd184eddd6144f2595b444b4/common/scripts/veux_update_engine.py",
+      "scope": "lines 1-180 only",
+      "blob": "3a086bea430c46ef5bf5c75b94becbd9010ab93d"
+    },
+    {
+      "url": "https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/c9a02ed301336400fd184eddd6144f2595b444b4/.github/workflows/veux-all-in-one-updater-v4.yml",
+      "scope": "full file",
+      "blob": "4b8c840adfa74dbdd4a53260bf583e4489196595"
+    },
+    {
+      "url": "https://docs.github.com/en/actions/tutorials/create-an-example-workflow",
+      "scope": "workflow YAML belongs in repository .github/workflows"
+    }
+  ],
+  "note": "Not a full repository/code regression. Only the described lookup paths, configuration contracts and folder isolation were examined."
+}
