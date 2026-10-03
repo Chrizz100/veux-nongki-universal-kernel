@@ -1,0 +1,41 @@
+test_active_values (test_audit.ConfigTests.test_active_values) ... ok
+test_bad_syntax (test_audit.ConfigTests.test_bad_syntax) ... ok
+test_changed_and_added (test_audit.ConfigTests.test_changed_and_added) ... ok
+test_commented_active_is_not_active (test_audit.ConfigTests.test_commented_active_is_not_active) ... ok
+test_conflicting_duplicate_is_rejected (test_audit.ConfigTests.test_conflicting_duplicate_is_rejected) ... ok
+test_crlf (test_audit.ConfigTests.test_crlf) ... ok
+test_diff_does_not_turn_absence_into_n (test_audit.ConfigTests.test_diff_does_not_turn_absence_into_n) ... ok
+test_disabled (test_audit.ConfigTests.test_disabled) ... ok
+test_empty_is_rejected (test_audit.ConfigTests.test_empty_is_rejected) ... ok
+test_identical_duplicate_is_reported (test_audit.ConfigTests.test_identical_duplicate_is_reported) ... ok
+test_noncanonical_disabled_is_not_an_assignment (test_audit.ConfigTests.test_noncanonical_disabled_is_not_an_assignment) ... ok
+test_strings (test_audit.ConfigTests.test_strings) ... ok
+test_archive_altered_contents_are_rejected (test_audit.LocalGitRoundtripTests.test_archive_altered_contents_are_rejected) ... ok
+test_archive_missing_files_is_rejected (test_audit.LocalGitRoundtripTests.test_archive_missing_files_is_rejected) ... ok
+test_archive_path_traversal_is_rejected (test_audit.LocalGitRoundtripTests.test_archive_path_traversal_is_rejected) ... ok
+test_checksum_manifest (test_audit.LocalGitRoundtripTests.test_checksum_manifest) ... ok
+test_command_failure_propagates (test_audit.LocalGitRoundtripTests.test_command_failure_propagates) ... ok
+test_existing_directory_is_not_overwritten (test_audit.LocalGitRoundtripTests.test_existing_directory_is_not_overwritten) ... ok
+test_invalid_commit_is_rejected (test_audit.LocalGitRoundtripTests.test_invalid_commit_is_rejected) ... ok
+test_kconfig_inventory_is_lexical (test_audit.LocalGitRoundtripTests.test_kconfig_inventory_is_lexical) ... ok
+test_pinned_checkout_and_archive_preserve_bytes_and_symlink (test_audit.LocalGitRoundtripTests.test_pinned_checkout_and_archive_preserve_bytes_and_symlink) ... ok
+test_version_parser (test_audit.LocalGitRoundtripTests.test_version_parser) ... ok
+test_version_parser_rejects_missing_fields (test_audit.LocalGitRoundtripTests.test_version_parser_rejects_missing_fields) ... ok
+test_battery_auth_drop_blocks (test_audit.ReferenceTests.test_battery_auth_drop_blocks) ... ok
+test_fingerprint_drop_blocks (test_audit.ReferenceTests.test_fingerprint_drop_blocks) ... ok
+test_haptic_drop_blocks (test_audit.ReferenceTests.test_haptic_drop_blocks) ... ok
+test_k6a_defconfig_exact_git_blob (test_audit.ReferenceTests.test_k6a_defconfig_exact_git_blob) ... ok
+test_known_literal_counts_new (test_audit.ReferenceTests.test_known_literal_counts_new) ... ok
+test_known_literal_counts_old (test_audit.ReferenceTests.test_known_literal_counts_old) ... ok
+test_modversions_drop_blocks (test_audit.ReferenceTests.test_modversions_drop_blocks) ... ok
+test_no_release_approval (test_audit.ReferenceTests.test_no_release_approval) ... ok
+test_original_defconfig_exact_git_blob (test_audit.ReferenceTests.test_original_defconfig_exact_git_blob) ... ok
+test_overlayfs_drop_blocks (test_audit.ReferenceTests.test_overlayfs_drop_blocks) ... ok
+test_stock_has_all_43_guard_keys (test_audit.ReferenceTests.test_stock_has_all_43_guard_keys) ... ok
+test_stock_hash (test_audit.ReferenceTests.test_stock_hash) ... ok
+test_stock_hash_detects_mutation (test_audit.ReferenceTests.test_stock_hash_detects_mutation) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 1.108s
+
+OK
