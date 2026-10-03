@@ -1,5 +1,0 @@
-$ make -C /mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source O=/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-out ARCH=arm64 CROSS_COMPILE= CC=gcc HOSTCC=gcc olddefconfig
-make: Entering directory '/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source'
-scripts/kconfig/conf -s --olddefconfig Kconfig
-drivers/misc/Kconfig:624:warning: config symbol defined without type
-make: Leaving directory '/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source'
