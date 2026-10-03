@@ -1,13 +1,7 @@
 $ make -C /home/runner/work/_temp/sweet-oem-audit/source O=/home/runner/work/_temp/sweet-oem-audit/kconfig-out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC=aarch64-linux-gnu-gcc HOSTCC=gcc olddefconfig
 make: Entering directory '/home/runner/work/_temp/sweet-oem-audit/source'
 make[1]: Entering directory '/home/runner/work/_temp/sweet-oem-audit/kconfig-out'
-  HOSTCC  scripts/basic/fixdep
   GEN     ./Makefile
-  HOSTCC  scripts/kconfig/conf.o
-  SHIPPED scripts/kconfig/zconf.tab.c
-  SHIPPED scripts/kconfig/zconf.lex.c
-  HOSTCC  scripts/kconfig/zconf.tab.o
-  HOSTLD  scripts/kconfig/conf
 scripts/kconfig/conf  --olddefconfig Kconfig
 drivers/misc/Kconfig:624:warning: config symbol defined without type
 #

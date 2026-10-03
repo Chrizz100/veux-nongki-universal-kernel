@@ -1,0 +1,1 @@
+Belegauszug aus dem Originalartefakt. SHA256SUMS.txt ist das unveränderte Originalmanifest und bezieht sich auch auf hier nicht mitkopierte Dateien. Die vollständigen Originalarchive wurden geprüft; siehe artifact_validation.json. Nicht dieses Teilverzeichnis gegen das Originalmanifest als Vollpaket prüfen.

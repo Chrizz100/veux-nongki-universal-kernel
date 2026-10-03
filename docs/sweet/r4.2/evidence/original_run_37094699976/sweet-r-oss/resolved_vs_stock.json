@@ -1,0 +1,169 @@
+{
+  "same": 4969,
+  "changed": [],
+  "missing": [
+    {
+      "symbol": "CONFIG_CHARGER_LN8000",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_CJSON",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_CNSS_SUPPORT_DUAL_DEV",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_CRYPTO_DEV_QCOM_ICE",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_HID_PLAYSTATION",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_HWCONF_MANAGER",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_K9A_CHARGE",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_MIGT",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MIHW",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MILLET",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MI_MEMORY_SYSFS",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MI_RECLAIM",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_MMC_CRYPTO",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_MMC_QTI_NONCMDQ_ICE",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_NEW_TOUCH_GAMEMODE",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_PACKAGE_RUNTIME_INFO",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_PERF_CRITICAL_RT_TASK",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_QTI_BUS_SCALING_COOLING_DEVICE",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_RTMM",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_SCSI_SKHPB",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_SF_BINDER",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_FTS",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_FTS_DIRECTORY",
+      "stock": "\"focaltech_touch\""
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_FTS_K6",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_BRL",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX8",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9886_F4",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_GESTURE",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_TOOLS",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_UPDATE",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_NVT_DEBUG_FS",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_ST_FTS_V521",
+      "stock": "n"
+    },
+    {
+      "symbol": "CONFIG_UFSFEATURE",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_UFSHPB",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_UFSTW",
+      "stock": "y"
+    },
+    {
+      "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+      "stock": "y"
+    }
+  ],
+  "added": [
+    {
+      "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_I2C",
+      "candidate": "n"
+    }
+  ],
+  "note": "Absence is recorded separately from an explicit n; no dependency inference."
+}

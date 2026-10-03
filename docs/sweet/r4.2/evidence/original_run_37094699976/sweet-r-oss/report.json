@@ -1,0 +1,84 @@
+{
+  "branch": "sweet-r-oss",
+  "audit_completed": true,
+  "kernel_built": false,
+  "device_tested": false,
+  "release_eligible": false,
+  "artifacts_flashable": false,
+  "important": "A successful collection job is NOT a kernel Green Pass. Read the critical_config_gate.",
+  "configuration_compiler": "GCC cross compiler for Kconfig audit only; not the release Clang toolchain",
+  "source_commit": "758bb7ef50af360e728662a1ed3b3a1b977a2f13",
+  "source_archive": {
+    "file": "sweet-r-oss_758bb7ef50af_source.tar.gz",
+    "sha256": "1884dfdf4b8530960feeb69d35023fd2a86517015cda8b5d8e5f2e6d4668639f",
+    "git_tree_verification": {
+      "all_git_blobs_matched": true,
+      "entries": 66901,
+      "symlinks": 40,
+      "uncompressed_bytes": 865589090
+    }
+  },
+  "source_kernel_version": "4.14.180",
+  "kconfig_files_scanned": 1528,
+  "olddefconfig_command": [
+    "make",
+    "-C",
+    "/home/runner/work/_temp/sweet-oem-audit/source",
+    "O=/home/runner/work/_temp/sweet-oem-audit/kconfig-out",
+    "ARCH=arm64",
+    "CROSS_COMPILE=aarch64-linux-gnu-",
+    "CC=aarch64-linux-gnu-gcc",
+    "HOSTCC=gcc",
+    "olddefconfig"
+  ],
+  "olddefconfig_ok": true,
+  "critical_config_gate": {
+    "scope": "selected stock config values only; NOT ABI/build/device validation",
+    "checked": 43,
+    "passed": false,
+    "failures": [
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_FTS_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_CHARGER_LN8000",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "olddefconfig_idempotent": true,
+  "source_unchanged": true
+}
