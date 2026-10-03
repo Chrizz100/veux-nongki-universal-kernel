@@ -1,0 +1,79 @@
+name: SWEET OEM Quellenpruefung R4
+
+# Manual, read-only source collection and configuration audit. NOT a kernel build.
+# Green here means that evidence collection completed, NOT release approval.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweet-oem-source-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-and-kconfig-audit:
+    name: Quellen und Kconfig - ${{ matrix.source_branch }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        source_branch:
+          - sweet-r-oss
+          - sweet_k6a-r-oss
+    env:
+      SOURCE_BRANCH: ${{ matrix.source_branch }}
+      AUDIT_WORK: ${{ runner.temp }}/sweet-oem-audit
+      AUDIT_OUT: ${{ runner.temp }}/sweet-audit-artifacts
+      LC_ALL: C.UTF-8
+      GIT_TERMINAL_PROMPT: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Audit-Dateien auschecken
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, verified 2026-10-02
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            /common/scripts/sweet/
+            /common/update/sweet/
+            /device/sweet/
+            /lineages/sweet/
+          sparse-checkout-cone-mode: false
+
+      - name: Lokale Selbsttests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s common/update/sweet/tests -p 'test_*.py' -v
+
+      - name: Werkzeuge fuer echte Kconfig-Aufloesung installieren
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential gcc-aarch64-linux-gnu flex bison bc \
+            libssl-dev libelf-dev python3 git
+
+      - name: Gepinnte Quellen und olddefconfig pruefen
+        run: |
+          set -euo pipefail
+          python3 common/scripts/sweet/audit.py \
+            --branch "$SOURCE_BRANCH" \
+            --work-dir "$AUDIT_WORK" \
+            --output-dir "$AUDIT_OUT"
+
+      - name: Quellen und Pruefbelege sichern - auch bei Fehlern
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, verified 2026-10-02
+        with:
+          name: SWEET-R4-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sweet-audit-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
