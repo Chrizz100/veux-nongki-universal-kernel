@@ -1,1 +1,140 @@
-
+{
+  "schema": 1,
+  "stage": "source_candidate_only_no_flash",
+  "base_repository": "MiCode/Xiaomi_Kernel_OpenSource",
+  "base_commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+  "base_tree": "5f23e786f02e80d181217ece9355f5702af23fbe",
+  "donor_commit": "758bb7ef50af360e728662a1ed3b3a1b977a2f13",
+  "stock_config_sha256": "b8821ce37644106a92be29b1d8350ea517fade58a2d924e4e97bc9624e441ca5",
+  "changed_files": [
+    {
+      "path": "drivers/input/fingerprint/fs_tee/Kconfig",
+      "before_sha256": null,
+      "after_sha256": "67fcd726b2305a02ac3dcf0dd91d1b7c066998f484442b0718d24a235f0100c3",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "5f008a96af1202252c6013ddfb68282560add01b"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/Makefile",
+      "before_sha256": null,
+      "after_sha256": "4737d48068dee11de44d421f50b6381d42fba24729d59f301aff653a9325a223",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "8836e6352eb70d5cc07e196fcef703a005fe5bfe"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_auto.h",
+      "before_sha256": null,
+      "after_sha256": "d00fd836b7b6deb4acda7c5775b92c744462d9c16168d1fb7cfe10a05d1d0ba3",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "e26c9c96b130512d8736341d23a6fb13a81fdb0d"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_ctl.c",
+      "before_sha256": null,
+      "after_sha256": "f4e8ee0a0c93aa66d8ec1ee981e30db4c2e087e445a87bcd0b18b35feb70238b",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "245f8ee6e03badfb21b3149f0e5a190ca0bae2ea"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_ctl.h",
+      "before_sha256": null,
+      "after_sha256": "4595643da2dcea1d2e4847a089b1fbefa1cd1346ce18c6db9ba68c20b03ae95b",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "7e13369a45bbdbf3059679a01c48b803aa711386"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_def.h",
+      "before_sha256": null,
+      "after_sha256": "75cd22daa0532113c7612e4fb2a9780e519a85e62020843ac9113685031a3816",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "689e22a73fac0d926e62a0a5fd84e2937a1385e3"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_hw.c",
+      "before_sha256": null,
+      "after_sha256": "b85b3ca6b7a2b13115105147d0a689fb7462456237fc7a247a93b31a7bb58d61",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "adda80d79d9b3eaaf2bbf237634032b23db0750f"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_spi.h",
+      "before_sha256": null,
+      "after_sha256": "7a50e0474dee37e84aa48904989ec17a702ba87ab7150a37a99bf3ea2388133d",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "f4411afe266683f68e551e1424ea5ad5b7885320"
+    },
+    {
+      "path": "drivers/input/fingerprint/fs_tee/sf_user.h",
+      "before_sha256": null,
+      "after_sha256": "761fad17dfb436fb277045e07732aa14c9282a1072a152cbe941ab029ed83576",
+      "source": "sweet-r-oss_758bb7ef50af",
+      "donor_git_blob": "81fe0f89dc68ec7f1994f97d697a668479285362"
+    },
+    {
+      "path": "drivers/input/fingerprint/Kconfig",
+      "before_sha256": "2a8bbe726f8fdaa866a3a91d4556ea61be8e7dc96014ed4bbe5d6165afd969f6",
+      "after_sha256": "17e42ab718c861007134954748816ae416c58f5fdc337c649d3eebdcc8a4ba25",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/input/fingerprint/Makefile",
+      "before_sha256": "81e36296557267e13a555db6a37decf0e5e0078c6adb3967bfdeaf337e2803a4",
+      "after_sha256": "7f6708c6eb31404b21c3e0631e91cf089062aa97ec14152e4bd341b63d1c4e3e",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/input/misc/Kconfig",
+      "before_sha256": "2a55684e153d877a809a48d22e14d7a1839a6db3a1aed1047730d8886dcd020f",
+      "after_sha256": "39baa07dedad1b0a904808daa5eb19270f2fdb2925ffe011675a2d901c32e224",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/input/misc/Makefile",
+      "before_sha256": "bff20d968d2a50157b8d89d2e5e7daea09a3caddfeb8422da37c464f492110cb",
+      "after_sha256": "37de776ca3dc8cda2ad5644ce216ccc46ee4f0481d927ba573f440eaff7fb74c",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/input/touchscreen/k6_focaltech_3658u/Kconfig",
+      "before_sha256": "91cd19101b10e319c1cd8152f685f72d64da80580fa63361e0fd75df971ae477",
+      "after_sha256": "0773da7ba10df7f8c514f6aaaaca0e6be8592bbe80f939267e20bf26cf824101",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/input/misc/aw862xx_haptic/Kconfig",
+      "before_sha256": "83eb6878816ab955bff7dc527534b000e949340cbd873c21faa77db4a941db7c",
+      "after_sha256": "1cf08299cab407de038504c35a5d58d231bc94db4c96a954a59c70e8472c2a95",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/misc/Kconfig",
+      "before_sha256": "9a4f680806aa207d11d1a389e0494939e36348e0858da9475fe9d88efa7e9f15",
+      "after_sha256": "d30ae1944bcf4fba5d80f84a9c9512dcdb0b529088a4021e1a8e35b105285aa9",
+      "source": "k6a_modified"
+    },
+    {
+      "path": "drivers/misc/perf_helper.c",
+      "before_sha256": "ee9b679b1251531cd802202587e4ac8c0b2c2979ca8e20ba22ac394c0ace9a5f",
+      "after_sha256": "c5c49d27152db78df2390918f9b145c3bf38a9cd4c3ca1d864169ac6df56671e",
+      "source": "k6a_modified"
+    }
+  ],
+  "patches": [
+    {
+      "path": "device/sweet/patches/r5/0001-sweet-restore-fortsense-aw8624.patch",
+      "sha256": "1b5450c4da0407d1aeca4a755f45027f0678d41d4e0a8f026ddb0396972a35e8"
+    },
+    {
+      "path": "device/sweet/patches/r5/0002-k6a-kconfig-lf-only.patch",
+      "sha256": "f6354f0c8222008b88095af316950ae6e0fa238e8312f7d204bef3eae57a782a"
+    },
+    {
+      "path": "device/sweet/patches/r5/0003-remove-unused-perf-helper-kconfig.patch",
+      "sha256": "5667f05538902fc8a348e72b90c50c52c7fc8e93ff043e2b3d8089afa2544811"
+    },
+    {
+      "path": "device/sweet/patches/r5/0004-perf-helper-bounds-and-format.patch",
+      "sha256": "778de36edb07f4176359bf15a7a1eba318a3cf776a5e59324da294f9bd5f8fda"
+    }
+  ]
+}
