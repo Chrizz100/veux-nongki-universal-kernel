@@ -1,4 +1,4 @@
-name: SWEET OEM Quellenpruefung R4.1
+name: SWEET OEM Quellenpruefung R4.2
 
 # Manual, read-only source collection and configuration audit. NOT a kernel build.
 # Green here means that evidence collection completed, NOT release approval.
@@ -34,11 +34,12 @@ jobs:
         shell: bash
     steps:
       - name: Audit-Dateien auschecken
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, verified 2026-10-02
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24 verified 2026-10-03
         with:
           persist-credentials: false
           fetch-depth: 1
           sparse-checkout: |
+            /.github/workflows/sweet-oem-source-audit.yml
             /common/scripts/sweet/
             /common/update/sweet/
             /device/sweet/
@@ -72,10 +73,11 @@ jobs:
 
       - name: Quellen und Pruefbelege sichern - auch bei Fehlern
         if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, verified 2026-10-02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7, node24 verified 2026-10-03
         with:
-          name: SWEET-R4.1-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: SWEET-R4.2-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/sweet-audit-artifacts/
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+          archive: true
