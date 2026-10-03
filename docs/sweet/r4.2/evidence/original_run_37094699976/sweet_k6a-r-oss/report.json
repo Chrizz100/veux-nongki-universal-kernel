@@ -1,0 +1,79 @@
+{
+  "branch": "sweet_k6a-r-oss",
+  "audit_completed": false,
+  "kernel_built": false,
+  "device_tested": false,
+  "release_eligible": false,
+  "artifacts_flashable": false,
+  "important": "A successful collection job is NOT a kernel Green Pass. Read the critical_config_gate.",
+  "configuration_compiler": "GCC cross compiler for Kconfig audit only; not the release Clang toolchain",
+  "source_commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+  "source_archive": {
+    "file": "sweet_k6a-r-oss_10c33d40a11e_source.tar.gz",
+    "sha256": "75ef98576fd1c224cde32fd021d5d0d275b61cb6f5f21d042b6e86b4fbe60860",
+    "git_tree_verification": {
+      "all_git_blobs_matched": true,
+      "entries": 67141,
+      "symlinks": 43,
+      "uncompressed_bytes": 875918176
+    }
+  },
+  "source_kernel_version": "4.14.180",
+  "kconfig_files_scanned": 1532,
+  "olddefconfig_command": [
+    "make",
+    "-C",
+    "/home/runner/work/_temp/sweet-oem-audit/source",
+    "O=/home/runner/work/_temp/sweet-oem-audit/kconfig-out",
+    "ARCH=arm64",
+    "CROSS_COMPILE=aarch64-linux-gnu-",
+    "CC=aarch64-linux-gnu-gcc",
+    "HOSTCC=gcc",
+    "olddefconfig"
+  ],
+  "olddefconfig_ok": true,
+  "critical_config_gate": {
+    "scope": "selected stock config values only; NOT ABI/build/device validation",
+    "checked": 43,
+    "passed": false,
+    "failures": [
+      {
+        "symbol": "CONFIG_FINGERPRINT_FS_TEE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_INPUT_AW8624_HAPTIC",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "olddefconfig_idempotent": true,
+  "error": "Audit unexpectedly modified tracked/untracked source files"
+}
