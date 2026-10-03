@@ -1,0 +1,17 @@
+make: Entering directory '/mnt/data/sweet_r5_work/reproduced_complete'
+In file included from scripts/kconfig/zconf.tab.c:2470:
+In function 'dep_stack_insert',
+    inlined from 'sym_check_print_recursive' at /mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c:1123:3,
+    inlined from 'sym_check_deps' at /mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c:1300:3:
+/mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c:1099:19: warning: storing the address of local variable 'cv_stack' in 'check_top' [-Wdangling-pointer=]
+ 1099 |         check_top = stack;
+      |         ~~~~~~~~~~^~~~~~~
+/mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c: In function 'sym_check_deps':
+/mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c:1120:26: note: 'cv_stack' declared here
+ 1120 |         struct dep_stack cv_stack;
+      |                          ^~~~~~~~
+/mnt/data/sweet_r5_work/reproduced_complete/scripts/kconfig/symbol.c:1090:4: note: 'check_top' declared here
+ 1090 | } *check_top;
+      |    ^~~~~~~~~
+scripts/kconfig/conf -s --olddefconfig Kconfig
+make: Leaving directory '/mnt/data/sweet_r5_work/reproduced_complete'

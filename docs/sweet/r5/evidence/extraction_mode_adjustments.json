@@ -1,0 +1,18 @@
+{
+  "sweet-r-oss": [
+    {
+      "path": "tools/testing/selftests/powerpc/primitives/asm/asm-compat.h",
+      "type": "link",
+      "old": "../.././../../../../arch/powerpc/include/asm/asm-compat.h",
+      "new": "../../../../../../arch/powerpc/include/asm/asm-compat.h"
+    }
+  ],
+  "sweet_k6a-r-oss": [
+    {
+      "path": "tools/testing/selftests/powerpc/primitives/asm/asm-compat.h",
+      "type": "link",
+      "old": "../.././../../../../arch/powerpc/include/asm/asm-compat.h",
+      "new": "../../../../../../arch/powerpc/include/asm/asm-compat.h"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "base_commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+  "base_tree": "5f23e786f02e80d181217ece9355f5702af23fbe",
+  "candidate_tree_before_make": "1b8d187a75cebf4b83096474a965d62a81b3e10b",
+  "changed_files": [
+    "drivers/input/fingerprint/Kconfig",
+    "drivers/input/fingerprint/Makefile",
+    "drivers/input/fingerprint/fs_tee/Kconfig",
+    "drivers/input/fingerprint/fs_tee/Makefile",
+    "drivers/input/fingerprint/fs_tee/sf_auto.h",
+    "drivers/input/fingerprint/fs_tee/sf_ctl.c",
+    "drivers/input/fingerprint/fs_tee/sf_ctl.h",
+    "drivers/input/fingerprint/fs_tee/sf_def.h",
+    "drivers/input/fingerprint/fs_tee/sf_hw.c",
+    "drivers/input/fingerprint/fs_tee/sf_spi.h",
+    "drivers/input/fingerprint/fs_tee/sf_user.h",
+    "drivers/input/misc/Kconfig",
+    "drivers/input/misc/Makefile",
+    "drivers/input/misc/aw862xx_haptic/Kconfig",
+    "drivers/input/touchscreen/k6_focaltech_3658u/Kconfig",
+    "drivers/misc/Kconfig",
+    "drivers/misc/perf_helper.c"
+  ],
+  "original_unchanged": true,
+  "source_preparation_passed": true,
+  "kernel_built": false,
+  "flashable": false,
+  "note": "This prepares source only. Missing MILLET/UFS/MIUI parts remain blockers."
+}

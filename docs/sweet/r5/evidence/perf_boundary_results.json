@@ -1,0 +1,38 @@
+{
+  "original": {
+    "0": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    },
+    "127": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    },
+    "128": {
+      "exit": 1,
+      "address_sanitizer_overflow": true
+    },
+    "129": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    }
+  },
+  "fixed": {
+    "0": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    },
+    "127": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    },
+    "128": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    },
+    "129": {
+      "exit": 0,
+      "address_sanitizer_overflow": false
+    }
+  }
+}

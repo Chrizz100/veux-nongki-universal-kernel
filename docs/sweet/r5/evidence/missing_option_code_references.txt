@@ -1,0 +1,16 @@
+WORK/sources/sweet_k6a-r-oss/mm/vmscan.c:3799:#ifdef CONFIG_RTMM
+WORK/sources/sweet_k6a-r-oss/drivers/staging/Makefile:41:obj-$(CONFIG_RTMM)		+= rtmm/
+WORK/sources/sweet_k6a-r-oss/kernel/cgroup/cpuset.c:2127:#if defined(CONFIG_PACKAGE_RUNTIME_INFO) && defined(CONFIG_MIGT)
+WORK/sources/sweet_k6a-r-oss/kernel/signal.c:1220:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/kernel/signal.c:3948:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/kernel/signal.c:3991:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:3063:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:3131:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:4218:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:4230:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:5415:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:6639:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder.c:6664:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder_alloc.c:35:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder_alloc.c:353:#ifdef CONFIG_MILLET
+WORK/sources/sweet_k6a-r-oss/drivers/android/binder_alloc.c:395:#ifdef CONFIG_MILLET

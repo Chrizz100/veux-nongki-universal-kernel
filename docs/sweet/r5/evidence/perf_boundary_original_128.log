@@ -1,0 +1,54 @@
+=================================================================
+==1742==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7fc384a000b0 at pc 0x7fc386d4379c bp 0x7ffc4a70c9d0 sp 0x7ffc4a70c190
+READ of size 129 at 0x7fc384a000b0 thread T0
+    #0 0x7fc386d4379b in printf_common ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_format.inc:563
+    #1 0x7fc386d6f6e6 in vsnprintf ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors.inc:1652
+    #2 0x7fc386d715dc in snprintf ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors.inc:1723
+    #3 0x562a8c3d9363 in perflock_record /mnt/data/sweet_r5_work/evidence/perf_boundary_original.c:12
+    #4 0x562a8c3d9363 in perflock_records_write /mnt/data/sweet_r5_work/evidence/perf_boundary_original.c:24
+    #5 0x562a8c3d9363 in main /mnt/data/sweet_r5_work/evidence/perf_boundary_original.c:32
+    #6 0x7fc386adcca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: c495b62edadd6c356265942ec1282d98058a7b41)
+    #7 0x7fc386adcd64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: c495b62edadd6c356265942ec1282d98058a7b41)
+    #8 0x562a8c3d9120 in _start (/mnt/data/sweet_r5_work/evidence/perf_boundary_original+0x1120) (BuildId: d783ddefd0e0e1c53326313e81bddcd21161c1de)
+
+Address 0x7fc384a000b0 is located in stack of thread T0 at offset 176 in frame
+    #0 0x562a8c3d91f8 in main /mnt/data/sweet_r5_work/evidence/perf_boundary_original.c:29
+
+  This frame has 2 object(s):
+    [48, 176) 'buf' (line 16)
+    [208, 337) 'input' (line 31) <== Memory access at offset 176 partially underflows this variable
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+SUMMARY: AddressSanitizer: stack-buffer-overflow ../../../../src/libsanitizer/sanitizer_common/sanitizer_common_interceptors_format.inc:563 in printf_common
+Shadow bytes around the buggy address:
+  0x7fc3849ffe00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc3849ffe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc3849fff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc3849fff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc384a00000: f1 f1 f1 f1 f1 f1 00 00 00 00 00 00 00 00 00 00
+=>0x7fc384a00080: 00 00 00 00 00 00[f2]f2 f2 f2 00 00 00 00 00 00
+  0x7fc384a00100: 00 00 00 00 00 00 00 00 00 00 01 f3 f3 f3 f3 f3
+  0x7fc384a00180: f3 f3 f3 f3 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc384a00200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc384a00280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x7fc384a00300: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==1742==ABORTING

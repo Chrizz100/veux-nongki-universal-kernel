@@ -1,0 +1,3 @@
+make: Entering directory '/mnt/data/sweet_r5_work/reproduced_complete'
+scripts/kconfig/conf -s --olddefconfig Kconfig
+make: Leaving directory '/mnt/data/sweet_r5_work/reproduced_complete'

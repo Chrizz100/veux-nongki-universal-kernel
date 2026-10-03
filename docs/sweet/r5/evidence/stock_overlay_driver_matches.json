@@ -1,0 +1,70 @@
+[
+  {
+    "path": "/fragment@70/__overlay__/fingerprint_fortsense",
+    "properties": {
+      "compatible": [
+        "fs,fingerprint"
+      ],
+      "fs,gpio-reset": [
+        4294967295,
+        58,
+        0
+      ],
+      "fs,gpio-irq": [
+        4294967295,
+        57,
+        0
+      ],
+      "status": [
+        "ok"
+      ]
+    }
+  },
+  {
+    "path": "/fragment@74/__overlay__/ln8000_charger@51",
+    "properties": {
+      "compatible": [
+        "lionsemi,ln8000"
+      ],
+      "reg": [
+        81
+      ]
+    }
+  },
+  {
+    "path": "/fragment@74/__overlay__/aw8624_haptic@5A",
+    "properties": {
+      "compatible": [
+        "awinic,aw8624_haptic"
+      ],
+      "reg": [
+        90
+      ]
+    }
+  },
+  {
+    "path": "/fragment@81/__overlay__/gt9896@5d",
+    "properties": {
+      "compatible": [
+        "goodix,gt9896"
+      ],
+      "reg": [
+        93
+      ],
+      "status": [
+        "ok"
+      ]
+    }
+  },
+  {
+    "path": "/fragment@81/__overlay__/focaltech@38",
+    "properties": {
+      "compatible": [
+        "focaltech,fts_K6"
+      ],
+      "reg": [
+        56
+      ]
+    }
+  }
+]

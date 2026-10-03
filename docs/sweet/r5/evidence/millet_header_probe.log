@@ -1,0 +1,3 @@
+Isolated header-availability test, NOT a full kernel compile.
+<command-line>: fatal error: linux/millet.h: No such file or directory
+compilation terminated.

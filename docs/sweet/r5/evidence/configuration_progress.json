@@ -1,0 +1,127 @@
+{
+  "base_ci_config_byte_equal": true,
+  "stock_reference_sha256": "b8821ce37644106a92be29b1d8350ea517fade58a2d924e4e97bc9624e441ca5",
+  "resolved_sha256": "705720e2e9443b41a2ad60a1ac79306bc3b4dd98a6e44c893f88d66f00066bd9",
+  "shared_option_changes": [],
+  "added_options": [
+    {
+      "symbol": "CONFIG_FINGERPRINT_FS_TEE",
+      "value": "y"
+    },
+    {
+      "symbol": "CONFIG_INPUT_AW8624_HAPTIC",
+      "value": "y"
+    }
+  ],
+  "removed_options": [],
+  "remaining_active_stock_differences": [
+    {
+      "symbol": "CONFIG_MIGT",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_MIHW",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_MILLET",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_MI_MEMORY_SYSFS",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_MI_RECLAIM",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_PERF_CRITICAL_RT_TASK",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_RTMM",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_SCSI_SKHPB",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_SF_BINDER",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSFEATURE",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSHPB",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSTW",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+      "stock": "y",
+      "candidate": null
+    }
+  ],
+  "remaining_selected_gate_differences": [
+    {
+      "symbol": "CONFIG_UFSFEATURE",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSHPB",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSTW",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+      "stock": "y",
+      "candidate": null
+    },
+    {
+      "symbol": "CONFIG_SCSI_SKHPB",
+      "stock": "y",
+      "candidate": null
+    }
+  ],
+  "kconfig_warnings": {
+    "baseline_olddefconfig.log": 17,
+    "r5_olddefconfig_1.log": 0,
+    "r5_olddefconfig_2.log": 0,
+    "reproduced_olddefconfig_1.log": 0,
+    "reproduced_olddefconfig_2.log": 0
+  },
+  "full_build_tested": false,
+  "toolchain": "host GCC 14.2, ARCH=arm64, CC=gcc, CROSS_COMPILE empty; Kconfig-only",
+  "kernel_version": "4.14.180",
+  "flashable": false
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "path": "kernel/signal.c",
+    "line": 47,
+    "missing": "linux/millet.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/android/binder.c",
+    "line": 74,
+    "missing": "linux/millet.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/android/binder_alloc.c",
+    "line": 36,
+    "missing": "linux/millet.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/input/fingerprint/fs_tee/sf_ctl.h",
+    "line": 29,
+    "missing": "linux/wakelock.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/input/fingerprint/fs_tee/sf_ctl.h",
+    "line": 36,
+    "missing": "linux/earlysuspend.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/input/fingerprint/fs_tee/sf_ctl.h",
+    "line": 53,
+    "missing": "linux/tee_fp.h",
+    "guard_status": "not classified by scanner"
+  },
+  {
+    "path": "drivers/input/misc/aw8624_haptic/aw8624.c",
+    "line": 24,
+    "missing": "linux/version.h",
+    "guard_status": "not classified by scanner"
+  }
+]
