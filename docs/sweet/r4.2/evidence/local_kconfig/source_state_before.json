@@ -1,0 +1,22 @@
+{
+  "pristine": {
+    "upstream_policy_commit": null,
+    "tracked_changes": [],
+    "accepted_oem_generated": [],
+    "unexpected_generated": [],
+    "incomplete_oem_generation": false,
+    "all_extra_files_checked_including_ignored": true,
+    "git_status": "",
+    "passed": true
+  },
+  "kconfig_workspace": {
+    "upstream_policy_commit": null,
+    "tracked_changes": [],
+    "accepted_oem_generated": [],
+    "unexpected_generated": [],
+    "incomplete_oem_generation": false,
+    "all_extra_files_checked_including_ignored": true,
+    "git_status": "",
+    "passed": true
+  }
+}

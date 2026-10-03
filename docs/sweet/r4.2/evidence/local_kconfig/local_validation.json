@@ -1,0 +1,195 @@
+{
+  "branch": "sweet-r-oss",
+  "upstream_commit": "758bb7ef50af360e728662a1ed3b3a1b977a2f13",
+  "local_reconstructed_snapshot_commit": "fe23afda2fa68a24ef2eb512d3317ac3d53d1645",
+  "source_tree": "973be06bdb997a9c9e6ae78bce8fbc7329adb95a",
+  "compiler_note": "Local HOST GCC 14, only real Kconfig, not cross kernel compilation; compared with CI GCC11 result.",
+  "olddefconfig_command": [
+    "make",
+    "-C",
+    "/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source",
+    "O=/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-out",
+    "ARCH=arm64",
+    "CROSS_COMPILE=",
+    "CC=gcc",
+    "HOSTCC=gcc",
+    "olddefconfig"
+  ],
+  "olddefconfig_ok": true,
+  "kconfig_uses_isolated_worktree": true,
+  "critical_config_gate": {
+    "scope": "selected stock config values only; NOT ABI/build/device validation",
+    "checked": 43,
+    "passed": false,
+    "failures": [
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_FTS_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_CHARGER_LN8000",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "all_active_stock_options": {
+    "scope": "all stock y/m symbols, NOT ABI or device compatibility",
+    "missing_or_changed": [
+      {
+        "symbol": "CONFIG_CHARGER_LN8000",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_CJSON",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_HWCONF_MANAGER",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIGT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIHW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MILLET",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MI_MEMORY_SYSFS",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MI_RECLAIM",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_NEW_TOUCH_GAMEMODE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_PERF_CRITICAL_RT_TASK",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_RTMM",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SF_BINDER",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_FTS_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_GESTURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_TOOLS",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_UPDATE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "olddefconfig_idempotent": true,
+  "source_unchanged": true,
+  "kconfig_workspace_integrity_ok": true,
+  "oem_generated_paths": [],
+  "resolved_config_byte_identical_to_ci": true,
+  "resolved_sha256": "0611f7842e3e8571ad217b90fb24fb5d240d1fffc6c86e9cc3a276eb2e5276fe",
+  "critical_missing_count": 8,
+  "active_missing_count": 23
+}
