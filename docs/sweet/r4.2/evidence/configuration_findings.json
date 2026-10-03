@@ -1,0 +1,75 @@
+{
+  "sweet-r-oss": {
+    "equal": 4969,
+    "changed_count": 0,
+    "missing_total": 39,
+    "missing_active": [
+      "CONFIG_CHARGER_LN8000",
+      "CONFIG_CJSON",
+      "CONFIG_HWCONF_MANAGER",
+      "CONFIG_MIGT",
+      "CONFIG_MIHW",
+      "CONFIG_MILLET",
+      "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+      "CONFIG_MI_MEMORY_SYSFS",
+      "CONFIG_MI_RECLAIM",
+      "CONFIG_NEW_TOUCH_GAMEMODE",
+      "CONFIG_PERF_CRITICAL_RT_TASK",
+      "CONFIG_RTMM",
+      "CONFIG_SCSI_SKHPB",
+      "CONFIG_SF_BINDER",
+      "CONFIG_TOUCHSCREEN_FTS_K6",
+      "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_GESTURE",
+      "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_K6",
+      "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_TOOLS",
+      "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_UPDATE",
+      "CONFIG_UFSFEATURE",
+      "CONFIG_UFSHPB",
+      "CONFIG_UFSTW",
+      "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT"
+    ],
+    "added": [
+      {
+        "symbol": "CONFIG_TOUCHSCREEN_GOODIX_GTX9896_I2C",
+        "candidate": "n"
+      }
+    ]
+  },
+  "sweet_k6a-r-oss": {
+    "equal": 4981,
+    "changed_count": 0,
+    "missing_total": 27,
+    "missing_active": [
+      "CONFIG_FINGERPRINT_FS_TEE",
+      "CONFIG_INPUT_AW8624_HAPTIC",
+      "CONFIG_MIGT",
+      "CONFIG_MIHW",
+      "CONFIG_MILLET",
+      "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+      "CONFIG_MI_MEMORY_SYSFS",
+      "CONFIG_MI_RECLAIM",
+      "CONFIG_PERF_CRITICAL_RT_TASK",
+      "CONFIG_RTMM",
+      "CONFIG_SCSI_SKHPB",
+      "CONFIG_SF_BINDER",
+      "CONFIG_UFSFEATURE",
+      "CONFIG_UFSHPB",
+      "CONFIG_UFSTW",
+      "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT"
+    ],
+    "added": [
+      {
+        "symbol": "CONFIG_FINGERPRINT_FPC_1540",
+        "candidate": "n"
+      },
+      {
+        "symbol": "CONFIG_FUEL_GAUGE_BQ27Z561",
+        "candidate": "n"
+      },
+      {
+        "symbol": "CONFIG_INPUT_AW862XX_HAPTIC",
+        "candidate": "n"
+      }
+    ]
+  }
+}

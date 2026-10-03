@@ -1,3 +1,11 @@
+$ /opt/pyvenv/bin/python -c raise SystemExit(7)
+$ git init --quiet /tmp/sweet-audit-test-v1d2c0r3/checkout
+$ git -C /tmp/sweet-audit-test-v1d2c0r3/checkout remote add origin /tmp/sweet-audit-test-v1d2c0r3/origin
+$ git -C /tmp/sweet-audit-test-v1d2c0r3/checkout fetch --no-tags --depth=1 origin 11ab5a92bdc9e7f093c5933e7b46e197c069d8fd
+$ git -C /tmp/sweet-audit-test-v1d2c0r3/checkout checkout --quiet --detach FETCH_HEAD
+$ git -C /tmp/sweet-audit-test-v1d2c0r3/checkout fsck --full --no-dangling
+$ git -C /tmp/sweet-audit-test-v1d2c0r3/checkout archive --format=tar.gz --prefix=fixture/ --output=/tmp/sweet-audit-test-v1d2c0r3/output/fixture_11ab5a92bdc9_source.tar.gz 11ab5a92bdc9e7f093c5933e7b46e197c069d8fd
+$ git -C /tmp/sweet-r42-t_55ba4v/source worktree add --detach /tmp/sweet-r42-t_55ba4v/derived b1a3f5e58da32145c2bc5cddbbfd02aa6edf82e4
 test_active_values (test_audit.ConfigTests.test_active_values) ... ok
 test_bad_syntax (test_audit.ConfigTests.test_bad_syntax) ... ok
 test_changed_and_added (test_audit.ConfigTests.test_changed_and_added) ... ok
@@ -14,18 +22,11 @@ test_archive_altered_contents_are_rejected (test_audit.LocalGitRoundtripTests.te
 test_archive_missing_files_is_rejected (test_audit.LocalGitRoundtripTests.test_archive_missing_files_is_rejected) ... ok
 test_archive_path_traversal_is_rejected (test_audit.LocalGitRoundtripTests.test_archive_path_traversal_is_rejected) ... ok
 test_checksum_manifest (test_audit.LocalGitRoundtripTests.test_checksum_manifest) ... ok
-test_command_failure_propagates (test_audit.LocalGitRoundtripTests.test_command_failure_propagates) ... $ /opt/pyvenv/bin/python -c raise SystemExit(7)
-ok
+test_command_failure_propagates (test_audit.LocalGitRoundtripTests.test_command_failure_propagates) ... ok
 test_existing_directory_is_not_overwritten (test_audit.LocalGitRoundtripTests.test_existing_directory_is_not_overwritten) ... ok
 test_invalid_commit_is_rejected (test_audit.LocalGitRoundtripTests.test_invalid_commit_is_rejected) ... ok
 test_kconfig_inventory_is_lexical (test_audit.LocalGitRoundtripTests.test_kconfig_inventory_is_lexical) ... ok
-test_pinned_checkout_and_archive_preserve_bytes_and_symlink (test_audit.LocalGitRoundtripTests.test_pinned_checkout_and_archive_preserve_bytes_and_symlink) ... $ git init --quiet /tmp/sweet-audit-test-xpf59yd7/checkout
-$ git -C /tmp/sweet-audit-test-xpf59yd7/checkout remote add origin /tmp/sweet-audit-test-xpf59yd7/origin
-$ git -C /tmp/sweet-audit-test-xpf59yd7/checkout fetch --no-tags --depth=1 origin 0abd24f771d113a5c5c57c4563103307b9ba1ac3
-$ git -C /tmp/sweet-audit-test-xpf59yd7/checkout checkout --quiet --detach FETCH_HEAD
-$ git -C /tmp/sweet-audit-test-xpf59yd7/checkout fsck --full --no-dangling
-$ git -C /tmp/sweet-audit-test-xpf59yd7/checkout archive --format=tar.gz --prefix=fixture/ --output=/tmp/sweet-audit-test-xpf59yd7/output/fixture_0abd24f771d1_source.tar.gz 0abd24f771d113a5c5c57c4563103307b9ba1ac3
-ok
+test_pinned_checkout_and_archive_preserve_bytes_and_symlink (test_audit.LocalGitRoundtripTests.test_pinned_checkout_and_archive_preserve_bytes_and_symlink) ... ok
 test_version_parser (test_audit.LocalGitRoundtripTests.test_version_parser) ... ok
 test_version_parser_rejects_missing_fields (test_audit.LocalGitRoundtripTests.test_version_parser_rejects_missing_fields) ... ok
 test_battery_auth_drop_blocks (test_audit.ReferenceTests.test_battery_auth_drop_blocks) ... ok
@@ -70,8 +71,7 @@ test_tracked_change_rejected (test_source_mutation.SourceMutationTests.test_trac
 test_unknown_extra_rejected (test_source_mutation.SourceMutationTests.test_unknown_extra_rejected) ... ok
 test_unknown_pin_rejects_oem_outputs (test_source_mutation.SourceMutationTests.test_unknown_pin_rejects_oem_outputs) ... ok
 test_workspace_inside_source_refused (test_source_mutation.SourceMutationTests.test_workspace_inside_source_refused) ... ok
-test_workspace_is_isolated (test_source_mutation.SourceMutationTests.test_workspace_is_isolated) ... $ git -C /tmp/sweet-r42-1ou8s25c/source worktree add --detach /tmp/sweet-r42-1ou8s25c/derived 7b8c741d4317a380d69f8f17ba2614b599c96cc1
-ok
+test_workspace_is_isolated (test_source_mutation.SourceMutationTests.test_workspace_is_isolated) ... ok
 test_wrong_symlink_target_rejected (test_source_mutation.SourceMutationTests.test_wrong_symlink_target_rejected) ... ok
 test_no_error_suppression (test_source_mutation.WorkflowRegressionTests.test_no_error_suppression) ... ok
 test_node24_pins_and_archive_mode (test_source_mutation.WorkflowRegressionTests.test_node24_pins_and_archive_mode) ... ok
@@ -80,6 +80,6 @@ test_step_env_paths_retained (test_source_mutation.WorkflowRegressionTests.test_
 test_workflow_in_sparse_checkout_for_regression_tests (test_source_mutation.WorkflowRegressionTests.test_workflow_in_sparse_checkout_for_regression_tests) ... ok
 
 ----------------------------------------------------------------------
-Ran 72 tests in 2.304s
+Ran 72 tests in 2.443s
 
 OK

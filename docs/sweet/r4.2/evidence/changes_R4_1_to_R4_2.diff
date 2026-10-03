@@ -1,0 +1,245 @@
+--- a/.github/workflows/sweet-oem-source-audit.yml
++++ b/.github/workflows/sweet-oem-source-audit.yml
+@@ -1,4 +1,4 @@
+-name: SWEET OEM Quellenpruefung R4.1
++name: SWEET OEM Quellenpruefung R4.2
+ 
+ # Manual, read-only source collection and configuration audit. NOT a kernel build.
+ # Green here means that evidence collection completed, NOT release approval.
+@@ -34,11 +34,12 @@
+         shell: bash
+     steps:
+       - name: Audit-Dateien auschecken
+-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, verified 2026-10-02
++        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5, node24 verified 2026-10-03
+         with:
+           persist-credentials: false
+           fetch-depth: 1
+           sparse-checkout: |
++            /.github/workflows/sweet-oem-source-audit.yml
+             /common/scripts/sweet/
+             /common/update/sweet/
+             /device/sweet/
+@@ -72,10 +73,11 @@
+ 
+       - name: Quellen und Pruefbelege sichern - auch bei Fehlern
+         if: ${{ always() }}
+-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, verified 2026-10-02
++        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7, node24 verified 2026-10-03
+         with:
+-          name: SWEET-R4.1-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
++          name: SWEET-R4.2-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
+           path: ${{ runner.temp }}/sweet-audit-artifacts/
+           if-no-files-found: error
+           retention-days: 14
+           compression-level: 0
++          archive: true
+--- a/common/scripts/sweet/audit.py
++++ b/common/scripts/sweet/audit.py
+@@ -13,6 +13,7 @@
+ import os
+ import re
+ import shutil
++import stat
+ import subprocess
+ import sys
+ import tarfile
+@@ -130,6 +131,7 @@
+ 
+ def run(argv: list[str], log: Path, timeout: int = 600) -> str:
+     """Execute without a shell. Failures retain their original command output."""
++    print("$ " + " ".join(argv), flush=True)
+     with log.open("ab") as stream:
+         stream.write(("$ " + " ".join(argv) + "\n").encode("utf-8"))
+         stream.flush()
+@@ -285,6 +287,140 @@
+         if path.is_file() and path.name != "SHA256SUMS.txt":
+             entries.append(f"{sha256(path)}  {path.relative_to(output).as_posix()}")
+     (output / "SHA256SUMS.txt").write_text("\n".join(entries) + "\n", encoding="utf-8")
++
++
++
++# This narrow policy comes from the pinned OEM Makefile, lines 293-302.
++# It is NOT permission to alter source, disable checks or install RTMM/KTRACE.
++K6A_STUB_COMMIT = "10c33d40a11ecdc75cc1dadb5bd07894bab05815"
++OEM_EMPTY_STUBS = (
++    "drivers/staging/ktrace/Kconfig", "drivers/staging/ktrace/Makefile",
++    "drivers/staging/rtmm/Kconfig", "drivers/staging/rtmm/Makefile",
++)
++OEM_HEADER_LINKS = {
++    "include/linux/ktrace.h": "include/dum/ktrace.h",
++    "include/linux/rtmm.h": "include/dum/rtmm.h",
++}
++
++
++def workspace_state(source: Path, upstream_commit: str | None = None) -> dict[str, Any]:
++    """Classify tracked changes and ALL extra files, including Git-ignored files.
++
++    Only the six exact, verified OEM side effects in an isolated K6A workspace
++    are accepted. All tracked changes, nonempty stubs and unexpected links fail.
++    No files are removed, rewritten, staged, or hidden from Git by this check.
++    """
++    def names(*args: str) -> list[str]:
++        raw = subprocess.check_output(["git", "-C", str(source), *args], timeout=120)
++        return [v.decode("utf-8") for v in raw.split(b"\0") if v]
++    tracked = names("diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD", "--")
++    extra = names("ls-files", "--others", "-z", "--")  # deliberately no exclude-standard
++    accepted: list[dict[str, Any]] = []
++    rejected: list[dict[str, Any]] = []
++    expected = set(OEM_EMPTY_STUBS) | set(OEM_HEADER_LINKS)
++    for name in sorted(extra):
++        path = source / name
++        info: dict[str, Any] = {"path": name}
++        mode = path.lstat().st_mode
++        allowed = False
++        if stat.S_ISLNK(mode):
++            target = os.readlink(path)
++            info.update(type="symlink", target=target)
++            if upstream_commit == K6A_STUB_COMMIT and name in OEM_HEADER_LINKS:
++                expected_target = source.resolve() / OEM_HEADER_LINKS[name]
++                allowed = (target == str(expected_target)
++                           and expected_target.is_file() and not expected_target.is_symlink())
++        elif stat.S_ISREG(mode):
++            info.update(type="file", size=path.stat().st_size, sha256=sha256(path))
++            allowed = (upstream_commit == K6A_STUB_COMMIT
++                       and name in OEM_EMPTY_STUBS and path.stat().st_size == 0)
++        else:
++            info.update(type="unsupported")
++        (accepted if allowed else rejected).append(info)
++    incomplete = bool(accepted) and {v["path"] for v in accepted} != expected
++    status = subprocess.check_output(
++        ["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=all"],
++        text=True, encoding="utf-8", timeout=120)
++    return {"upstream_policy_commit": upstream_commit,
++            "tracked_changes": tracked, "accepted_oem_generated": accepted,
++            "unexpected_generated": rejected, "incomplete_oem_generation": incomplete,
++            "all_extra_files_checked_including_ignored": True,
++            "git_status": status,
++            "passed": not tracked and not rejected and not incomplete}
++
++
++def create_kconfig_workspace(source: Path, workspace: Path, ref: str, log: Path) -> None:
++    if workspace.exists():
++        raise FileExistsError(f"Refusing existing Kconfig workspace: {workspace}")
++    if workspace.resolve().is_relative_to(source.resolve()):
++        raise ValueError("Kconfig workspace must be outside the pristine checkout")
++    if not workspace_state(source)["passed"]:
++        raise ValueError("Pristine checkout is already dirty before Kconfig")
++    run(["git", "-C", str(source), "worktree", "add", "--detach", str(workspace), ref], log)
++    if git_output(workspace, "rev-parse", "HEAD") != git_output(source, "rev-parse", ref):
++        raise ValueError("Kconfig worktree uses a different commit")
++    if not workspace_state(workspace)["passed"]:
++        raise ValueError("Kconfig worktree is not initially clean")
++
++
++def audit_kconfig(source: Path, ref: str, upstream_commit: str, stock: Path,
++                  work_dir: Path, output: Path, reference: dict[str, str],
++                  report: dict[str, Any], *, cc: str = "aarch64-linux-gnu-gcc",
++                  cross_compile: str = "aarch64-linux-gnu-") -> None:
++    """Run real Kconfig in a disposable worktree; the archived source stays clean.
++
++    cc/cross_compile are explicit parameters for host-only local reproduction,
++    not extra workflow inputs and not a release-kernel toolchain selection.
++    """
++    workspace = work_dir.resolve() / "kconfig-source"
++    build_out = work_dir.resolve() / "kconfig-out"
++    if output.resolve().is_relative_to(workspace) or output.resolve().is_relative_to(build_out):
++        raise ValueError("Evidence output must be outside Kconfig work directories")
++    create_kconfig_workspace(source, workspace, ref, output / "kconfig-worktree.log")
++    write_json(output / "source_state_before.json", {
++        "pristine": workspace_state(source), "kconfig_workspace": workspace_state(workspace)})
++    build_out.mkdir(parents=True, exist_ok=False)
++    (build_out / ".config").write_bytes(stock.read_bytes())
++    command = ["make", "-C", str(workspace), f"O={build_out}", "ARCH=arm64",
++               f"CROSS_COMPILE={cross_compile}", f"CC={cc}", "HOSTCC=gcc", "olddefconfig"]
++    report["olddefconfig_command"] = command
++    report["olddefconfig_ok"] = False
++    report["kconfig_uses_isolated_worktree"] = True
++    try:
++        run(command, output / "olddefconfig_1.log", timeout=600)
++        first = (build_out / ".config").read_bytes()
++        (output / "resolved.config").write_bytes(first)
++        resolved = parse_config(first.decode("utf-8"))["values"]
++        differences = compare_configs(reference, resolved)
++        write_json(output / "resolved_vs_stock.json", differences)
++        report["critical_config_gate"] = critical_gate(reference, resolved)
++        report["all_active_stock_options"] = {
++            "scope": "all stock y/m symbols, NOT ABI or device compatibility",
++            "missing_or_changed": [
++                {"symbol": key, "stock": value, "candidate": resolved.get(key)}
++                for key, value in sorted(reference.items())
++                if value in {"y", "m"} and resolved.get(key) != value],
++        }
++        run(command, output / "olddefconfig_2.log", timeout=600)
++        if (build_out / ".config").read_bytes() != first:
++            raise ValueError("Repeated olddefconfig is not byte-idempotent")
++        report["olddefconfig_ok"] = True
++        report["olddefconfig_idempotent"] = True
++    finally:
++        # Keep exact diagnostics even when make or config comparison failed.
++        pristine = workspace_state(source)
++        derived = workspace_state(workspace, upstream_commit)
++        write_json(output / "source_state_after.json", {
++            "pristine": pristine, "kconfig_workspace": derived})
++        diff = subprocess.check_output(
++            ["git", "-C", str(workspace), "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--"],
++            timeout=120)
++        (output / "kconfig_workspace_tracked.diff").write_bytes(diff)
++        report["source_unchanged"] = pristine["passed"]
++        report["kconfig_workspace_integrity_ok"] = derived["passed"]
++        report["oem_generated_paths"] = [v["path"] for v in derived["accepted_oem_generated"]]
++    if not pristine["passed"] or not derived["passed"]:
++        raise ValueError("Unexpected source changes; see source_state_after.json and kconfig_workspace_tracked.diff")
+ 
+ 
+ def main() -> int:
+@@ -352,31 +488,14 @@
+         for cmd in (["git", "--version"], ["make", "--version"], ["gcc", "--version"],
+                     ["aarch64-linux-gnu-gcc", "--version"], ["uname", "-a"]):
+             run(cmd, output / "environment.log", timeout=60)
+-        build_out = args.work_dir.resolve() / "kconfig-out"
+-        build_out.mkdir(parents=True, exist_ok=False)
+-        (build_out / ".config").write_bytes(stock.read_bytes())
+-        command = ["make", "-C", str(source), f"O={build_out}", "ARCH=arm64",
+-                   "CROSS_COMPILE=aarch64-linux-gnu-", "CC=aarch64-linux-gnu-gcc",
+-                   "HOSTCC=gcc", "olddefconfig"]
+-        report["olddefconfig_command"] = command
+-        report["olddefconfig_ok"] = False
+-        run(command, output / "olddefconfig_1.log", timeout=600)
+-        first = (build_out / ".config").read_bytes()
+-        (output / "resolved.config").write_bytes(first)
+-        resolved = parse_config(first.decode("utf-8"))["values"]
+-        write_json(output / "resolved_vs_stock.json", compare_configs(reference, resolved))
+-        report["critical_config_gate"] = critical_gate(reference, resolved)
+-        run(command, output / "olddefconfig_2.log", timeout=600)
+-        if (build_out / ".config").read_bytes() != first:
+-            raise ValueError("Repeated olddefconfig is not byte-idempotent")
+-        report["olddefconfig_ok"] = True
+-        report["olddefconfig_idempotent"] = True
+-        if git_output(source, "status", "--porcelain"):
+-            raise ValueError("Audit unexpectedly modified tracked/untracked source files")
++        audit_kconfig(source, commit, commit, stock, args.work_dir, output, reference, report)
+         if sha256(stock) != expected_stock_hash:
+             raise ValueError("Stock reference changed during audit")
+         report["audit_completed"] = True
+         report["source_unchanged"] = True
++        if not report["critical_config_gate"]["passed"]:
++            count = len(report["critical_config_gate"]["failures"])
++            print(f"::warning::SWEET source collection complete, but {count} critical stock options are missing or changed. NOT a kernel release.", flush=True)
+         # Known compatibility findings do not falsify completed data collection.
+         # No flag anywhere in this program can grant release/flash approval.
+         exit_code = 0
+@@ -395,6 +514,13 @@
+                 "A green collection job is not a kernel Green Pass. The source archives\n"
+                 "are unmodified OEM snapshots. Kconfig differences remain findings even\n"
+                 "when collection succeeds. Read report.json and resolved_vs_stock.json.\n")
++        if gate.get("failures"):
++            text += "\n| Stock option | Stock | Resolved |\n|---|---|---|\n"
++            for item in gate["failures"]:
++                text += f"| {item['symbol']} | {item['stock']} | {item['candidate'] or 'absent'} |\n"
++        text += ("\nKconfig uses a separate worktree. The archived original is checked independently. "
++                 "Only the six byte/type/target-checked OEM placeholder outputs of the pinned K6A "
++                 "Makefile are accepted in that worktree. This does not restore missing stock features.\n")
+         (output / "SUMMARY.md").write_text(text, encoding="utf-8")
+         if os.environ.get("GITHUB_STEP_SUMMARY"):
+             with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as stream:

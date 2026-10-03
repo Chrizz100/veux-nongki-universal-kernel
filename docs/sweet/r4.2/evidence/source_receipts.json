@@ -1,0 +1,12 @@
+{
+  "repository_snapshot": "https://github.com/Chrizz100/veux-nongki-universal-kernel/tree/500fea9b73fe2dcf5c4f463c9b545ce1520d325c",
+  "run": "https://github.com/Chrizz100/veux-nongki-universal-kernel/actions/runs/37094699976",
+  "original_workflow": "https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/500fea9b73fe2dcf5c4f463c9b545ce1520d325c/.github/workflows/sweet-oem-source-audit.yml",
+  "original_audit": "https://github.com/Chrizz100/veux-nongki-universal-kernel/blob/500fea9b73fe2dcf5c4f463c9b545ce1520d325c/common/scripts/sweet/audit.py",
+  "oem_makefile_side_effect": "https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/10c33d40a11ecdc75cc1dadb5bd07894bab05815/Makefile#L293-L302",
+  "old_upstream_tree": "https://api.github.com/repos/MiCode/Xiaomi_Kernel_OpenSource/git/trees/973be06bdb997a9c9e6ae78bce8fbc7329adb95a",
+  "new_upstream_tree": "https://api.github.com/repos/MiCode/Xiaomi_Kernel_OpenSource/git/trees/5f23e786f02e80d181217ece9355f5702af23fbe",
+  "checkout_action_yml": "https://github.com/actions/checkout/blob/fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09/action.yml",
+  "upload_action_yml": "https://github.com/actions/upload-artifact/blob/043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/action.yml",
+  "artifact_metadata": "https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel/actions/runs/37094699976/artifacts"
+}

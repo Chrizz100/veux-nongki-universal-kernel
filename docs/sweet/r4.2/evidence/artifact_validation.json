@@ -1,0 +1,38 @@
+{
+  "sweet_k6a-r-oss": {
+    "files_sha256_pass": 16,
+    "computed_tree": "5f23e786f02e80d181217ece9355f5702af23fbe",
+    "upstream_tree": "5f23e786f02e80d181217ece9355f5702af23fbe",
+    "tree_pass": true,
+    "source": "/mnt/data/sweet_r42_work/sources/sweet_k6a-r-oss",
+    "zip_bytes": 180028220,
+    "zip_sha256": "622d8c2ad9a8f60d3c7786f60c1536b6b6c508f8652047dfc4ffee5bf64f001c",
+    "github_zip_sha256": "622d8c2ad9a8f60d3c7786f60c1536b6b6c508f8652047dfc4ffee5bf64f001c",
+    "zip_crc_all_files_pass": true,
+    "zip_file_count": 17,
+    "source_file_symlink_entries": 67141,
+    "source_symlinks": 43,
+    "source_archive_sha256": "75ef98576fd1c224cde32fd021d5d0d275b61cb6f5f21d042b6e86b4fbe60860",
+    "source_archive_bytes": 177033250,
+    "source_current_tree_match": true,
+    "local_pristine_source_clean": true
+  },
+  "sweet-r-oss": {
+    "files_sha256_pass": 15,
+    "computed_tree": "973be06bdb997a9c9e6ae78bce8fbc7329adb95a",
+    "upstream_tree": "973be06bdb997a9c9e6ae78bce8fbc7329adb95a",
+    "tree_pass": true,
+    "source": "/mnt/data/sweet_r42_work/sources/sweet-r-oss",
+    "zip_bytes": 177153450,
+    "zip_sha256": "9a469afc9b9c3d4e8d56c695f39d5e7cd077a00f0acf4c542773f2045fcc9fe8",
+    "github_zip_sha256": "9a469afc9b9c3d4e8d56c695f39d5e7cd077a00f0acf4c542773f2045fcc9fe8",
+    "zip_crc_all_files_pass": true,
+    "zip_file_count": 16,
+    "source_file_symlink_entries": 66901,
+    "source_symlinks": 40,
+    "source_archive_sha256": "1884dfdf4b8530960feeb69d35023fd2a86517015cda8b5d8e5f2e6d4668639f",
+    "source_archive_bytes": 174165412,
+    "source_current_tree_match": true,
+    "local_pristine_source_clean": true
+  }
+}

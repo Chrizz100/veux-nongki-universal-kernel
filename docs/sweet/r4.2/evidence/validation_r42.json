@@ -1,0 +1,40 @@
+{
+  "yaml_12_no_duplicate_keys": true,
+  "manual_read_only_trigger": true,
+  "runner_context_placement": true,
+  "matrix_preserved": true,
+  "no_continue_on_error": true,
+  "bash_n_pass": [
+    "Lokale Selbsttests",
+    "Werkzeuge fuer echte Kconfig-Aufloesung installieren",
+    "Gepinnte Quellen und olddefconfig pruefen"
+  ],
+  "python_ast_pass": [
+    "common/scripts/sweet/audit.py",
+    "common/update/sweet/tests/test_audit.py",
+    "common/update/sweet/tests/test_source_mutation.py",
+    "common/update/sweet/tests/test_layout.py"
+  ],
+  "action_inputs_checked_against_fetched_pinned_action_yml": true,
+  "actionlint_executed": false,
+  "shellcheck_executed": false,
+  "sparse_checkout_tests_pass": 72,
+  "sparse_checkout_clean_after_tests": true,
+  "veux_sentinels_excluded": true,
+  "reference_files_unchanged": {
+    "device/sweet/README.md": "796c9acf92b16491a1ec8b6592c9ac1062e13ab3b67377ca3b957ac889782bc8",
+    "device/sweet/reference/stock.config": "b8821ce37644106a92be29b1d8350ea517fade58a2d924e4e97bc9624e441ca5",
+    "lineages/sweet/source_lock.json": "a11ff521479ee26fe12e0d78dc9f3f77a0722c2bd32d6ae082fea5923c948214",
+    "lineages/sweet/README.md": "0cd1dbe153c15de0ec541079ad1bfd891b6a7da80993421602316643bead8bc8",
+    "lineages/sweet/reference/sweet-r-oss.defconfig": "e08c9880807acb8df4e0d940e83cdf520e3eba4a51eaba7d984355ff9dab147c",
+    "lineages/sweet/reference/sweet_k6a-r-oss.defconfig": "43cf22f92e57d5d87e7e7f21e04092ceafa416510ec8db861dd8cad94da51ae3"
+  },
+  "original_images_unchanged": {
+    "boot.img": "4123ddc071662ed266c871ef45a93f637b3f1ae1c9775cfcabf13793b5040015",
+    "dtbo.img": "a99eb0e607e980d8f95e207a6c4da97d207c94984bbd33463df95852f1de7348",
+    "vbmeta.img": "bfef88faa896ca422de041ac0bcd92335ec47c7a0c736e5ea6f4a14662879b51"
+  },
+  "remote_repo_written": false,
+  "ci_run_started": false,
+  "kernel_built": false
+}
