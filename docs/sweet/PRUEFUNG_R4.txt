@@ -1,0 +1,60 @@
+SWEET R4 – GETRENNTE REPOSITORY-ORDNER
+Datum: 02.10.2026
+
+Ziel: SWEET zusätzlich in Chrizz100/veux-nongki-universal-kernel führen.
+Die vorhandene VEUX-Struktur wird nicht verschoben oder umbenannt.
+Keine Remote-Datei wurde geschrieben; kein Workflow wurde gestartet.
+
+NEUE ABLAGE
+.github/workflows/sweet-oem-source-audit.yml
+common/scripts/sweet/audit.py
+common/update/sweet/tests/test_audit.py
+common/update/sweet/tests/test_layout.py
+device/sweet/reference/stock.config
+lineages/sweet/source_lock.json
+lineages/sweet/reference/sweet-r-oss.defconfig
+lineages/sweet/reference/sweet_k6a-r-oss.defconfig
+docs/sweet/
+
+ENTSCHEIDENDE ABGRENZUNG
+Der gelesene VEUX-Detektor sucht lineages/*/build.yml und erlaubt ausschließlich
+VEUX / SM6375 mit 5.4-Versionen. Deshalb enthält lineages/sweet/ keine build.yml
+auf dieser Ebene. Die existierenden lineages/5.4.*/ bleiben unberührt.
+Die gelesene V4-Engine verwendet explizite Flotten-/Quellrezepte; R4 ändert
+weder diese Rezepte noch die globalen Upstream-Manifeste.
+
+Nur SWEET-Dateien werden ergänzt; nur die gleichnamige SWEET-YAML wird ersetzt,
+sofern der Nutzer R3 bereits übernommen hat. Der alte sweet-oem-audit-Ordner
+ist für R4 unbenutzt und wird von diesem Paket nicht gelöscht.
+
+UMSTELLUNG GEGENÜBER R3
+- Prüfprogramm, Tests, Geräte- und Quellreferenzen an getrennte Zielpfade verlegt.
+- Alle aktiven Programm-/Test-/Workflowpfade entsprechend angepasst.
+- Stock-Konfiguration, Quell-Pins und beide OEM-Defconfigs bytegleich erhalten.
+- Manueller R4-Workflow, contents: read, keine Push-/Flash-Aktion.
+- Nicht-kegelförmiger Sparse-Checkout mit vier verankerten SWEET-Pfaden;
+  VEUX-Skriptdateien in übergeordneten Verzeichnissen werden nicht mitgenommen.
+- Ausgaben unter runner.temp, getrennte SWEET-R4-Artefaktnamen.
+- Historische R3-Belege liegen ausdrücklich unter docs/sweet/history/r3/.
+
+LOKALE VALIDIERUNG
+44 Selbsttests bestanden. Dieselben 44 Tests bestanden zusätzlich nach einem
+echten lokalen Git-Sparse-Checkout von Testdaten, aus fremdem Arbeitsverzeichnis.
+Der Sparse-Checkout enthielt keine der angelegten VEUX-Sentinelfiles und blieb
+nach den Tests unverändert. Dies war ein lokaler Layouttest, kein Xiaomi-Checkout.
+
+YAML 1.2 mit Ablehnung doppelter Schlüssel geparst; Trigger, Leserechte, Matrix,
+Commit-Pins, referenzierte Pfade, Sparse-Checkout-Muster und Ausgabepfade geprüft.
+Alle drei Shell-Run-Blöcke mit bash -n geprüft; die drei Python-Dateien via AST.
+Die vollständige Liste steht in docs/sweet/evidence/validation_r4.json.
+
+Nicht ausgeführt: actionlint, shellcheck, echter GitHub-Actions-Lauf, vollständige
+Regression sämtlicher vorhandener VEUX-Workflows, Xiaomi-olddefconfig, Kernelbuild,
+AK3-/Boot-Paketierung und Gerätetest. Kein tatsächlicher CI-/Kernel-Green-Pass.
+Die vorhandene Quellen-/Kconfig-Prüfung aus R3 bleibt fachlich unverändert.
+Das R4-Paket ist nicht flashbar. AK3 und boot.img bleiben das spätere Ziel.
+
+Gelesener Repository-Snapshot:
+c9a02ed301336400fd184eddd6144f2595b444b4
+Nachweise und Leseumfang: docs/sweet/evidence/repository_layout_sources.json
+Installationsanleitung: docs/sweet/README.md
