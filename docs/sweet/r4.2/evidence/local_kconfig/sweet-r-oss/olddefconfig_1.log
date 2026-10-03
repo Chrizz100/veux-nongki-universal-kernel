@@ -1,0 +1,19 @@
+$ make -C /mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source O=/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-out ARCH=arm64 CROSS_COMPILE= CC=gcc HOSTCC=gcc olddefconfig
+make: Entering directory '/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source'
+In file included from scripts/kconfig/zconf.tab.c:2470:
+In function ‘dep_stack_insert’,
+    inlined from ‘sym_check_print_recursive’ at /mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c:1123:3,
+    inlined from ‘sym_check_deps’ at /mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c:1300:3:
+/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c:1099:19: warning: storing the address of local variable ‘cv_stack’ in ‘check_top’ [-Wdangling-pointer=]
+ 1099 |         check_top = stack;
+      |         ~~~~~~~~~~^~~~~~~
+/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c: In function ‘sym_check_deps’:
+/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c:1120:26: note: ‘cv_stack’ declared here
+ 1120 |         struct dep_stack cv_stack;
+      |                          ^~~~~~~~
+/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source/scripts/kconfig/symbol.c:1090:4: note: ‘check_top’ declared here
+ 1090 | } *check_top;
+      |    ^~~~~~~~~
+scripts/kconfig/conf -s --olddefconfig Kconfig
+drivers/misc/Kconfig:624:warning: config symbol defined without type
+make: Leaving directory '/mnt/data/sweet_r42_work/r42-integration/sweet-r-oss/kconfig-source'
