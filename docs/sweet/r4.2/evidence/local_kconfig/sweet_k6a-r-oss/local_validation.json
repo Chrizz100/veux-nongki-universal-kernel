@@ -1,0 +1,162 @@
+{
+  "branch": "sweet_k6a-r-oss",
+  "upstream_commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+  "local_reconstructed_snapshot_commit": "d6ec1f61a6da72a7b9bdbe98451e1682e39b091b",
+  "source_tree": "5f23e786f02e80d181217ece9355f5702af23fbe",
+  "compiler_note": "Local HOST GCC 14, only real Kconfig, not cross kernel compilation; compared with CI GCC11 result.",
+  "olddefconfig_command": [
+    "make",
+    "-C",
+    "/mnt/data/sweet_r42_work/r42-integration/sweet_k6a-r-oss/kconfig-source",
+    "O=/mnt/data/sweet_r42_work/r42-integration/sweet_k6a-r-oss/kconfig-out",
+    "ARCH=arm64",
+    "CROSS_COMPILE=",
+    "CC=gcc",
+    "HOSTCC=gcc",
+    "olddefconfig"
+  ],
+  "olddefconfig_ok": true,
+  "kconfig_uses_isolated_worktree": true,
+  "critical_config_gate": {
+    "scope": "selected stock config values only; NOT ABI/build/device validation",
+    "checked": 43,
+    "passed": false,
+    "failures": [
+      {
+        "symbol": "CONFIG_FINGERPRINT_FS_TEE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_INPUT_AW8624_HAPTIC",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "all_active_stock_options": {
+    "scope": "all stock y/m symbols, NOT ABI or device compatibility",
+    "missing_or_changed": [
+      {
+        "symbol": "CONFIG_FINGERPRINT_FS_TEE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_INPUT_AW8624_HAPTIC",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIGT",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIHW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MILLET",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MIUI_ZRAM_MEMORY_TRACKING",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MI_MEMORY_SYSFS",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_MI_RECLAIM",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_PERF_CRITICAL_RT_TASK",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_RTMM",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SCSI_SKHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_SF_BINDER",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSFEATURE",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSHPB",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW",
+        "stock": "y",
+        "candidate": null
+      },
+      {
+        "symbol": "CONFIG_UFSTW_IGNORE_GUARANTEE_BIT",
+        "stock": "y",
+        "candidate": null
+      }
+    ]
+  },
+  "olddefconfig_idempotent": true,
+  "source_unchanged": true,
+  "kconfig_workspace_integrity_ok": true,
+  "oem_generated_paths": [
+    "drivers/staging/ktrace/Kconfig",
+    "drivers/staging/ktrace/Makefile",
+    "drivers/staging/rtmm/Kconfig",
+    "drivers/staging/rtmm/Makefile",
+    "include/linux/ktrace.h",
+    "include/linux/rtmm.h"
+  ],
+  "resolved_config_byte_identical_to_ci": true,
+  "resolved_sha256": "096ca167c4d816a795e8d2124c92d1bbf019f8bda172584c6f6a5cb70a7ba121",
+  "critical_missing_count": 7,
+  "active_missing_count": 16
+}

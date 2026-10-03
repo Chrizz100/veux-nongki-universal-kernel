@@ -1,0 +1,57 @@
+{
+  "pristine": {
+    "upstream_policy_commit": null,
+    "tracked_changes": [],
+    "accepted_oem_generated": [],
+    "unexpected_generated": [],
+    "incomplete_oem_generation": false,
+    "all_extra_files_checked_including_ignored": true,
+    "git_status": "",
+    "passed": true
+  },
+  "kconfig_workspace": {
+    "upstream_policy_commit": "10c33d40a11ecdc75cc1dadb5bd07894bab05815",
+    "tracked_changes": [],
+    "accepted_oem_generated": [
+      {
+        "path": "drivers/staging/ktrace/Kconfig",
+        "type": "file",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "drivers/staging/ktrace/Makefile",
+        "type": "file",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "drivers/staging/rtmm/Kconfig",
+        "type": "file",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "drivers/staging/rtmm/Makefile",
+        "type": "file",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "include/linux/ktrace.h",
+        "type": "symlink",
+        "target": "/mnt/data/sweet_r42_work/r42-integration/sweet_k6a-r-oss/kconfig-source/include/dum/ktrace.h"
+      },
+      {
+        "path": "include/linux/rtmm.h",
+        "type": "symlink",
+        "target": "/mnt/data/sweet_r42_work/r42-integration/sweet_k6a-r-oss/kconfig-source/include/dum/rtmm.h"
+      }
+    ],
+    "unexpected_generated": [],
+    "incomplete_oem_generation": false,
+    "all_extra_files_checked_including_ignored": true,
+    "git_status": "?? drivers/staging/ktrace/Kconfig\n?? drivers/staging/ktrace/Makefile\n?? drivers/staging/rtmm/Kconfig\n?? drivers/staging/rtmm/Makefile\n?? include/linux/ktrace.h\n?? include/linux/rtmm.h\n",
+    "passed": true
+  }
+}
