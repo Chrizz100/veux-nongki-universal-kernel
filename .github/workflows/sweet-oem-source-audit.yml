@@ -1,4 +1,4 @@
-name: SWEET OEM Quellenpruefung R4
+name: SWEET OEM Quellenpruefung R4.1
 
 # Manual, read-only source collection and configuration audit. NOT a kernel build.
 # Green here means that evidence collection completed, NOT release approval.
@@ -26,8 +26,6 @@ jobs:
           - sweet_k6a-r-oss
     env:
       SOURCE_BRANCH: ${{ matrix.source_branch }}
-      AUDIT_WORK: ${{ runner.temp }}/sweet-oem-audit
-      AUDIT_OUT: ${{ runner.temp }}/sweet-audit-artifacts
       LC_ALL: C.UTF-8
       GIT_TERMINAL_PROMPT: '0'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -61,6 +59,10 @@ jobs:
             libssl-dev libelf-dev python3 git
 
       - name: Gepinnte Quellen und olddefconfig pruefen
+        # runner is available in step env, not in jobs.<job_id>.env.
+        env:
+          AUDIT_WORK: ${{ runner.temp }}/sweet-oem-audit
+          AUDIT_OUT: ${{ runner.temp }}/sweet-audit-artifacts
         run: |
           set -euo pipefail
           python3 common/scripts/sweet/audit.py \
@@ -72,7 +74,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, verified 2026-10-02
         with:
-          name: SWEET-R4-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: SWEET-R4.1-${{ matrix.source_branch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/sweet-audit-artifacts/
           if-no-files-found: error
           retention-days: 14
