@@ -1,0 +1,63 @@
+VEUX 5.4.274 – Offline-Pruefung nach Run 37183215672
+Datum: 2026-10-04
+Gepruefter Repo-Stand: b31291600aed1f7e565f31963eb1737de7caa78b
+
+ERGEBNIS
+Der erfolgreiche Build und die Integration sind bestaetigt. Zwei Fehler in der
+Pruef-/Installationslogik wurden lokal reproduziert und korrigiert. In diesem
+gezielt untersuchten Bereich wurde kein neuer Kernel-Laufzeitfehler bewiesen.
+Es wurde kein weiterer Kernel gebaut, kein Geraet geflasht und kein Device-PASS
+vergeben. Ein vollstaendiges Audit des gesamten Kernelbaums ist dies nicht.
+
+1. VERLUST VON DETAILBERICHTEN
+veux_release_device.worker() loeschte den Build-Arbeitsordner nach dem Kopieren
+nur ausgewaehlter Dateien. Dabei gingen config-reports/, AVB-VERIFY.txt und
+Unpack-Logs verloren. Der erfolgreiche ZIP-Workflow lud ausserdem ausschliesslich
+bei Fehlern ein Diagnoseartefakt hoch. Damit fehlten nach erfolgreichen Builds
+wichtige Rohdaten fuer spaetere Konfigurations-, Warnungs- und ABI-Pruefungen.
+Reproduktion: CONFIG-AUDIT.json und actual-build.config unter config-reports/
+anlegen; bisherige preserve_diagnostics() aufrufen: beide Dateien fehlen im Ziel.
+Korrektur: Der Release-Wrapper erhaelt die Berichte vor dem Cleanup, ausserdem
+.config, Module.symvers, System.map und kernel.release, sofern vorhanden.
+Der neue R2-Workflow laedt die kompakten Berichte auch bei Erfolg hoch.
+Die alten Builddateien des abgeschlossenen Runs werden damit nicht nachtraeglich
+wiederhergestellt. Gesichert werden Rohdaten zukuenftiger Builds ueber R2.
+
+2. UNGEPRUEFTES UEBERSCHREIBEN BEI ERNEUTER ZIP-INSTALLATION
+Die alte Installation pruefte den ZIP-Hash, entpackte dann aber ohne Abgleich der
+bereits vorhandenen Repo-Dateien. Spaetere Korrekturen an denselben Pfaden konnten
+so durch das aeltere ZIP ersetzt und nach einem erfolgreichen Build eingecheckt
+werden. Der ZIP-Hash pruefte den Inhalt, nicht den aktuellen Zielzustand.
+Reproduktion: Eine enthaltene Repo-Datei durch eine spaetere Korrektur ersetzen;
+extractall() stellt danach wieder die alte Version aus dem ZIP her.
+Korrektur: R2 prueft jeden erwarteten Vorher-/Nachher-Hash vor dem ersten Schreiben.
+Bereits installierte identische Dateien werden uebersprungen. Unbekannte Aenderungen
+fuehren vor jeglicher Datei-Aenderung zum Abbruch. Ein erneuter identischer Lauf ist
+zulaessig. Auch doppelte ZIP-Eintraege, falsche Pfade und symbolische Links werden
+abgewiesen. Workflow-Dateien gehoeren nicht zum automatisch installierten Payload.
+
+3. OFFENE PRUEFUNG – ROM-MODULE / ABI
+Diag10 aktiviert MODULES und MODVERSIONS. Die Konfigurationspruefung kontrolliert
+diese Optionen und verhindert neue =m-Treiber ohne mitgelieferte Module. Sie fuehrt
+jedoch keinen CRC-/vermagic-Abgleich mit den tatsaechlichen externen ROM-Modulen
+(.ko-Dateien) durch. Ein Inkompatibilitaetsfehler ist damit NICHT nachgewiesen.
+Fuer den Abgleich benoetigt man passende ROM-Module und Module.symvers des Builds.
+Die R2-Sicherung hebt kuenftig vorhandene Module.symvers fuer diese Pruefung auf.
+
+UNVERAENDERTE KERNEL-INHALTE
+Keine Aenderungen an Treiberpatches, Diag10-Quell-/Konfigurationsdateien, ReSukiSU-,
+SUSFS- oder NoMount-Quellen oder deren Pins. SWEET-Dateien bleiben unangetastet.
+ReSukiSU 35187; SUSFS 2.3.0; NoMount interner Versionswert 20.
+Der Status von Run 37183215672 bleibt: Compile/Package/Static Boot PASS,
+261/261 erfasste ROM-Kernelanforderungen PASS; Device-PASS weiterhin offen.
+Der grosse Artefaktdownload konnte hier nicht unabhaengig untersucht werden.
+
+ANWENDUNG OHNE NEUEN KERNELBUILD
+VEUX_Diag10_Integration_R2.zip unveraendert ins Repo-Hauptverzeichnis hochladen.
+VEUX_ZIP_Abschluss.yml unter .github/workflows/ ersetzen.
+Workflow: VEUX 5.4.274 - Repo-Pruefung und optionaler Build R2.
+Beim Start bleibt build_kernel standardmaessig false (nicht ankreuzen).
+Dann werden nur die Dateien geprueft/installiert, Host-Tests ausgefuehrt,
+Pruefberichte hochgeladen und die geprueften Werkzeugkorrekturen eingecheckt.
+Ein Kernelbuild erfolgt nur bei ausdruecklichem Aktivieren dieser Option.
+Die Repo wurde durch diese lokale Arbeit noch nicht geaendert.
