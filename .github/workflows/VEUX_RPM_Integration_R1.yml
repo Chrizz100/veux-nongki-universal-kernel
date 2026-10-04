@@ -1,0 +1,65 @@
+name: VEUX RPM R1 - Integration ohne Kernelbuild
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: veux-all-in-one-publish-main
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  VEUX_RPM_ZIP_SHA256: a68b1703f64acb25264a0f5f34a9f78ef047f0dbe83f2b85404e5b66518d6b20
+jobs:
+  install:
+    name: RPM-Fix installieren und 63 Host-Tests pruefen
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+          ref: ${{ github.sha }}
+      - name: Authenticate and install RPM package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/VEUX_RPM_Integration_R1.yml@refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          mkdir -p "$RUNNER_TEMP/veux-rpm-reports"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          installer = Path('common/scripts/veux_zip_install.py')
+          expected = '96a4581f11e0946631b09bb9f42a58910c66614df53d53b5086e13fd27a6a94b'
+          if installer.is_symlink() or hashlib.sha256(installer.read_bytes()).hexdigest() != expected:
+              raise SystemExit('BLOCKED: existing ZIP installer changed')
+          if not Path('VEUX_RPM_Integration_R1.zip').is_file():
+              raise SystemExit('BLOCKED: VEUX_RPM_Integration_R1.zip fehlt im Repo-Hauptverzeichnis')
+          PY
+          python3 common/scripts/veux_zip_install.py --archive VEUX_RPM_Integration_R1.zip --root "$GITHUB_WORKSPACE" --sha256 "$VEUX_RPM_ZIP_SHA256" 2>&1 | tee "$RUNNER_TEMP/veux-rpm-reports/install.log"
+      - name: Install host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential git python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-rpm-python"
+          "$RUNNER_TEMP/veux-rpm-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Verify regression gates and commit checked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-rpm-python/bin/python" common/scripts/veux_rpm_install.py --archive VEUX_RPM_Integration_R1.zip --sha256 "$VEUX_RPM_ZIP_SHA256" 2>&1 | tee "$RUNNER_TEMP/veux-rpm-reports/verify-save.log"
+      - name: Publish failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-RPM-R1-Diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-rpm-reports/
+          if-no-files-found: warn
+          retention-days: 7
