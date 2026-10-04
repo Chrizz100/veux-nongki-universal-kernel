@@ -1,0 +1,14 @@
+--- a/drivers/rpmsg/rpm-smd.c
++++ b/drivers/rpmsg/rpm-smd.c
+@@ -750,7 +750,10 @@
+ 
+ 		ret = msm_rpm_trysend_smd_buffer(s->buf, get_buf_len(s->buf));
+ 
+-		WARN_ON(ret != 0);
++		if (ret) {
++			pr_err("Failed to send sleep request: %d\n", ret);
++			return ret;
++		}
+ 		trace_rpm_smd_send_sleep_set(get_msg_id(s->buf), type, id);
+ 
+ 		s->valid = false;

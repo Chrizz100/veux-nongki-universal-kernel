@@ -1,0 +1,20 @@
+{
+  "after_sha256": "8c7416abec4c2c28ccc9829ad9f6abaee2c42bdcfda8fd8420236c6b1cb5c655",
+  "assets": {
+    "0001-rpm-preserve-unsent-sleep-requests.patch": "eed5cb84767dabe03a6bb8180f6cca98dfdaedc6d4f97ae15a50d4670679331b",
+    "sources/rpm-custom.c": "6e75d6e45479b0e1821249b51388b928bf7f4b9abf568cfcbd8a9f5d4e834cf3",
+    "sources/rpm-stock-source.c": "e3c0e256535b98af7124a31775cac4d1309c4a5cc91c86480d563422a96daccd",
+    "sources/system_pm_rpm.c": "52990056498c263ba67de159a9f7d38f4b77352d842f8caf7af6271cad84b668",
+    "test_rpm_sleep.py": "cc3453c7870f05cb8a58cb42596c64711172b6511dd104f588c5b50633a8783a"
+  },
+  "before_sha256": "6e75d6e45479b0e1821249b51388b928bf7f4b9abf568cfcbd8a9f5d4e834cf3",
+  "device_pass": false,
+  "host_cases": 22,
+  "id": "rpm-sleep-r1",
+  "kernel": "5.4.274",
+  "patch": "0001-rpm-preserve-unsent-sleep-requests.patch",
+  "recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+  "schema": 1,
+  "source": "drivers/rpmsg/rpm-smd.c",
+  "test": "test_rpm_sleep.py"
+}

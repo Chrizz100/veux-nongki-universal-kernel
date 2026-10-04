@@ -1,0 +1,91 @@
+VEUX RPM-Integration R1 — 2026-10-04
+Arbeitsgrundlage: main 0cb3d6bfc78b4093182b168dd68504ae0ddf2094
+
+Zweck
+Der reguläre 5.4.274-Worker erhält einen geprüften Fehlerpfad für RPM-Sleep-
+Requests. Nach ausgeschöpften Sendeversuchen darf eine ungesendete Anforderung
+nicht als erledigt gelten. Der Patch gibt den Transportfehler zurück und lässt
+die Anforderung gültig. Die bestehenden Aufrufer entsperren den Empfang und
+verhindern den anschließenden MPM-Sleep-Eintritt bei diesem Fehler.
+Das Auftreten dieses Transportfehlers am Nutzergerät ist nicht nachgewiesen.
+
+Umfang
+- Nur drivers/rpmsg/rpm-smd.c der regulären 5.4.274-Quelle wird gepatcht.
+- Die 24er-Grenze, Anzahl der Sendeversuche und Wartezeiten bleiben erhalten.
+- Der Patch läuft sowohl bei Replay als auch bei frisch aufgelösten Upstreams.
+- Exakte Quellen-/Payload-Prüfsummen und Host-Tests sind vor dem Compile Pflicht.
+- Nach dem Compile wird die Quelle erneut geprüft. Die Promotion verlangt den
+  neuen RPM-Nachweis im RESULT und übernimmt ihn in CURRENT_BUILD.
+- CURRENT_BUILD wird durch die Installation nicht auf einen ungebauten Stand
+  umgeschrieben. Erst ein späterer erfolgreicher regulärer Build liefert neue
+  Kernel- und Komponenten-Nachweise.
+- RPM-FIXES.json und rpm-host-tests.log überleben die temporäre Build-Bereinigung.
+- Alle sechs Kernel-Linien, ChargerDiag08, ConfigDiag10, Updater-V4-YAML und
+  dessen Upload zusätzlicher Diagnosen nur bei Fehlschlag bleiben erhalten.
+- Installation führt weder Kernelbuild noch Workflow-Bereinigung durch.
+- Die bestehende frische Auflösung von ReSukiSU, SUSFS und NoMount in V4 bleibt
+  unverändert; aktuelle tatsächliche Build-Commits sind erst beim nächsten
+  angeforderten Build feststellbar.
+
+Authentifizierte Grundlage
+Custom-Quelle: dereference23/kernel_xiaomi_sm6375
+Commit: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+https://github.com/dereference23/kernel_xiaomi_sm6375/blob/b2b7a3bbc36d120ee523ebc8d68e0f13a97df632/drivers/rpmsg/rpm-smd.c
+Xiaomi-Quellvergleich: MiCode/Xiaomi_Kernel_OpenSource
+Commit: 61397e524093d1ccb94769b5460825e2eaf8871e
+https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/61397e524093d1ccb94769b5460825e2eaf8871e/drivers/rpmsg/rpm-smd.c
+Flush- und Retry-Funktionen sind in diesen Referenzen identisch.
+Die Originalbytes der drei verwendeten C-Dateien sind im Payload enthalten.
+Original-SHA256: 6e75d6e45479b0e1821249b51388b928bf7f4b9abf568cfcbd8a9f5d4e834cf3
+Korrigierte SHA256: 8c7416abec4c2c28ccc9829ad9f6abaee2c42bdcfda8fd8420236c6b1cb5c655
+Patch-SHA256: eed5cb84767dabe03a6bb8180f6cca98dfdaedc6d4f97ae15a50d4670679331b
+Weitere Einzelprüfsummen: common/device-fixes/5.4.274/rpm-sleep-r1/manifest.json
+
+Prüfverfahren
+22 Host-C-Fälle kompilieren die echten vier beteiligten Funktionen mit
+simuliertem Transport, Request-Baum, IRQ und MPM. Sie prüfen insbesondere
+0/1/23/24/25/40 Requests, vorübergehende und dauerhafte Sendeprobleme, sieben
+Fehlercodes, Empfangssperrfehler sowie den erneuten Sendeversuch.
+11 Fälle reproduzieren den Verlust ungesendeter Requests im Original und
+bestätigen den korrigierten Fehlerpfad. Dies ersetzt keinen Kernel-/Gerätetest.
+
+Die Installation verlangt die bestehenden sieben Regression-Suites (57 Tests)
+und die neue RPM-Suite (6 Tests), insgesamt 63 Tests. Unterfälle prüfen unter
+anderem Wiederholung, Quell-/Patch-/Test-/Manifest-Abweichungen, Symlinks,
+Testabbruch ohne Quellenänderung, beide Workerpfade, unveränderte fünf weitere
+Linien und blockierte Promotion ohne korrekten RPM-Nachweis. Die bestehenden
+ConfigDiag10-Untertests laufen weiterhin. Die RPM-C-Fälle sind zusätzlich in
+der RPM-Suite enthalten und laufen später im tatsächlichen 5.4.274-Worker.
+
+Gesonderter Altbefund
+Eine zusätzliche vollständige Discovery aller neun Suites ergibt 69 Tests:
+67 erfolgreich, zwei Fehler in test_veux_charger_diagnostic.py. Diese beiden
+Fehler treten auch im unveränderten main 0cb3d6b auf: ChargerDiag01 bindet einen
+historischen CURRENT_BUILD-Hash, der nicht zum heutigen Repo passt. Sie gehören
+nicht zu den bestehenden sieben regulären Regression-Suites und nicht zum
+ChargerDiag08-Gate. Der historische Contract wird hier weder aktualisiert noch
+abgeschwächt. Deshalb wird kein vollständiges Repo-PASS behauptet.
+
+Installation am Smartphone
+1. VEUX_RPM_Integration_R1.zip unverändert in das Repo-Hauptverzeichnis hochladen.
+2. VEUX_RPM_Integration_R1.yml nach .github/workflows/ hochladen.
+3. Unter Actions den Workflow "VEUX RPM R1 - Integration ohne Kernelbuild" auf
+   main manuell starten. Beide Dateien müssen vorher committed sein.
+Nicht entpacken. Das ZIP enthält nur das Ergänzungspaket zum vorhandenen Repo,
+keinen flashbaren Kernel. Die YAML ist absichtlich nur ein Installationslauf.
+
+Sicherheit des Ablaufs
+Vor jeglichem Schreiben werden ZIP und vorhandener Installer authentifiziert.
+Alle Ziele müssen entweder exakt dem geprüften Vorzustand oder dem neuen
+Zustand entsprechen. Unbekannte Änderungen werden nicht überschrieben.
+Nach den Tests werden die Dateien erneut geprüft. Nur die Manifest-Dateien
+werden committed; ein zwischenzeitlich verschobenes main stoppt den Lauf.
+Push erfolgt ohne Force. Wiederholung erzeugt keinen weiteren Commit.
+Fehlgeschlagene Installationsläufe laden kompakte Prüfberichte hoch.
+Ein erfolgreicher Lauf nennt Commit und Testergebnis in seiner Summary.
+
+Nachweisgrenze
+Lokal bestanden, auf GitHub installiert, Kernel kompiliert und Gerät getestet
+sind vier getrennte Zustände. Die Lieferung allein ist noch keine Installation
+auf GitHub und kein neuer Kernel. Alte Installations-Workflows nicht für dieses
+neue Paket verwenden; sie besitzen andere Payload-Prüfsummen/Vorzustände.

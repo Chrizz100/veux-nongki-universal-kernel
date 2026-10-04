@@ -16,7 +16,9 @@ class RetentionTests(unittest.TestCase):
                 evidence = {'config-reports/actual-build.config': b'CONFIG_KSU=y\n',
                             'config-reports/final-build.config': b'CONFIG_KSU=y\n',
                             'build/.config': b'CONFIG_KSU=y\n',
-                            'compile.log': b'compiler evidence\n'}
+                            'compile.log': b'compiler evidence\n',
+                            'rpm-host-tests.log': b'RPM_SLEEP_HOST_TESTS=PASS\n',
+                            'RPM-FIXES.json': b'[{"id":"rpm-sleep-r1"}]'}
                 if failed:
                     evidence['BLOCKED.json'] = b'{"reason":"compile failure"}'
                 else:
