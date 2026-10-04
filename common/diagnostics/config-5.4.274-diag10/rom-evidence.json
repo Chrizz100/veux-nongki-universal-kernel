@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "device_report_sha256": "47fe07074a4926485d85cb11ce2efc04bd839e993eb9a55d027a72e7e804cc3b",
+  "xml_files_read": 61,
+  "report_complete": true,
+  "source_matrix": "/system/etc/vintf/compatibility_matrix.5.xml",
+  "source_matrix_sha256": "1af5289826dd09bb7f32885c818e184fabcc4a2fbe87a687c83aebad8f5e3856",
+  "matrix_level": 5,
+  "device_target_level": 5,
+  "kernel_target_level": 5,
+  "reference_kernel": "5.4.274",
+  "reference_config_sha256": "a71fd6c33449b4d3e55b1713aeaf636b40523cba68e0be2d42de7ed487a3d20a",
+  "candidate_scope": "kernel requirements only; no full HAL/AVB VINTF result",
+  "symptom": "Android System startup warning reported; exact dialog log unavailable"
+}

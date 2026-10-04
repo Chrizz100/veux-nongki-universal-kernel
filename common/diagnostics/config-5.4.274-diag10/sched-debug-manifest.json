@@ -1,0 +1,11 @@
+{
+  "id": "ConfigDiag10-sched-debug-pm",
+  "path": "kernel/sched/debug.c",
+  "source_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632",
+  "source_git_blob": "76f74c238a5a2dada979f0e779ba31dcf1c49b0f",
+  "before_sha256": "1b156c025085839c15a6114ea3eb3dcf0c0b79f9bdc817d9ab43344b1e67de03",
+  "after_sha256": "b21b0fe59da27970be0971e0321d46cc43feefbca7b385907415a1e38d01ca7b",
+  "patch_sha256": "a12bd25d37d5b7bcbc03713f9c11a3f145789758daf3ddd8272f0a65cf296e09",
+  "observed_failure_run": "36734671570",
+  "purpose": "Print the masked scheduler utilization estimate directly without referencing undefined __PS; retain the existing mask"
+}

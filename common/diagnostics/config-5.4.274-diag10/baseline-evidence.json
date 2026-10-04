@@ -1,0 +1,7 @@
+{
+  "diag08_image_sha256": "6b903f52b8139bf8a6f1c033581c4a6b0a93e6674b2e9f4be3453499f85d0603",
+  "embedded_config_sha256": "722bcc5a40b5998f147b7e40712fb230be3f8549a593b9c538763324987469de",
+  "stock_defconfig_sha256": "722bcc5a40b5998f147b7e40712fb230be3f8549a593b9c538763324987469de",
+  "embedded_equals_stock_defconfig": true,
+  "makefile_gitblob": "9a579d108574c26c24fa75aaa5a6b1ff0000a038"
+}

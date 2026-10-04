@@ -1,0 +1,9 @@
+{
+  "id": "ConfigDiag10",
+  "source_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632",
+  "path": "kernel/Makefile",
+  "before_sha256": "f27b67d514325559eade0530c2bb3265ecd25ece0c3e3fedd89e56b3507d2744",
+  "after_sha256": "49921ac5eee19f52c1623963951a7ac0fceb8297f4736aff3cad7641672c032f",
+  "purpose": "Embed actual KCONFIG_CONFIG; restore captured ROM kernel requirements via build configuration",
+  "regular_patchset": "charger-diag08"
+}
