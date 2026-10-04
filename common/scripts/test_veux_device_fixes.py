@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 import veux_device_fixes as f
+import veux_config_compat as compat
 import veux_release_device as d
 import veux_release as r
 import veux_update_engine as e
@@ -202,7 +203,8 @@ class DeviceTests(unittest.TestCase):
                         events.append('compile')
                         image = work / 'Image'
                         image.write_bytes(b'kernel')
-                        return image, dict(kernel=label, compile=True, image_sha256=e.digest(image))
+                        return image, dict(kernel=label, compile=True, image_sha256=e.digest(image),
+                                           config_compat=compat.expected_proof())
                     def package(image, targets, result, work, public):
                         (public / 'kernel.zip').write_bytes(b'package')
                         result.update(package=True, package_file='kernel.zip')
@@ -220,20 +222,21 @@ class DeviceTests(unittest.TestCase):
                             (e, 'apply_update', {}),
                             (f, 'apply', dict(side_effect=apply)),
                             (f, 'verify_source', dict(side_effect=lambda *a: events.append('verified'))),
-                            (e, 'compile_kernel', dict(side_effect=compile)),
+                            (compat, 'compile_kernel', dict(side_effect=compile)),
                             (e, 'package_kernel', dict(side_effect=package)),
                             (e, 'static_boot', dict(side_effect=boot))]:
                             stack.enter_context(mock.patch.object(obj, name, **kwargs))
                         if fail_fix:
                             with self.assertRaises(e.Blocked):
                                 d.worker(args)
-                            e.compile_kernel.assert_not_called()
+                            compat.compile_kernel.assert_not_called()
                             self.assertFalse((args.public / 'RESULT.json').exists())
                         else:
                             d.worker(args)
                             self.assertEqual(events, ['fixes', 'verified', 'compile', 'verified'])
                             row = json.loads((args.public / 'RESULT.json').read_text())
                             self.assertEqual(row['device_fixes'], f.expected('5.4.274'))
+                            self.assertEqual(row['config_compat'], compat.expected_proof())
                             self.assertFalse(row['device'])
                             self.assertEqual({p.name for p in args.public.iterdir()},
                                 {'kernel.zip', row['boot_file'], 'RESULT.json', 'SHA256SUMS.txt'})
@@ -253,7 +256,10 @@ class DeviceTests(unittest.TestCase):
                     reference_run=old_data['reference_run'], host_tests=True,
                     source_sha256={row['source']: row['after_sha256'] for row in old_data['files']})])
             for proof in (None, [], *old_proofs, f.expected('5.4.274')):
-                e.write_json(args.artifacts / '5.4.274/RESULT.json', {'device_fixes': proof})
+                e.write_json(args.artifacts / '5.4.274/RESULT.json',
+                             {'device_fixes': proof,
+                              'config_compat': compat.expected_proof(),
+                              'config_audit': compat.reference_report()})
                 with mock.patch.object(r, 'promote') as promote:
                     if proof == f.expected('5.4.274'):
                         d.promote(args)
@@ -284,6 +290,9 @@ class DeviceTests(unittest.TestCase):
                 path = args.artifacts / label / 'RESULT.json'
                 row = json.loads(path.read_text())
                 row['device_fixes'] = expected[label]
+                if label == '5.4.274':
+                    row['config_compat'] = compat.expected_proof()
+                    row['config_audit'] = compat.reference_report()
                 e.write_json(path, row)
             with mock.patch.object(e, 'REPO', repo), \
                  mock.patch.object(e, 'check_repo', return_value=({'golden_contract': 'golden'}, {})), \
@@ -293,6 +302,7 @@ class DeviceTests(unittest.TestCase):
                 d.promote(args)
             current = json.loads((repo / r.CURRENT).read_text())
             self.assertEqual(current['lineages']['5.4.274']['device_fixes'], expected['5.4.274'])
+            self.assertEqual(current['lineages']['5.4.274']['config_compat'], compat.expected_proof())
             self.assertFalse(current['device_pass_inferred'])
 
 

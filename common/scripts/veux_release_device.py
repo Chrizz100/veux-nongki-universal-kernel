@@ -15,6 +15,7 @@ import sys
 import veux_update_engine as e
 import veux_release as r
 import veux_device_fixes as fixes
+import veux_config_compat as compat
 import veux_source_transport as transport
 
 
@@ -43,7 +44,7 @@ def worker(args):
         # Required on BOTH repository replay and freshly resolved upstreams.
         proof = fixes.apply(src, label, work)
         fixes.verify_source(src, label, proof)
-        image, result = e.compile_kernel(label, state, targets, work, args.jobs)
+        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
         fixes.verify_source(src, label, proof)
         result['device_fixes'] = proof
         e.package_kernel(image, targets, result, work, public)
@@ -75,6 +76,7 @@ def verify_results(args):
     targets = json.loads((args.bundle / 'targets.json').read_text())
     for label in targets['lineages']:
         row = json.loads((args.artifacts / label / 'RESULT.json').read_text())
+        compat.verify_result(label, row)
         e.require(row.get('device_fixes') == fixes.expected(label),
                   'missing or outdated device fixes: ' + label)
 
