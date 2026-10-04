@@ -1,0 +1,101 @@
+VEUX 5.4.274 – dauerhafte ConfigDiag10-Integration
+Stand: 2026-10-04
+
+ZIEL
+----
+Den bereits erfolgreichen und auf dem Gerät bestätigten ConfigDiag10-Stand
+dauerhaft in den regulären VEUX-Releasepfad übernehmen.
+
+AUSGANGSEVIDENZ
+---------------
+GitHub Run: 36738661110
+Workflow: .github/workflows/veux-config-diag10-5.4.274 (2).yml
+Run-Ergebnis: SUCCESS
+Source-Basis 5.4.274: dereference23/kernel_xiaomi_sm6375
+Commit: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+Gerätebestätigte Config-SHA256:
+5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229
+
+Aktuelle fest gebundene VEUX-Komponenten für den Abschlusslauf:
+ReSukiSU: 35187 / 94dd3c93c2053a84fd752df6eb85db99b7d70ab8
+SUSFS: 2.3.0 / 5326e21a7eb232f9e21debdd5164e99bee3d1e2f
+NoMount: 20 / 6b1be186322d4e0bdc465cf27f6fc0d3679087c6
+
+ÄNDERUNGEN
+----------
+1. common/scripts/veux_config_compat.py
+   Neue fail-closed ConfigDiag10-Kompatibilitätsschicht.
+   Nur 5.4.274 wird um den bewiesenen Diag10-Compile-Audit erweitert.
+   Die anderen fünf Lineages rufen unverändert die gemeinsame Engine auf.
+
+2. common/scripts/veux_release_device.py
+   Der Compile-Aufruf läuft über veux_config_compat.compile_kernel().
+   Promotion von 5.4.274 wird verweigert, wenn ConfigDiag10-Proof fehlt
+   oder von der gerätebestätigten Config-SHA abweicht.
+
+3. common/diagnostics/config-5.4.274-diag10/
+   Bytegenaue, hashgeprüfte Assets aus dem erfolgreichen Diag10-Workflow.
+   Die Original-Payloads wurden unverändert übernommen.
+
+4. common/scripts/test_veux_config_compat.py
+   Prüft Asset-Hashes, die originalen Hosttests und Promotion-Fail-Closed.
+
+5. common/scripts/test_veux_device_fixes.py
+   An den neuen Compile-Gate angepasst.
+
+6. .github/workflows/veux-all-in-one-updater-v4.yml
+   Nur um test_veux_config_compat.py im bestehenden Regression-Step ergänzt.
+   Sonstige Build-/Promotion-Logik bleibt unverändert.
+
+7. .github/workflows/veux-finalize-5.4.274-diag10.yml
+   Neuer enger Abschlusslauf:
+   - nur 5.4.274
+   - feste bereits validierte Pins 35187 / SUSFS 2.3.0 / NoMount 20
+   - keine Upstream-Aktualisierung
+   - keine Promotion
+   - contents: read
+   - Repository muss unverändert bleiben
+   - erzeugt reguläres AK3 + boot.img als Artifact
+
+VORCHECK
+--------
+PASS: Python-Syntax aller neuen/geänderten Python-Dateien.
+PASS: Original ConfigDiag10 VINTF-Tests 9/9.
+PASS: Original Scheduler-Tests 4/4.
+PASS: Original Config/IKCONFIG/CFI-Tests 8/8.
+PASS: Neue Config-Compat-Tests 4/4.
+PASS: YAML 1.2 Parse beider Workflows.
+PASS: Duplicate-Key-Prüfung durch ruamel.yaml.
+PASS: bash -n für alle run:-Blöcke beider Workflows.
+PASS: GitHub Actions vollständig auf Commit-SHAs gepinnt.
+PASS: Abschlussworkflow hat nur contents: read.
+PASS: Abschlussworkflow baut ausschließlich 5.4.274.
+PASS: Abschlussworkflow verwendet keine neuen Upstream-Heads.
+PASS: Permanent V4 bleibt All-in-One für alle sechs Lineages.
+PASS: CI setzt DEVICE_PASS weiterhin nicht automatisch.
+
+WICHTIG
+-------
+Dies ist ein vollständiger lokaler/struktureller Green-Pass-Vorcheck.
+Der neue Abschlussworkflow selbst hat naturgemäß noch keinen echten GitHub
+Actions GREEN PASS, solange er nach dem Upload nicht ausgeführt wurde.
+
+EMPFOHLENE REIHENFOLGE
+----------------------
+1. Inhalt des Ordners repo/ in das bestehende Repository übernehmen.
+   Nichts anderes löschen.
+2. Workflow "VEUX 5.4.274 Finalize Diag10 - Regular Release Proof" starten.
+3. Erst wenn dieser Run grün ist, das erzeugte 5.4.274-Artifact prüfen/flashen.
+4. DEVICE PASS erst nach realem Gerätetest behaupten.
+5. Der normale All-in-One-Updater V4 ist danach bereits für die permanente
+   ConfigDiag10-Schicht vorbereitet.
+
+KERNEL-RESTPUNKTE
+-----------------
+RPM-Puffer: geschlossen – 24-Request-Grenze ist Stock-Verhalten.
+BQ Suspend/Resume: Stock-Abweichung, aber kein Gerätefehler nachgewiesen; kein Patch.
+PD/BC1.2/Charger-Bootmodus: Stock-Abweichung, Hauptsymptom behoben; kein Risko-Port.
+Backlight-Startwert 536: Stock-Abweichung ohne Fehlerbeweis; kein Patch.
+3,8-V-Fallback: nur Fallback bei nicht verbundenem BMS/Batterie; kein Lade-Regelwert.
+
+Damit ist die eigentliche Kernel-Fehlersuche abgeschlossen.
