@@ -19,6 +19,29 @@ import veux_config_compat as compat
 import veux_source_transport as transport
 
 
+def preserve_device_diagnostics(work, public, diag):
+    """Retain compact build evidence before deleting temporary source trees."""
+    e.preserve_diagnostics(work, public, diag)
+    paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json']
+    # ConfigDiag10 writes the raw evidence below this directory. The legacy
+    # preservation function only knows its own top-level JSON files.
+    reports = work / 'config-reports'
+    if reports.is_dir():
+        paths.extend(reports.rglob('*'))
+    paths.extend(work / rel for rel in (
+        'static/AVB-VERIFY.txt', 'static/unpack-raw.log',
+        'static/unpack-decoded.log', 'build/.config', 'build/Module.symvers',
+        'build/System.map', 'build/include/config/kernel.release',
+    ))
+    for path in paths:
+        e.require(not path.is_symlink(), 'linked diagnostic file: ' + str(path))
+        if path.is_file():
+            e.inside(path, work)
+            target = diag / path.relative_to(work)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+
+
 def worker(args):
     label, bundle, work, public = args.kernel, args.bundle, args.work, args.public
     cfg, _ = e.check_repo()
@@ -65,10 +88,7 @@ def worker(args):
         raise
     finally:
         diag = work.parent / 'diagnostics' / label
-        e.preserve_diagnostics(work, public, diag)
-        for p in [*work.glob('*.log'), work / 'DEVICE-FIXES.json']:
-            if p.is_file():
-                shutil.copy2(p, diag / p.name)
+        preserve_device_diagnostics(work, public, diag)
         shutil.rmtree(work)
 
 
