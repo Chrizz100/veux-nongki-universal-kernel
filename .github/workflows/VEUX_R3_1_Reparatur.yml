@@ -1,0 +1,321 @@
+name: VEUX R3.1 - Reparatur ohne Build / optional aktueller Testkernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_kernel:
+        description: 'Optional: neuen 5.4.274 Kernel bauen (sonst nur Repo-Pruefung)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write
+
+  actions: write
+concurrency:
+  group: veux-5.4.274-finalize-diag10
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+  VEUX_PIPELINE_REVISION: R3.1
+jobs:
+  prove:
+    name: Check tooling; optional fresh-upstream 5.4.274 build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+          ref: ${{ github.sha }}
+
+      - name: Check workflow destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$GITHUB_REPOSITORY/.github/workflows/VEUX_R3_1_Reparatur.yml@refs/heads/main"
+          if [[ "$GITHUB_WORKFLOW_REF" != "$expected" ]]; then
+            echo '::error::Diese Datei muss exakt .github/workflows/VEUX_R3_1_Reparatur.yml ersetzen, ohne Namenszusatz wie -1.'
+            exit 1
+          fi
+          echo 'VEUX_PIPELINE=R3.1; Standard: Reparatur und Pruefung ohne Kernelbuild'
+      - name: Verify and install payload without overwriting unknown changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="VEUX_Diag10_Integration_R2.zip"
+          if [[ ! -f "$payload" ]]; then
+            echo "::error::VEUX_Diag10_Integration_R2.zip fehlt im Repo-Hauptverzeichnis."
+            exit 1
+          fi
+          python3 - "$payload" "$RUNNER_TEMP/veux-r2-install.py" <<'PYBOOT'
+          import hashlib
+          from pathlib import Path
+          import sys
+          import zipfile
+          payload = Path(sys.argv[1])
+          expected = "1ff5016dd47cfff0a776308b1683a64fbbff011066dfab25e8b52058f15d1baa"
+          if hashlib.sha256(payload.read_bytes()).hexdigest() != expected:
+              raise SystemExit("BLOCKED: installation ZIP checksum mismatch")
+          with zipfile.ZipFile(payload) as archive:
+              Path(sys.argv[2]).write_bytes(archive.read("common/scripts/veux_zip_install.py"))
+          PYBOOT
+          python3 "$RUNNER_TEMP/veux-r2-install.py" --archive "$payload" --root "$GITHUB_WORKSPACE" --sha256 "1ff5016dd47cfff0a776308b1683a64fbbff011066dfab25e8b52058f15d1baa"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+        if: ${{ inputs.build_kernel }}
+      - name: Install host test dependencies
+        if: ${{ !inputs.build_kernel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Verify regular release and ConfigDiag10 contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-host-reports"
+          "$RUNNER_TEMP/veux-python/bin/python" - "$RUNNER_TEMP/veux-host-reports" <<'PYTEST'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          reports = Path(sys.argv[1])
+          rows = []
+          for name in (
+              "test_veux_update_engine.py", "test_veux_release.py",
+              "test_veux_device_fixes.py", "test_veux_config_compat.py",
+              "test_veux_source_transport.py", "test_veux_zip_install.py",
+              "test_veux_diagnostic_retention.py",
+          ):
+              result = subprocess.run([sys.executable, "common/scripts/" + name],
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              (reports / (name + ".log")).write_text(result.stdout)
+              rows.append({"test": name, "returncode": result.returncode})
+              (reports / "HOST-TESTS.json").write_text(json.dumps(rows, indent=2) + "\n")
+              print(name + (": PASS" if result.returncode == 0 else ": FAIL"), flush=True)
+              if result.returncode:
+                  print(result.stdout)
+                  raise SystemExit(result.returncode)
+          PYTEST
+
+      - name: Disable verified superseded Smartphone and ZIP workflows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYRETIRE'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+              raise SystemExit('BLOCKED: invalid repository')
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10'}
+          def api(path, method='GET'):
+              request = Request('https://api.github.com/repos/' + repo + path,
+                                headers=headers, method=method)
+              with urlopen(request, timeout=45) as response:
+                  data = response.read()
+                  return json.loads(data) if data else None
+
+          known = {
+              'VEUX_Smartphone_Abschluss1.yml': '7961053f2824ed852e21c6269ab809e9f6bbfc54909744111b97b3f30054527c',
+              'VEUX_Smartphone_Abschluss.yml': '46748439441bf7ae523e81a575dc0f62f2860c5f134e636529efdc4c131ab2f6',
+              'VEUX_ZIP_Abschluss.yml': '99813aa7560a1c6eaa084b3101758b5c74e5694825ede8afda004f4558666cbb',
+              'VEUX_ZIP_Abschluss-1.yml': 'e4eb99fe5d9bc227bdd4c75fec63b1f0d7dc6f05a7168ae310337ce991ac1567',
+          }
+          pending = []
+          rows = []
+          # Validate every known live file before changing any workflow state.
+          for name, digest in known.items():
+              path = '.github/workflows/' + name
+              try:
+                  live = api('/contents/' + quote(path, safe='/') + '?ref=main')
+              except HTTPError as error:
+                  if error.code != 404:
+                      raise
+                  rows.append({'file': name, 'status': 'already-absent'})
+                  continue
+              if live.get('encoding') != 'base64' or hashlib.sha256(base64.b64decode(live['content'])).hexdigest() != digest:
+                  raise SystemExit('BLOCKED: superseded workflow changed; left enabled: ' + name)
+              try:
+                  workflow = api('/actions/workflows/' + quote(name, safe=''))
+              except HTTPError as error:
+                  if error.code != 404 or name != 'VEUX_Smartphone_Abschluss.yml':
+                      raise
+                  # This exact malformed historical YAML may have no registered workflow.
+                  rows.append({'file': name, 'status': 'not-registered-invalid-yaml'})
+                  print('LEGACY_INVALID_WORKFLOW_NOT_REGISTERED=' + name)
+                  continue
+              if workflow['path'] != path:
+                  raise SystemExit('BLOCKED: workflow path mismatch')
+              pending.append((name, workflow))
+          for name, workflow in pending:
+              endpoint = '/actions/workflows/' + str(workflow['id'])
+              if workflow['state'] != 'disabled_manually':
+                  api(endpoint + '/disable', method='PUT')
+              if api(endpoint)['state'] != 'disabled_manually':
+                  raise SystemExit('BLOCKED: old workflow is still enabled: ' + name)
+              rows.append({'file': name, 'status': 'disabled_manually'})
+              print('SUPERSEDED_WORKFLOW_DISABLED=' + name)
+          report = Path(os.environ['RUNNER_TEMP']) / 'veux-host-reports/WORKFLOW-CLEANUP.json'
+          report.write_text(json.dumps(rows, indent=2) + '\n')
+          PYRETIRE
+      - name: Resolve current ReSukiSU SUSFS and NoMount for this build
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" - <<'PYRESOLVE'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('common/scripts').resolve()))
+          import veux_update_engine as engine
+
+          bundle = Path(os.environ['RUNNER_TEMP']) / 'veux-targets'
+          targets = engine.resolve(bundle)
+          # Resolve all three components once, but build only the requested lineage.
+          targets['lineages'] = ['5.4.274']
+          engine.write_json(bundle / 'targets.json', targets)
+          current = json.loads(Path('common/contracts/CURRENT_BUILD.json').read_text())
+          report = {'status': 'resolved-not-yet-built', 'kernel': '5.4.274',
+                    'previous': current['targets'], 'resolved': targets['components'],
+                    'repository_sha': targets['repository_sha']}
+          reports = Path(os.environ['RUNNER_TEMP']) / 'veux-host-reports'
+          engine.write_json(reports / 'RESOLVED-UPSTREAMS.json', report)
+          for component in engine.COMPONENTS:
+              entry = targets['components'][component]
+              print(component + ': resolved version=' + entry['version'] + ' commit=' + entry['commit'])
+          PYRESOLVE
+
+        if: ${{ inputs.build_kernel }}
+      - name: Build regular 5.4.274 release
+        id: kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 \
+            --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-overlays" \
+            --jobs "$(nproc)"
+          "$RUNNER_TEMP/veux-python/bin/python" - <<'PYVERIFY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          import zipfile
+          sys.path.insert(0, str(Path('common/scripts').resolve()))
+          import veux_update_engine as engine
+          import veux_release as release
+          import veux_config_compat as compat
+          import veux_device_fixes as fixes
+
+          temp = Path(os.environ['RUNNER_TEMP'])
+          manifest = temp / 'veux-targets/targets.json'
+          targets = json.loads(manifest.read_text())
+          public = temp / 'veux-public/5.4.274'
+          row = json.loads((public / 'RESULT.json').read_text())
+          engine.require(row['kernel'] == '5.4.274', 'wrong built kernel')
+          engine.require(all(row.get(k) is True for k in ('compile','package','static_boot')),
+                         'incomplete kernel checks')
+          engine.require(row.get('device') is False, 'no automated device PASS')
+          engine.require(row['repository_sha'] == targets['repository_sha'] == os.environ['GITHUB_SHA'],
+                         'build repository mismatch')
+          engine.require(row['targets'] == targets['components'], 'built components differ from resolved updates')
+          engine.require(row['target_manifest_sha256'] == engine.digest(manifest), 'build manifest mismatch')
+          compat.verify_result('5.4.274', row)
+          engine.require(row['device_fixes'] == fixes.expected('5.4.274'), 'driver fixes missing')
+          release.verify_boot(row, public)
+          name = row['package_file']
+          engine.require(Path(name).name == name, 'invalid package filename')
+          package = public / name
+          engine.require(engine.digest(package) == row['package_sha256'], 'package hash mismatch')
+          with zipfile.ZipFile(package) as archive:
+              engine.require(archive.testzip() is None, 'package CRC failure')
+              engine.require(hashlib.sha256(archive.read('Image')).hexdigest() == row['image_sha256'],
+                             'packaged kernel differs from built kernel')
+          report = {'status': 'compile-package-static-validated', 'device': False,
+                    'kernel': row['kernel'], 'components': row['targets'],
+                    'repository_sha': row['repository_sha'], 'image_sha256': row['image_sha256']}
+          engine.write_json(temp / 'veux-host-reports/BUILT-UPSTREAMS.json', report)
+          print('FRESH_UPSTREAM_BUILD=PASS; DEVICE_PASS=NO')
+          PYVERIFY
+
+        if: ${{ inputs.build_kernel }}
+      - name: Publish validated 5.4.274 candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel.outputs.artifact_name }}_ConfigDiag10
+          path: ${{ runner.temp }}/veux-public/5.4.274/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+        if: ${{ inputs.build_kernel }}
+      - name: Save checked repository tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYSAVE'
+          import json
+          import subprocess
+          import zipfile
+          with zipfile.ZipFile("VEUX_Diag10_Integration_R2.zip") as archive:
+              manifest = json.loads(archive.read("INSTALL_MANIFEST.json"))
+          subprocess.run(["git", "add", "--", *sorted(manifest["files"])], check=True)
+          PYSAVE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'VEUX checked files already saved'
+            exit 0
+          fi
+          git commit -m 'Preserve VEUX audit evidence and guard ZIP installation [skip ci]'
+          git push origin HEAD:main
+
+      - name: Publish compact host and build evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-274-Pruefberichte-R3-1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-host-reports/
+            ${{ runner.temp }}/veux-builds/diagnostics/5.4.274/
+            ${{ runner.temp }}/veux-targets/targets.json
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: true
+          compression-level: 9
