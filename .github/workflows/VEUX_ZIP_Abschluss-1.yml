@@ -1,0 +1,219 @@
+name: VEUX 5.4.274 - Repo-Pruefung und optionaler Build R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_kernel:
+        description: 'Optional: neuen 5.4.274 Kernel bauen (sonst nur Repo-Pruefung)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veux-5.4.274-finalize-diag10
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  prove:
+    name: Check repository tooling; build only when selected
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+          ref: ${{ github.sha }}
+
+      - name: Verify and install payload without overwriting unknown changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="VEUX_Diag10_Integration_R2.zip"
+          if [[ ! -f "$payload" ]]; then
+            echo "::error::VEUX_Diag10_Integration_R2.zip fehlt im Repo-Hauptverzeichnis."
+            exit 1
+          fi
+          python3 - "$payload" "$RUNNER_TEMP/veux-r2-install.py" <<'PYBOOT'
+          import hashlib
+          from pathlib import Path
+          import sys
+          import zipfile
+          payload = Path(sys.argv[1])
+          expected = "1ff5016dd47cfff0a776308b1683a64fbbff011066dfab25e8b52058f15d1baa"
+          if hashlib.sha256(payload.read_bytes()).hexdigest() != expected:
+              raise SystemExit("BLOCKED: installation ZIP checksum mismatch")
+          with zipfile.ZipFile(payload) as archive:
+              Path(sys.argv[2]).write_bytes(archive.read("common/scripts/veux_zip_install.py"))
+          PYBOOT
+          python3 "$RUNNER_TEMP/veux-r2-install.py" --archive "$payload" --root "$GITHUB_WORKSPACE" --sha256 "1ff5016dd47cfff0a776308b1683a64fbbff011066dfab25e8b52058f15d1baa"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+        if: ${{ inputs.build_kernel }}
+      - name: Install host test dependencies
+        if: ${{ !inputs.build_kernel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Verify regular release and ConfigDiag10 contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-host-reports"
+          "$RUNNER_TEMP/veux-python/bin/python" - "$RUNNER_TEMP/veux-host-reports" <<'PYTEST'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          reports = Path(sys.argv[1])
+          rows = []
+          for name in (
+              "test_veux_update_engine.py", "test_veux_release.py",
+              "test_veux_device_fixes.py", "test_veux_config_compat.py",
+              "test_veux_source_transport.py", "test_veux_zip_install.py",
+              "test_veux_diagnostic_retention.py",
+          ):
+              result = subprocess.run([sys.executable, "common/scripts/" + name],
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              (reports / (name + ".log")).write_text(result.stdout)
+              rows.append({"test": name, "returncode": result.returncode})
+              (reports / "HOST-TESTS.json").write_text(json.dumps(rows, indent=2) + "\n")
+              print(name + (": PASS" if result.returncode == 0 else ": FAIL"), flush=True)
+              if result.returncode:
+                  print(result.stdout)
+                  raise SystemExit(result.returncode)
+          PYTEST
+
+      - name: Bind exact validated 5.4.274 component pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-targets"
+          "$RUNNER_TEMP/veux-python/bin/python" - "$RUNNER_TEMP/veux-targets/targets.json" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          current = json.loads(Path("common/contracts/CURRENT_BUILD.json").read_text())
+          assert current["status"] == "compile-package-static-validated"
+          assert current["lineages"]["5.4.274"]["compile"] is True
+          assert current["lineages"]["5.4.274"]["package"] is True
+          assert current["lineages"]["5.4.274"]["static_boot"] is True
+          expected = {
+              "resukisu": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
+              "susfs": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+              "nomount": "6b1be186322d4e0bdc465cf27f6fc0d3679087c6",
+          }
+          assert {key: value["commit"] for key, value in current["targets"].items()} == expected
+          golden = Path("common/contracts/GOLDEN_BASELINE.yml")
+          targets = {
+              "repository_sha": os.environ["GITHUB_SHA"],
+              "golden_sha256": hashlib.sha256(golden.read_bytes()).hexdigest(),
+              "lineages": ["5.4.274"],
+              "components": current["targets"],
+          }
+          Path(sys.argv[1]).write_text(json.dumps(targets, sort_keys=True, indent=2) + "\n")
+          print("CURRENT_274_PINS=PASS; ReSukiSU=35187; SUSFS=2.3.0; NoMount=20")
+          PY
+
+        if: ${{ inputs.build_kernel }}
+      - name: Build regular 5.4.274 release
+        id: kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 \
+            --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-overlays" \
+            --jobs "$(nproc)"
+          "$RUNNER_TEMP/veux-python/bin/python" - "$RUNNER_TEMP/veux-public/5.4.274/RESULT.json" <<'PY'
+          import json
+          import sys
+
+          row = json.load(open(sys.argv[1]))
+          assert row["kernel"] == "5.4.274"
+          assert row["compile"] is True
+          assert row["package"] is True
+          assert row["static_boot"] is True
+          assert row["device"] is False
+          assert row["config_compat"]["id"] == "ConfigDiag10"
+          assert row["config_compat"]["reference_run"] == "36738661110"
+          assert row["config_compat"]["actual_config_sha256"] == "5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229"
+          assert row["config_audit"]["vintf_kernel"]["status"] == "PASS"
+          assert row["config_audit"]["vintf_kernel"]["requirements"] == 261
+          assert row["config_audit"]["vintf_kernel"]["passed"] == 261
+          assert row["config_audit"]["cfi"] == "configured-and-core-instrumented"
+          assert row["config_audit"]["stack_protector"] == "strong-configured-and-core-instrumented"
+          print("VEUX_274_CONFIGDIAG10_REGULAR_RELEASE=PASS")
+          PY
+
+        if: ${{ inputs.build_kernel }}
+      - name: Publish validated 5.4.274 candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel.outputs.artifact_name }}_ConfigDiag10Final
+          path: ${{ runner.temp }}/veux-public/5.4.274/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+        if: ${{ inputs.build_kernel }}
+      - name: Save checked repository tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYSAVE'
+          import json
+          import subprocess
+          import zipfile
+          with zipfile.ZipFile("VEUX_Diag10_Integration_R2.zip") as archive:
+              manifest = json.loads(archive.read("INSTALL_MANIFEST.json"))
+          subprocess.run(["git", "add", "--", *sorted(manifest["files"])], check=True)
+          PYSAVE
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'VEUX R2 files already saved'
+            exit 0
+          fi
+          git commit -m 'Preserve VEUX audit evidence and guard ZIP installation [skip ci]'
+          git push origin HEAD:main
+
+      - name: Publish compact host and build evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-274-Pruefberichte-R2-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-host-reports/
+            ${{ runner.temp }}/veux-builds/diagnostics/5.4.274/
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: true
+          compression-level: 9
