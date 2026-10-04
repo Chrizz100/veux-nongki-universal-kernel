@@ -1,0 +1,140 @@
+name: VEUX Temperatur R1 - ZIP installieren und 5.4.274 bauen
+permissions:
+  contents: write
+concurrency:
+  group: veux-all-in-one-publish-main
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  VEUX_REPAIR_ZIP_SHA256: 6dc30aec0d979b6fc9911658509b95b4c5b7954f9c2b743284143b9498e0bfd1
+jobs:
+  kernel:
+    name: Repair checks, current components and one validated kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - name: Checkout exact project
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 1
+        persist-credentials: false
+        ref: ${{ github.sha }}
+    - name: Authenticate and install the repair ZIP
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+        test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/VEUX_Temperatur_Reparatur_R1.yml@refs/heads/main"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        mkdir -p "$RUNNER_TEMP/veux-install-reports"
+        python3 - <<'PY'
+        import hashlib
+        from pathlib import Path
+        p=Path('common/scripts/veux_zip_install.py')
+        if p.is_symlink() or hashlib.sha256(p.read_bytes()).hexdigest() != '96a4581f11e0946631b09bb9f42a58910c66614df53d53b5086e13fd27a6a94b':
+            raise SystemExit('BLOCKED: ZIP installer differs from reviewed version')
+        if not Path('VEUX_Temperatur_Reparatur_R1.zip').is_file():
+            raise SystemExit('BLOCKED: VEUX_Temperatur_Reparatur_R1.zip fehlt im Repo-Hauptverzeichnis')
+        PY
+        python3 common/scripts/veux_zip_install.py --archive VEUX_Temperatur_Reparatur_R1.zip --root "$GITHUB_WORKSPACE" --sha256 "$VEUX_REPAIR_ZIP_SHA256" 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/install.log"
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+        python3 -m venv "$RUNNER_TEMP/veux-python"
+        "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+    - name: Verify regular release and repair gates
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" -m unittest discover -s common/scripts -p 'test_veux_device_fixes.py' 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/device_fixes.log"
+        for suite in update_engine release source_transport rpm_fixes config_compat diagnostic_retention zip_install current_components; do
+          "$RUNNER_TEMP/veux-python/bin/python" "common/scripts/test_veux_${suite}.py" 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/${suite}.log"
+        done
+    - name: Save verified repair on main
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import base64,json,os,subprocess,zipfile
+        from pathlib import Path
+        def git(*args,env=None):
+            return subprocess.check_output(['git',*args],text=True,env=env).strip()
+        base=os.environ['GITHUB_SHA']
+        if git('rev-parse','HEAD')!=base:
+            raise SystemExit('BLOCKED: checkout changed before installation commit')
+        if git('ls-remote','origin','refs/heads/main').split()[0]!=base:
+            raise SystemExit('BLOCKED: main changed during verification; rerun on current main')
+        with zipfile.ZipFile('VEUX_Temperatur_Reparatur_R1.zip') as z:
+            paths=sorted(json.loads(z.read('INSTALL_MANIFEST.json'))['files'])
+        git('add','--',*paths)
+        changed=git('diff','--cached','--name-only').splitlines()
+        if not set(changed).issubset(paths):
+            raise SystemExit('BLOCKED: unrelated files staged')
+        if changed:
+            git('-c','user.name=github-actions[bot]',
+                '-c','user.email=41898282+github-actions[bot]@users.noreply.github.com',
+                'commit','-m','Install verified VEUX temperature repair and current-component gate [skip ci]')
+            env=dict(os.environ)
+            credential=base64.b64encode(('x-access-token:'+env.pop('GH_TOKEN')).encode()).decode()
+            print('::add-mask::'+credential,flush=True)
+            env.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',
+                       GIT_CONFIG_VALUE_0='AUTHORIZATION: basic '+credential)
+            subprocess.run(['git','push','origin','HEAD:refs/heads/main'],env=env,check=True)
+        if git('status','--porcelain'):
+            raise SystemExit('BLOCKED: checkout not clean after repair commit')
+        with open(os.environ['GITHUB_ENV'],'a') as out:
+            out.write('VEUX_BUILD_COMMIT='+git('rev-parse','HEAD')+'\n')
+        print('REPAIR_INSTALLED=PASS; KERNEL_BUILD=NEXT; DEVICE_PASS=NO')
+        PY
+    - name: Resolve current ReSukiSU, SUSFS and NoMount
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_current_components.py --work "$RUNNER_TEMP/veux-targets"
+        cat "$RUNNER_TEMP/veux-targets/targets.json"
+    - name: Build repaired 5.4.274 and verify package and boot image
+      id: kernel
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+          --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" \
+          --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+          --public "$RUNNER_TEMP/veux-public/5.4.274" \
+          --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+    - name: Verify unchanged checkout
+      if: ${{ always() && env.VEUX_BUILD_COMMIT != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$VEUX_BUILD_COMMIT"
+        test -z "$(git status --porcelain)"
+    - name: Upload validated kernel and build proof
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: Temperature-R1-${{ steps.kernel.outputs.artifact_name }}
+        path: ${{ runner.temp }}/veux-public/5.4.274/
+        if-no-files-found: error
+        retention-days: 30
+        compression-level: 6
+    - name: Upload failure diagnostics
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-Temperature-R1-Failure-${{ github.run_id }}
+        path: |-
+          ${{ runner.temp }}/veux-builds/diagnostics/5.4.274/
+          ${{ runner.temp }}/veux-targets/targets.json
+
+          ${{ runner.temp }}/veux-install-reports/
+        if-no-files-found: warn
+        retention-days: 14
+    if: ${{ github.ref == 'refs/heads/main' }}
+'on':
+  workflow_dispatch: {}
