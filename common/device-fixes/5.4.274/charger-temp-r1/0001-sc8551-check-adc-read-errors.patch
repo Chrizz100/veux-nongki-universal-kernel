@@ -1,0 +1,16 @@
+--- a/drivers/power/supply/qcom/sc8551_charger.c
++++ b/drivers/power/supply/qcom/sc8551_charger.c
+@@ -955,9 +955,12 @@
+ 	u8 val_l, val_h;
+ 	u16 val;
+ 
+-	if(channel >= ADC_MAX_NUM) return 0;
++	if (channel < 0 || channel >= ADC_MAX_NUM)
++		return -EINVAL;
+ 
+ 	ret = sc8551_read_byte(sc, ADC_REG_BASE + (channel << 1), &val_h);
++	if (ret < 0)
++		return ret;
+ 	ret = sc8551_read_byte(sc, ADC_REG_BASE + (channel << 1) + 1, &val_l);
+ 
+ 	if (ret < 0)

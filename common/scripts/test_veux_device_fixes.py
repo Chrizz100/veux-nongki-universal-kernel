@@ -47,6 +47,7 @@ class DeviceTests(unittest.TestCase):
             recipe_blob=e.config()['lineages']['5.4.274']['blob'], reference_run='fixture', files=rows))
         return repo, src, work, folder, rows
 
+    @mock.patch.dict(f.PATCHSETS, {'5.4.274': 'common/device-fixes/5.4.274/charger-diag08'})
     def test_real_manifest_preserves_exact_diag08_hashes_and_all_host_tests(self):
         proof = f.expected('5.4.274')[0]
         self.assertEqual(proof['id'], 'charger-diag08')
@@ -87,6 +88,34 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(tests['test_i2c_callers.py']['assets'], [{
             'file': '0003-bq2589x-check-init-and-adapter-errors.patch',
             'sha256': '3575dc10c0d96ead626fdd1e555db16f402dadbff189f926569dd7e90cd705b2'}])
+
+    def test_temperature_fix_retains_diag08_behavioral_gates(self):
+        folder, data, proof = f.load('5.4.274')
+        old_folder = e.REPO / 'common/device-fixes/5.4.274/charger-diag08'
+        old = json.loads((old_folder / 'manifest.json').read_text())
+        self.assertEqual(data['id'], 'charger-temp-r1')
+        self.assertEqual(data['baseline_patchset'], 'charger-diag08')
+        self.assertEqual(data['device_validation'], 'not-performed')
+        self.assertEqual(data['files'][0], old['files'][0])
+        self.assertEqual(data['files'][2], old['files'][2])
+        current, previous = data['files'][1], old['files'][1]
+        for key in ('source', 'before_sha256', 'test', 'test_sha256'):
+            self.assertEqual(current[key], previous[key])
+        self.assertEqual(current['after_sha256'],
+                         '107cbc7bc8c1816f9821bcef8a201ef2977c948e5acd171ec2b7a4c4c1650ce4')
+        self.assertEqual(current['extra_tests'][0], previous['extra_tests'][0])
+        self.assertEqual(current['extra_tests'][-1]['test'], 'test_cp_temperature.py')
+        # Only the whole-file scope pin of the old voltage test is advanced;
+        # its compiler harness and all existing behavioral assertions survive.
+        old_test = (old_folder / 'test_battery_voltage.py').read_text()
+        new_test = (folder / 'test_battery_voltage.py').read_text()
+        self.assertEqual(new_test.split('\n', 10)[10], old_test.replace('remaining driver byte-identical to Diag06', 'remaining driver matches charger-temp-r1 scope').split('\n', 10)[10])
+        for row in data['files']:
+            for test in f.host_tests(row):
+                if test['test'] not in ('test_battery_voltage.py', 'test_cp_temperature.py'):
+                    self.assertEqual((folder / test['test']).read_bytes(),
+                                     (old_folder / test['test']).read_bytes())
+        self.assertEqual(proof['source_sha256'][current['source']], current['after_sha256'])
 
     def test_extra_tests_and_assets_are_required_before_driver_mutation(self):
         for mode in ('success', 'test_drift', 'asset_drift', 'host_failure',
@@ -259,7 +288,7 @@ class DeviceTests(unittest.TestCase):
             e.write_json(root / 'bundle/targets.json', {'lineages': ['5.4.274']})
             args = argparse.Namespace(bundle=root/'bundle', artifacts=root/'artifacts')
             old_proofs = []
-            for old_id in ('charger-diag04', 'charger-diag05', 'charger-diag06', 'charger-diag07'):
+            for old_id in ('charger-diag04', 'charger-diag05', 'charger-diag06', 'charger-diag07', 'charger-diag08'):
                 old_manifest = e.REPO / f'common/device-fixes/5.4.274/{old_id}/manifest.json'
                 old_data = json.loads(old_manifest.read_text())
                 old_proofs.append([dict(id=old_data['id'], manifest_sha256=e.digest(old_manifest),

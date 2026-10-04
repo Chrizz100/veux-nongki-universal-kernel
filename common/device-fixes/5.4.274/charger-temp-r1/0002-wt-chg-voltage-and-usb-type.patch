@@ -1,0 +1,273 @@
+--- a/drivers/power/supply/qcom/wt_chg.c
++++ b/drivers/power/supply/qcom/wt_chg.c
+@@ -711,7 +711,7 @@
+ 		rc = iio_read_channel_processed(chg->cp_master_therm,
+ 				&temp);
+ 		if (rc < 0) {
+-			pr_err("Error in reading temp channel, rc=%d\n", rc);
++			pr_err_ratelimited("Error in reading master temp channel, rc=%d\n", rc);
+ 			return rc;
+ 		}
+ 		*val = temp / 100;
+@@ -727,11 +727,11 @@
+ {
+ 	int rc, temp;
+ 
+-	if (chg->cp_master_therm) {
++	if (chg->cp_slave_therm) {
+ 		rc = iio_read_channel_processed(chg->cp_slave_therm,
+ 				&temp);
+ 		if (rc < 0) {
+-			pr_err("Error in reading temp channel, rc=%d\n", rc);
++			pr_err_ratelimited("Error in reading slave temp channel, rc=%d\n", rc);
+ 			return rc;
+ 		}
+ 		*val = temp / 100;
+@@ -1607,14 +1607,30 @@
+ 		pval->intval = chg->thermal_levels;
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+-		if(chg->real_type && chg->battery_temp > 0 && chg->battery_temp < 150) {
++		pval->intval = 0;
++		if (chg->real_type && chg->battery_temp > 0 && chg->battery_temp < 150) {
+ 			rc = batt_get_iio_channel(chg, CP_MASTER, CHARGE_PUMP_SC_BATTERY_VOLTAGE, &voltage_now);
++			if (rc < 0)
++				break;
++			if (voltage_now < 0 || voltage_now > INT_MAX / 1000 - 5) {
++				rc = -ERANGE;
++				break;
++			}
+ 			pval->intval = (voltage_now + 5) * 1000;
+-		} if (chg->real_type && chg->battery_temp >= 480) {
++		} else if (chg->real_type && chg->battery_temp >= 480) {
+ 			rc = batt_get_iio_channel(chg, MAIN, MAIN_VBAT_VOLTAGE, &voltage_now);
++			if (rc < 0)
++				break;
++			if (voltage_now < 0 || voltage_now > INT_MAX / 1000 - 5) {
++				rc = -ERANGE;
++				break;
++			}
+ 			pval->intval = (voltage_now + 5) * 1000;
+ 		} else {
+-			batt_get_iio_channel(chg, BMS, BATT_QG_VOLTAGE_NOW, &pval->intval);
++			rc = batt_get_iio_channel(chg, BMS, BATT_QG_VOLTAGE_NOW, &voltage_now);
++			if (rc < 0)
++				break;
++			pval->intval = voltage_now;
+ 		}
+ 		if (!chg->is_battery_on)
+ 			pval->intval = 3800000;
+@@ -1782,7 +1798,83 @@
+ /************************
+  * USB PSY REGISTRATION *
+  ************************/
++/* USB_TYPE uses its own enum; do not expose power_supply_type values here. */
++static int wt_get_usb_type(struct batt_chg *chg, int *usb_type)
++{
++	int rc, type, pd_active;
++
++	*usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	/* Reporting this property must not run get_real_type()'s charging policy. */
++	if (READ_ONCE(chg->otg_enable) || READ_ONCE(chg->mishow_flag) ||
++	    READ_ONCE(chg->vbus_cnt) > 3)
++		return 0;
++
++	pd_active = READ_ONCE(chg->pd_active);
++	if (pd_active == QTI_POWER_SUPPLY_PD_PPS_ACTIVE) {
++		*usb_type = POWER_SUPPLY_USB_TYPE_PD_PPS;
++		return 0;
++	}
++	if (pd_active == QTI_POWER_SUPPLY_PD_ACTIVE) {
++		*usb_type = POWER_SUPPLY_USB_TYPE_PD;
++		return 0;
++	}
++
++	rc = batt_get_iio_channel(chg, MAIN, MAIN_CHARGER_TYPE, &type);
++	if (rc < 0)
++		return rc;
++
++	switch (type) {
++	case POWER_SUPPLY_TYPE_USB:
++		*usb_type = POWER_SUPPLY_USB_TYPE_SDP;
++		break;
++	case POWER_SUPPLY_TYPE_USB_DCP:
++	case POWER_SUPPLY_TYPE_USB_HVDCP:
++	case POWER_SUPPLY_TYPE_USB_HVDCP_3:
++	case POWER_SUPPLY_TYPE_USB_HVDCP_3P5:
++		/* The standard USB_TYPE enum has no Quick Charge subtype. */
++		*usb_type = POWER_SUPPLY_USB_TYPE_DCP;
++		break;
++	case POWER_SUPPLY_TYPE_USB_CDP:
++		*usb_type = POWER_SUPPLY_USB_TYPE_CDP;
++		break;
++	case POWER_SUPPLY_TYPE_USB_ACA:
++		*usb_type = POWER_SUPPLY_USB_TYPE_ACA;
++		break;
++	case POWER_SUPPLY_TYPE_USB_TYPE_C:
++		*usb_type = POWER_SUPPLY_USB_TYPE_C;
++		break;
++	case POWER_SUPPLY_TYPE_USB_PD:
++		*usb_type = POWER_SUPPLY_USB_TYPE_PD;
++		break;
++	case POWER_SUPPLY_TYPE_USB_PD_DRP:
++		*usb_type = POWER_SUPPLY_USB_TYPE_PD_DRP;
++		break;
++	case POWER_SUPPLY_TYPE_APPLE_BRICK_ID:
++		*usb_type = POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID;
++		break;
++	default:
++		/* Unknown and floating sources must not be advertised as SDP. */
++		break;
++	}
++
++	return 0;
++}
++
++static enum power_supply_usb_type wt_usb_types[] = {
++	POWER_SUPPLY_USB_TYPE_UNKNOWN,
++	POWER_SUPPLY_USB_TYPE_SDP,
++	POWER_SUPPLY_USB_TYPE_DCP,
++	POWER_SUPPLY_USB_TYPE_CDP,
++	POWER_SUPPLY_USB_TYPE_ACA,
++	POWER_SUPPLY_USB_TYPE_C,
++	POWER_SUPPLY_USB_TYPE_PD,
++	POWER_SUPPLY_USB_TYPE_PD_DRP,
++	POWER_SUPPLY_USB_TYPE_PD_PPS,
++	POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID,
++};
++
+ static enum power_supply_property usb_psy_props[] = {
++	POWER_SUPPLY_PROP_USB_TYPE,
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_ONLINE,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+@@ -1801,10 +1893,14 @@
+ 		union power_supply_propval *val)
+ {
+ 	int rc = 0, type = 0;
++	int vbus_mv;
+ 	struct batt_chg *chg = power_supply_get_drvdata(psy);
+ 	val->intval = 0;
+ 
+ 	switch (psp) {
++	case POWER_SUPPLY_PROP_USB_TYPE:
++		rc = wt_get_usb_type(chg, &val->intval);
++		break;
+ 	case POWER_SUPPLY_PROP_PRESENT:
+ 		rc = batt_get_iio_channel(chg, BMS, BATT_QG_PRESENT, &val->intval);
+ 		break;
+@@ -1821,7 +1917,16 @@
+ 		val->intval = chg->charge_voltage_max;
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+-		rc = batt_get_iio_channel(chg, BMS, BATT_QG_VOLTAGE_NOW, &chg->batt_voltage_now);
++		/* The charge-pump ADC reports VBUS in mV; power_supply uses uV. */
++		rc = batt_get_iio_channel(chg, CP_MASTER,
++				CHARGE_PUMP_SC_BUS_VOLTAGE, &vbus_mv);
++		if (rc < 0)
++			break;
++		if (vbus_mv < 0 || vbus_mv > INT_MAX / 1000) {
++			rc = -ERANGE;
++			break;
++		}
++		val->intval = vbus_mv * 1000;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+ 		rc = batt_get_iio_channel(chg, BMS, BATT_QG_CURRENT_NOW, &chg->batt_current_now);
+@@ -1902,6 +2007,8 @@
+ static const struct power_supply_desc usb_psy_desc = {
+ 	.name = "usb",
+ 	.type = POWER_SUPPLY_TYPE_USB_PD,
++	.usb_types = wt_usb_types,
++	.num_usb_types = ARRAY_SIZE(wt_usb_types),
+ 	.properties = usb_psy_props,
+ 	.num_properties = ARRAY_SIZE(usb_psy_props),
+ 	.get_property = usb_psy_get_prop,
+@@ -2009,6 +2116,28 @@
+ 	return 0;
+ };
+ 
++/* Optional CP telemetry must not stop charging work after an ADC error. */
++static void batt_update_cp_temperatures(struct batt_chg *chg)
++{
++	int rc, temp;
++
++	rc = get_charger_pump_master_temp(chg, &temp);
++	if (rc < 0) {
++		pr_err_ratelimited("cp_master_temp unavailable, rc=%d\n", rc);
++	} else {
++		WRITE_ONCE(chg->cp_master_temp, temp);
++		pr_debug("cp_master_temp %d\n", temp);
++	}
++
++	rc = get_charger_pump_slave_temp(chg, &temp);
++	if (rc < 0) {
++		pr_err_ratelimited("cp_slave_temp unavailable, rc=%d\n", rc);
++	} else {
++		WRITE_ONCE(chg->cp_slave_temp, temp);
++		pr_debug("cp_slave_temp %d\n", temp);
++	}
++}
++
+ static void batt_chg_main(struct work_struct *work)
+ {
+ 	int val = 0;
+@@ -2026,13 +2155,12 @@
+ 	if(chg->start_cnt > 1000000)
+ 		chg->start_cnt = 100;
+ 
+-	val = get_charger_pump_master_temp(chg, &chg->cp_master_temp);
+-	val = get_charger_pump_slave_temp(chg, &chg->cp_slave_temp);
++	batt_update_cp_temperatures(chg);
+ 	batt_get_iio_channel(chg, CP_MASTER, CHARGE_PUMP_SC_BUS_VOLTAGE, &chg->vbus_voltage);
+ 	batt_get_iio_channel(chg, BMS, BATT_QG_TEMP, &temp);
+ 	batt_get_iio_channel(chg, BMS, BATT_QG_CAPACITY, &soc);
+-	pr_err("wt workup cp_master_temp %d, cp_slave_temp %d, get_boot_mode = %d, lcdon %d, vbus %d, count %d, count %d, soc %d fastcharge_mode %d\n",
+-		chg->cp_master_temp, chg->cp_slave_temp, get_boot_mode(), g_batt_chg->lcd_on, chg->vbus_voltage, chg->update_cont, chg->power_supply_count, soc, chg->fastcharge_mode);
++	pr_err("wt workup get_boot_mode = %d, lcdon %d, vbus %d, count %d, count %d, soc %d fastcharge_mode %d\n",
++		get_boot_mode(), g_batt_chg->lcd_on, chg->vbus_voltage, chg->update_cont, chg->power_supply_count, soc, chg->fastcharge_mode);
+ 
+ 	if(chg->mishow_flag) {
+ 		if(chg->real_type)
+@@ -2355,11 +2483,15 @@
+ {
+ 	struct batt_chg *chg = container_of(c, struct batt_chg,
+ 						battery_class);
+-	int val;
+-
+-	val = get_charger_pump_slave_temp(chg, &chg->cp_slave_temp);
+-
+-	return scnprintf(buf, PAGE_SIZE, "%d\n", chg->cp_slave_temp);
++	int rc, temp;
++
++	rc = get_charger_pump_slave_temp(chg, &temp);
++	if (rc < 0)
++		return rc;
++
++	WRITE_ONCE(chg->cp_slave_temp, temp);
++
++	return scnprintf(buf, PAGE_SIZE, "%d\n", temp);
+ }
+ static CLASS_ATTR_RO(cp_temp_slave);
+ 
+@@ -2368,11 +2500,15 @@
+ {
+ 	struct batt_chg *chg = container_of(c, struct batt_chg,
+ 						battery_class);
+-	int val;
+-
+-	val = get_charger_pump_master_temp(chg, &chg->cp_master_temp);
+-
+-	return scnprintf(buf, PAGE_SIZE, "%d\n", chg->cp_master_temp);
++	int rc, temp;
++
++	rc = get_charger_pump_master_temp(chg, &temp);
++	if (rc < 0)
++		return rc;
++
++	WRITE_ONCE(chg->cp_master_temp, temp);
++
++	return scnprintf(buf, PAGE_SIZE, "%d\n", temp);
+ }
+ static CLASS_ATTR_RO(cp_temp_master);
+ 
