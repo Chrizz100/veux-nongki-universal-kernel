@@ -1,0 +1,171 @@
+name: VEUX Altworkflows - Gepruefte Bereinigung ohne Kernelbuild
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: veux-5.4.274-finalize-diag10
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  cleanup:
+    name: Validate current source contracts and disable six obsolete workflows
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Install host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-legacy-reports"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Verify current sources and host regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" - <<'PYTEST'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          sys.path.insert(0, str(Path('common/scripts').resolve()))
+          import veux_update_engine as engine
+          import veux_release as release
+          import veux_config_compat as compat
+          import veux_device_fixes as fixes
+
+          engine.check_repo()
+          compat.authenticate()
+          fixes.expected('5.4.274')
+          current = json.loads(Path(release.CURRENT).read_text())
+          engine.require(release.snapshot_hashes(Path(release.SOURCES)) == current['source_sha256'],
+                         'current component snapshot changed')
+          engine.require(not engine.git(engine.REPO, 'status', '--porcelain'), 'checkout is not clean')
+          reports = Path(os.environ['RUNNER_TEMP']) / 'veux-legacy-reports'
+          reports.mkdir(parents=True, exist_ok=True)
+          rows = []
+          for name in ('test_veux_update_engine.py', 'test_veux_release.py',
+                       'test_veux_device_fixes.py', 'test_veux_config_compat.py',
+                       'test_veux_source_transport.py', 'test_veux_zip_install.py',
+                       'test_veux_diagnostic_retention.py'):
+              result = subprocess.run([sys.executable, 'common/scripts/' + name],
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              (reports / (name + '.log')).write_text(result.stdout)
+              rows.append({'test': name, 'returncode': result.returncode})
+              (reports / 'HOST-TESTS.json').write_text(json.dumps(rows, indent=2) + '\n')
+              print(name + (': PASS' if result.returncode == 0 else ': FAIL'), flush=True)
+              if result.returncode:
+                  print(result.stdout)
+                  raise SystemExit(result.returncode)
+          print('CURRENT_BUILD_CONTRACTS=PASS; KERNEL_BUILD=NOT_REQUESTED')
+          PYTEST
+      - name: Disable six exact obsolete workflows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCLEAN'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          known = {'veux-gen1-u5-o43-v2-5.4.300-resukisu-35157-selfcontained.yml': 'a5815cb30dd42fd0327d1f3b400bc86264ae91809572b37a120dec7ea87f9efe', 'veux-config-diag10-5.4.274.yml': '0db5b305dd7d960af7376c802d891e67210d977b3dbea71597c345034a2c95ed', 'VEUX-U7-N4V1-STATIC-BOOT.yml': 'edca4ec73c6b6daa26cd9f254bea1a921becdda148de1a103a22689c265bb9cf', '03-veux-5.4.292-native-baseline-v3-runner-fix.yml': '78719aba3914ff8c9b8f577dbb4720db4a81491c16c60854207b4f1437bb462a', 'veux-u6-o51-v1-all-kernel-resukisu-35158-mass-compile-rebuild.yml': '51ceaff21e85612f25c345774761c579b8fa2249481b77ea699480a86beba15c', 'veux-port-5.4.300-35170-nomount-r2.yml': '893018bdd8979b49665f6be2d5b1495e510dcfa6945a6e74cc5f68284c6250b7'}
+          repo = os.environ['GITHUB_REPOSITORY']
+          head = os.environ['GITHUB_SHA']
+          reports = Path(os.environ['RUNNER_TEMP']) / 'veux-legacy-reports'
+          reports.mkdir(parents=True, exist_ok=True)
+          report = {'schema': 1, 'repository': repo, 'repository_sha': head,
+                    'kernel_build': False, 'status': 'checking', 'workflows': []}
+          def save():
+              (reports / 'LEGACY-WORKFLOW-CLEANUP.json').write_text(json.dumps(report, indent=2) + '\n')
+          def require(ok, message):
+              if not ok:
+                  raise RuntimeError(message)
+          def api(path, method='GET'):
+              request = Request('https://api.github.com/repos/' + repo + path, method=method,
+                                headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                                         'Accept': 'application/vnd.github+json',
+                                         'X-GitHub-Api-Version': '2026-03-10'})
+              with urlopen(request, timeout=45) as response:
+                  data = response.read()
+                  return json.loads(data) if data else None
+
+          save()
+          try:
+              require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'invalid repository')
+              require(re.fullmatch(r'[0-9a-f]{40}', head), 'invalid commit')
+              require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == head,
+                      'checkout differs from run commit')
+              require(not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip(),
+                      'checkout is not clean')
+              recipes = json.loads(Path('common/update/source-recipes.json').read_text())
+              authorities = {row['workflow'] for row in recipes['lineages'].values()}
+              local = []
+              # Finish all local checks before any API write. Never delete historical files.
+              for name, expected in known.items():
+                  path = Path('.github/workflows') / name
+                  require(path.as_posix() not in authorities, 'cannot disable a current source authority: ' + name)
+                  require(path.is_file() and not path.is_symlink(), 'expected old workflow is missing or linked: ' + name)
+                  require(hashlib.sha256(path.read_bytes()).hexdigest() == expected,
+                          'old workflow changed; no cleanup performed: ' + name)
+                  local.append((name, path.as_posix()))
+              require(api('/git/ref/heads/main')['object']['sha'] == head, 'main moved; no cleanup performed')
+              for name, path in local:
+                  workflow = api('/actions/workflows/' + quote(name, safe=''))
+                  require(workflow['path'] == path, 'workflow path mismatch: ' + name)
+                  require(type(workflow['id']) is int and workflow['id'] > 0, 'invalid workflow id')
+                  report['workflows'].append({'file': name, 'workflow_id': workflow['id'],
+                                              'before': workflow['state'], 'status': 'pending'})
+              save()
+              require(api('/git/ref/heads/main')['object']['sha'] == head, 'main moved; no cleanup performed')
+              for row in report['workflows']:
+                  endpoint = '/actions/workflows/' + str(row['workflow_id'])
+                  row['status'] = 'checking-state'
+                  save()
+                  if row['before'] != 'disabled_manually':
+                      api(endpoint + '/disable', method='PUT')
+                  observed = api(endpoint)
+                  require(observed['path'] == '.github/workflows/' + row['file'], 'verification path mismatch')
+                  require(observed['state'] == 'disabled_manually', 'workflow was not disabled: ' + row['file'])
+                  row['status'] = 'disabled_manually'
+                  save()
+                  print('LEGACY_WORKFLOW_DISABLED=' + row['file'])
+              require(not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip(),
+                      'unexpected checkout mutation')
+              report['status'] = 'PASS'
+              print('LEGACY_CLEANUP=PASS; DISABLED=6; KERNEL_BUILD=NOT_REQUESTED')
+          except Exception as error:
+              report['status'] = 'FAIL'
+              report['error'] = str(error)
+              raise
+          finally:
+              save()
+          PYCLEAN
+      - name: Publish audit evidence even on failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Altworkflow-Pruefung-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-legacy-reports/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
