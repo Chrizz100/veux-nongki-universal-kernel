@@ -1,0 +1,113 @@
+--- a/common/scripts/veux_release_device.py
++++ b/common/scripts/veux_release_device.py
+@@ -15,6 +15,7 @@
+ import veux_update_engine as e
+ import veux_release as r
+ import veux_device_fixes as fixes
++import veux_config_compat as compat
+ import veux_source_transport as transport
+ 
+ 
+@@ -43,7 +44,7 @@
+         # Required on BOTH repository replay and freshly resolved upstreams.
+         proof = fixes.apply(src, label, work)
+         fixes.verify_source(src, label, proof)
+-        image, result = e.compile_kernel(label, state, targets, work, args.jobs)
++        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
+         fixes.verify_source(src, label, proof)
+         result['device_fixes'] = proof
+         e.package_kernel(image, targets, result, work, public)
+@@ -75,6 +76,7 @@
+     targets = json.loads((args.bundle / 'targets.json').read_text())
+     for label in targets['lineages']:
+         row = json.loads((args.artifacts / label / 'RESULT.json').read_text())
++        compat.verify_result(label, row)
+         e.require(row.get('device_fixes') == fixes.expected(label),
+                   'missing or outdated device fixes: ' + label)
+ 
+
+--- a/common/scripts/test_veux_device_fixes.py
++++ b/common/scripts/test_veux_device_fixes.py
+@@ -12,6 +12,7 @@
+ import unittest
+ from unittest import mock
+ import veux_device_fixes as f
++import veux_config_compat as compat
+ import veux_release_device as d
+ import veux_release as r
+ import veux_update_engine as e
+@@ -202,7 +203,8 @@
+                         events.append('compile')
+                         image = work / 'Image'
+                         image.write_bytes(b'kernel')
+-                        return image, dict(kernel=label, compile=True, image_sha256=e.digest(image))
++                        return image, dict(kernel=label, compile=True, image_sha256=e.digest(image),
++                                           config_compat=compat.expected_proof())
+                     def package(image, targets, result, work, public):
+                         (public / 'kernel.zip').write_bytes(b'package')
+                         result.update(package=True, package_file='kernel.zip')
+@@ -220,20 +222,21 @@
+                             (e, 'apply_update', {}),
+                             (f, 'apply', dict(side_effect=apply)),
+                             (f, 'verify_source', dict(side_effect=lambda *a: events.append('verified'))),
+-                            (e, 'compile_kernel', dict(side_effect=compile)),
++                            (compat, 'compile_kernel', dict(side_effect=compile)),
+                             (e, 'package_kernel', dict(side_effect=package)),
+                             (e, 'static_boot', dict(side_effect=boot))]:
+                             stack.enter_context(mock.patch.object(obj, name, **kwargs))
+                         if fail_fix:
+                             with self.assertRaises(e.Blocked):
+                                 d.worker(args)
+-                            e.compile_kernel.assert_not_called()
++                            compat.compile_kernel.assert_not_called()
+                             self.assertFalse((args.public / 'RESULT.json').exists())
+                         else:
+                             d.worker(args)
+                             self.assertEqual(events, ['fixes', 'verified', 'compile', 'verified'])
+                             row = json.loads((args.public / 'RESULT.json').read_text())
+                             self.assertEqual(row['device_fixes'], f.expected('5.4.274'))
++                            self.assertEqual(row['config_compat'], compat.expected_proof())
+                             self.assertFalse(row['device'])
+                             self.assertEqual({p.name for p in args.public.iterdir()},
+                                 {'kernel.zip', row['boot_file'], 'RESULT.json', 'SHA256SUMS.txt'})
+@@ -253,7 +256,10 @@
+                     reference_run=old_data['reference_run'], host_tests=True,
+                     source_sha256={row['source']: row['after_sha256'] for row in old_data['files']})])
+             for proof in (None, [], *old_proofs, f.expected('5.4.274')):
+-                e.write_json(args.artifacts / '5.4.274/RESULT.json', {'device_fixes': proof})
++                e.write_json(args.artifacts / '5.4.274/RESULT.json',
++                             {'device_fixes': proof,
++                              'config_compat': compat.expected_proof(),
++                              'config_audit': compat.reference_report()})
+                 with mock.patch.object(r, 'promote') as promote:
+                     if proof == f.expected('5.4.274'):
+                         d.promote(args)
+@@ -284,6 +290,9 @@
+                 path = args.artifacts / label / 'RESULT.json'
+                 row = json.loads(path.read_text())
+                 row['device_fixes'] = expected[label]
++                if label == '5.4.274':
++                    row['config_compat'] = compat.expected_proof()
++                    row['config_audit'] = compat.reference_report()
+                 e.write_json(path, row)
+             with mock.patch.object(e, 'REPO', repo), \
+                  mock.patch.object(e, 'check_repo', return_value=({'golden_contract': 'golden'}, {})), \
+@@ -293,6 +302,7 @@
+                 d.promote(args)
+             current = json.loads((repo / r.CURRENT).read_text())
+             self.assertEqual(current['lineages']['5.4.274']['device_fixes'], expected['5.4.274'])
++            self.assertEqual(current['lineages']['5.4.274']['config_compat'], compat.expected_proof())
+             self.assertFalse(current['device_pass_inferred'])
+ 
+ 
+
+--- a/.github/workflows/veux-all-in-one-updater-v4.yml
++++ b/.github/workflows/veux-all-in-one-updater-v4.yml
+@@ -41,6 +41,7 @@
+         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_update_engine.py
+         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_release.py
+         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_device_fixes.py
++        "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_config_compat.py
+         "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_source_transport.py
+     - name: Resolve and authenticate upstreams once
+       shell: bash
