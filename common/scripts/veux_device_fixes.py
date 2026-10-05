@@ -8,7 +8,7 @@ import tempfile
 import veux_update_engine as e
 
 
-PATCHSETS = {'5.4.274': 'common/device-fixes/5.4.274/charger-temp-r1'}
+PATCHSETS = {'5.4.274': 'common/device-fixes/5.4.274/charger-pm-r1'}
 
 
 def authenticate_payload(folder, name, digest):

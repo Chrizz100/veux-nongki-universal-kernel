@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "id": "charger-pm-r1",
+  "kernel": "5.4.274",
+  "recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+  "reference_run": "not-built",
+  "files": [
+    {
+      "source": "drivers/power/supply/qcom/bq2589x_charger.c",
+      "patch": "0001-bq2589x-lifecycle-and-caller-errors.patch",
+      "before_sha256": "c050a311e687d7d3bf78950d70dd27e849489dbd2452c10be0ee5722bc7a50ab",
+      "after_sha256": "0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241",
+      "patch_sha256": "4d8a5e752a83a923f686304b76c326951422ccbcfa69ca25d9de7933bec6d258",
+      "test": "test_bq2589x.py",
+      "test_sha256": "264a6e45766876979523e8ea56b73467f43237b43f12d073510f8b28487e464e",
+      "extra_tests": [
+        {
+          "test": "test_i2c_callers.py",
+          "test_sha256": "400ac52e581c9f87ce33c474cccc2b38ad61b1c1a98e3e0dc7254c73140867d9",
+          "assets": [
+            {
+              "file": "0003-bq2589x-check-init-and-adapter-errors.patch",
+              "sha256": "3575dc10c0d96ead626fdd1e555db16f402dadbff189f926569dd7e90cd705b2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "drivers/power/supply/qcom/wt_chg.c",
+      "patch": "0002-wt-chg-voltage-and-usb-type.patch",
+      "before_sha256": "d85ee321bccd8970c70b775e5df23139a08c84918f5c058f1b1c6e80752460ff",
+      "after_sha256": "c2827c16f8d09b9d35fb12018e4415f1d11338863efefdd10ca070418e4082aa",
+      "patch_sha256": "742601519138be4f8234ebac9cda3158314a747c3fd0bb1e13278cf1a9ad0529",
+      "test": "test_usb_voltage.py",
+      "test_sha256": "ff4a0022ea13a2d46455fe2360ab16d28064b8e7710de1df5b93771550e3756e",
+      "extra_tests": [
+        {
+          "test": "test_usb_type.py",
+          "test_sha256": "21de1bf28aaa03b79106a0f9517aded52b336b3d2b5f65ec2b4f6a48190e3459",
+          "assets": [
+            {
+              "file": "usb_type_reference.h",
+              "sha256": "fe8b62b44b61bdeb0e618d3a53346a0c9bb77d36e30d08dc8c9dc22cf9f92146"
+            }
+          ]
+        },
+        {
+          "test": "test_battery_voltage.py",
+          "test_sha256": "8dd6bac23cf588ddc48ee57b52bd14254939638c649670f2454d87843837237c",
+          "assets": [
+            {
+              "file": "test_wt_pm.py",
+              "sha256": "2e8a2a07b62e14b1060dfd8f34ade1996b65320af1690088b785f185e894c0fc"
+            }
+          ]
+        },
+        {
+          "test": "test_cp_temperature.py",
+          "test_sha256": "d7f130cd95014c3954f07666555afdb129fbce4efa3327c01545ddba3662534b",
+          "assets": [
+            {
+              "file": "test_wt_pm.py",
+              "sha256": "2e8a2a07b62e14b1060dfd8f34ade1996b65320af1690088b785f185e894c0fc"
+            }
+          ]
+        },
+        {
+          "test": "test_wt_pm.py",
+          "test_sha256": "2e8a2a07b62e14b1060dfd8f34ade1996b65320af1690088b785f185e894c0fc"
+        }
+      ]
+    },
+    {
+      "source": "drivers/power/supply/qcom/sc8551_charger.c",
+      "patch": "0001-sc8551-check-adc-read-errors.patch",
+      "patch_sha256": "3035d494246ecb2ecfe0e0b5318e356ee072b3b878bfff64686e2d24d11764c2",
+      "before_sha256": "a1cb2401fe8cfb11c71839a38d13c6452e1eeb157f60761e368b32f4c02ee471",
+      "after_sha256": "035d1204b1a4796546c90ab1f448f9ba00889164c731719e3096e4fcafc5cd69",
+      "test": "test_sc8551_adc.py",
+      "test_sha256": "41e9baeadf41abf6a6ecf012db79e5b6f4f4739da0cb8f34c1c031bdbc71e1b7",
+      "assets": [
+        {
+          "file": "candidate.json",
+          "sha256": "ec7aff8ecde9acc98522e9d8fde3ec145aba87ab5103a9f8fc0a11c0e8d11cfd"
+        },
+        {
+          "file": "sc8551_reg.h",
+          "sha256": "8acdc6f1c00881ab76636cd2a38a877bfc7fed9c3c68d46211c8f2e7b73898e5"
+        },
+        {
+          "file": "qti_power_supply_iio.h",
+          "sha256": "e51f47ad9b2629f8322ac117a0c45dd1034c797975cfbc09036afc1673c76189"
+        }
+      ]
+    }
+  ],
+  "baseline_diag05_run": "36518512103",
+  "baseline_diag06_run": "36615353847",
+  "baseline_diag07_run": "36688871120",
+  "device_validation": "not-performed",
+  "baseline_patchset": "charger-temp-r1",
+  "device_report_sha256": "8df2e0b3a4ae6c4f309c9d0f2b01b94c14f40bd9d82b9fd713c7084d6ad433f1",
+  "baseline_diag08_run": "36698563062",
+  "baseline_temperature_run": "37206832975"
+}

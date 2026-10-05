@@ -1,0 +1,36 @@
+VEUX Basis-Stabilisierung R2: WT-Suspend-Koordination
+
+R1 wurde in Run 37300451558 erfolgreich installiert. R2 setzt diese
+Root-Festlegung voraus und ändert keine Komponenten-Commits.
+
+Reparatur: Die acht Start-/Wiederanlaufstellen von batt_chg_work verwenden
+jetzt system_freezable_wq. So bleibt diese temperaturlesende Hintergrundarbeit
+zwischen abgeschlossenem Einfrieren und Auftauen angehalten. Die Warteschlange
+wartet vor dem Geräte-Suspend auch auf eine bereits laufende Arbeit.
+
+Unverändert bleiben Ladeentscheidungen, Intervalle, Wakeup-Quellen, BQ2589x,
+SC8551, RPM-Sleep, ConfigDiag10, sechs Kernellinien und V4-Updater. Die
+vorherigen Patchsets und Golden-Referenzen werden nicht gelöscht.
+
+Bedienung am Smartphone:
+1. VEUX_Basis_Stabilisierung_R2_WT_PM.zip unentpackt auf main ins Hauptverzeichnis.
+2. VEUX_Basis_Stabilisierung_R2_WT_PM.yml nach .github/workflows/ hochladen.
+3. Unter Actions "VEUX Basis R2 - WT Suspend-Reparatur" auf main starten.
+   Ohne Haken: installieren, echte Treiberfunktionen auf dem Host prüfen,
+   Änderungen speichern. Der Kerneljob wird dann absichtlich übersprungen.
+   Mit Haken: dieselben Prüfungen, danach einen reparierten 5.4.274 bauen.
+
+Der Build verwendet die Root-Commits des geflashten Referenzbuilds 37206832975.
+Bei Erfolg enthält das Download-Artefakt ausschließlich die flashbare
+*_AnyKernel.zip. Die ZIP für die Installation der Reparatur ist kein Kernel
+und darf nicht geflasht werden. Diagnoseartefakte gibt es nur bei Fehlschlag.
+
+Nach einem erfolgreichen Build: innere AK3 bereitstellen, flashen und mit
+Termux erneut Suspend/Wakeup samt WT-/ADC-Meldungen prüfen. Auch normales
+Laden, ausgeschaltetes Laden und USB/MTP müssen am Gerät erhalten bleiben.
+Ein grüner Installationslauf oder Hosttest beweist das noch nicht.
+
+Offen bleiben die tatsächliche Beseitigung des ADC-Timeouts am Gerät,
+weitere mögliche Suspend-Ursachen und danach die getrennte Untersuchung
+von SUSFS/BRENE sowie ReSukiSU/LSPosed. Es erfolgt keine pauschale Aussage,
+dass alle Kernelfehler behoben oder der Kernel bereits gerätevalidiert ist.

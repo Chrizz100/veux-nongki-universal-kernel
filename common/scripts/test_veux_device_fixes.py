@@ -89,6 +89,7 @@ class DeviceTests(unittest.TestCase):
             'file': '0003-bq2589x-check-init-and-adapter-errors.patch',
             'sha256': '3575dc10c0d96ead626fdd1e555db16f402dadbff189f926569dd7e90cd705b2'}])
 
+    @mock.patch.dict(f.PATCHSETS, {'5.4.274': 'common/device-fixes/5.4.274/charger-temp-r1'})
     def test_temperature_fix_retains_diag08_behavioral_gates(self):
         folder, data, proof = f.load('5.4.274')
         old_folder = e.REPO / 'common/device-fixes/5.4.274/charger-diag08'
@@ -116,6 +117,37 @@ class DeviceTests(unittest.TestCase):
                     self.assertEqual((folder / test['test']).read_bytes(),
                                      (old_folder / test['test']).read_bytes())
         self.assertEqual(proof['source_sha256'][current['source']], current['after_sha256'])
+
+    def test_pm_fix_keeps_cumulative_drivers_and_temperature_assertions(self):
+        folder, data, proof = f.load('5.4.274')
+        old_folder = e.REPO / 'common/device-fixes/5.4.274/charger-temp-r1'
+        old = json.loads((old_folder / 'manifest.json').read_text())
+        self.assertEqual(data['id'], 'charger-pm-r1')
+        self.assertEqual(data['baseline_patchset'], 'charger-temp-r1')
+        self.assertEqual(data['device_validation'], 'not-performed')
+        self.assertEqual(data['reference_run'], 'not-built')
+        self.assertEqual(data['files'][0], old['files'][0])
+        self.assertEqual(data['files'][2], old['files'][2])
+        row = data['files'][1]
+        self.assertEqual(row['after_sha256'],
+                         'c2827c16f8d09b9d35fb12018e4415f1d11338863efefdd10ca070418e4082aa')
+        self.assertEqual(row['extra_tests'][-1]['test'], 'test_wt_pm.py')
+        for entry in data['files']:
+            for test in f.host_tests(entry):
+                name = test['test']
+                if name == 'test_wt_pm.py':
+                    continue
+                text = (folder / name).read_text()
+                if name in ('test_battery_voltage.py', 'test_cp_temperature.py'):
+                    self.assertEqual(test['assets'], [{'file': 'test_wt_pm.py',
+                        'sha256': e.digest(folder / 'test_wt_pm.py')}])
+                    text = text.replace('from test_wt_pm import reviewed_baseline\n', '')
+                    text = text.replace('source = reviewed_baseline(args.source.read_text())',
+                                        'source = args.source.read_text()')
+                    text = text.replace('    if not args.expect_old_defects:\n'
+                                        '        source=reviewed_baseline(source)\n', '')
+                self.assertEqual(text, (old_folder / name).read_text())
+        self.assertEqual(proof['source_sha256'][row['source']], row['after_sha256'])
 
     def test_extra_tests_and_assets_are_required_before_driver_mutation(self):
         for mode in ('success', 'test_drift', 'asset_drift', 'host_failure',
@@ -288,7 +320,7 @@ class DeviceTests(unittest.TestCase):
             e.write_json(root / 'bundle/targets.json', {'lineages': ['5.4.274']})
             args = argparse.Namespace(bundle=root/'bundle', artifacts=root/'artifacts')
             old_proofs = []
-            for old_id in ('charger-diag04', 'charger-diag05', 'charger-diag06', 'charger-diag07', 'charger-diag08'):
+            for old_id in ('charger-diag04', 'charger-diag05', 'charger-diag06', 'charger-diag07', 'charger-diag08', 'charger-temp-r1'):
                 old_manifest = e.REPO / f'common/device-fixes/5.4.274/{old_id}/manifest.json'
                 old_data = json.loads(old_manifest.read_text())
                 old_proofs.append([dict(id=old_data['id'], manifest_sha256=e.digest(old_manifest),
