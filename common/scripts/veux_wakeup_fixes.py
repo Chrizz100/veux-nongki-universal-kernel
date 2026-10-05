@@ -9,8 +9,8 @@ import tempfile
 import veux_update_engine as e
 
 KERNEL = '5.4.274'
-PAYLOAD = 'common/device-fixes/5.4.274/wakeup-diag-r1'
-MANIFEST_SHA256 = 'a85be9f6a854338cacee93b55cda0b4edd86ed6c1bd4b8250b84fa7692c99638'
+PAYLOAD = 'common/device-fixes/5.4.274/wakeup-diag-r2'
+MANIFEST_SHA256 = 'f7cbb70a09d42da700e303d695e23a6b1b9a3ee03d04200d4dc074103f1d38e8'
 ABI_SYMBOLS = ('wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show')
 
 
@@ -34,7 +34,7 @@ def load():
     manifest = path_in(folder, 'manifest.json')
     e.require(e.digest(manifest) == MANIFEST_SHA256, 'wakeup manifest drift')
     data = json.loads(manifest.read_text())
-    e.require(data['schema'] == 1 and data['id'] == 'wakeup-diag-r1'
+    e.require(data['schema'] == 1 and data['id'] == 'wakeup-diag-r2'
               and data['kernel'] == KERNEL, 'wakeup identity mismatch')
     e.require(data['recipe_blob'] == e.config()['lineages'][KERNEL]['blob'],
               'wakeup source recipe mismatch')
@@ -112,8 +112,10 @@ def verify_symbols(symbols):
 def verify_build(label, work):
     if label != KERNEL:
         return []
-    obj = path_in(work, 'build/kernel/power/wakeup_reason.o')
-    e.require(obj.stat().st_size > 0, 'wakeup object empty')
+    for name in ('build/kernel/power/wakeup_reason.o',
+                 'build/drivers/base/power/wakeup_stats.o'):
+        obj = path_in(work, name)
+        e.require(obj.stat().st_size > 0, 'wakeup object empty: ' + name)
     symbols = path_in(work, 'build/System.map').read_text()
     return verify_symbols(symbols)
 

@@ -96,13 +96,19 @@ class WakeupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);obj=root/'build/kernel/power/wakeup_reason.o';obj.parent.mkdir(parents=True)
             obj.write_bytes(b'compiled fixture');smap=root/'build/System.map'
+            stats=root/'build/drivers/base/power/wakeup_stats.o';stats.parent.mkdir(parents=True)
+            stats.write_bytes(b'compiled stats fixture')
             for missing in (None,*SYMBOLS):
                 smap.write_text(''.join('ffffff00 t '+n+'.cfi\n' for n in SYMBOLS if n!=missing))
                 if missing is None:self.assertEqual(w.verify_build(w.KERNEL,root),SYMBOLS)
                 else:
                     with self.assertRaisesRegex(e.Blocked,'symbol not linked'):w.verify_build(w.KERNEL,root)
-            obj.write_bytes(b'')
-            with self.assertRaisesRegex(e.Blocked,'object empty'):w.verify_build(w.KERNEL,root)
+            for missing in (obj, stats):
+                saved=missing.read_bytes();missing.write_bytes(b'')
+                with self.assertRaisesRegex(e.Blocked,'object empty'):w.verify_build(w.KERNEL,root)
+                missing.unlink()
+                with self.assertRaisesRegex(e.Blocked,'not a regular file'):w.verify_build(w.KERNEL,root)
+                missing.write_bytes(saved)
 
     def test_real_r3_map_accepts_bodies_and_rejects_jump_table_only(self):
         fixture = Path(__file__).with_name('fixtures') / 'wakeup-run-37335256954.map'
@@ -146,7 +152,8 @@ class WakeupTests(unittest.TestCase):
             with self.subTest(failed=failed), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp); work = root/'work'; public = root/'public'; diag = root/'diagnostics'
                 public.mkdir()
-                paths = ('build/arch/arm64/boot/Image', 'build/kernel/power/wakeup_reason.o')
+                paths = ('build/arch/arm64/boot/Image', 'build/kernel/power/wakeup_reason.o',
+                         'build/drivers/base/power/wakeup_stats.o')
                 for rel in paths:
                     p = work/rel; p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_bytes(b'\x00compiled fixture\xff')
@@ -180,7 +187,9 @@ class WakeupTests(unittest.TestCase):
 
     def test_hook_removal_and_wrong_time_math_fail_actual_c_tests(self):
         folder,_,_=w.load()
-        mutations=[('kernel/power/wakeup_reason.c','ktime_sub(offset, last_stime)','ktime_sub(mono, last_monotime)'),
+        mutations=[('drivers/base/power/wakeup_stats.c','dev->parent = NULL;', 'dev->parent = parent;'),
+                   ('drivers/base/power/wakeup_stats.c','if (!ws->name[0])','if (ws->name[0])'),
+                   ('kernel/power/wakeup_reason.c','ktime_sub(offset, last_stime)','ktime_sub(mono, last_monotime)'),
                    ('kernel/power/wakeup_reason.c','if (!capture_reasons || wakeup_reason != RESUME_NONE)', 'if (wakeup_reason != RESUME_NONE)'),
                    ('drivers/base/power/wakeup.c','log_suspend_abort_reason("%s", reason);','log_suspend_abort_reason("removed");')]
         for name,old,new in mutations:

@@ -41,6 +41,7 @@ def preserve_device_diagnostics(work, public, diag):
         paths.extend(work / rel for rel in (
             'build/arch/arm64/boot/Image',
             'build/kernel/power/wakeup_reason.o',
+            'build/drivers/base/power/wakeup_stats.o',
         ))
     for path in paths:
         e.require(not path.is_symlink(), 'linked diagnostic file: ' + str(path))

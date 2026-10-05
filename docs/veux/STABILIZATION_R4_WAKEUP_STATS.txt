@@ -1,0 +1,106 @@
+VEUX Basis R4 – Wakeup-Statistikpfade
+Stand: 2026-10-05
+
+Ausgangspunkt
+Repository: c9d12fbb26af5fa2605d8baf44aad4ac6f9eeb23
+Erfolgreicher Referenzbuild: Actions-Run 37342978173
+Gerätebericht: VEUX_Wakeup_Check_R3_1_20261005_172819_14602.txt
+Bericht-SHA256: e863d5c09c49ca90f6e98d11c11a34b6526caf533016f58953d19f317acdd25b
+Kernel-Build-ID: 9812b193ee6a066d
+
+Belegt
+- R3.1 wurde geflasht; Android liest die reparierte Wakeup-Reasons-Schnittstelle.
+- 24 erfolgreiche Suspend-Zyklen und zwei abgebrochene Versuche im Testfenster.
+- 128 Wakeup-Statistikpfade: 73 mit sysfs_wakeup, 53 mit generischem sysfs,
+  einer mit vendor_sysfs_battery_supply und einer mit vendor_sysfs_usb_supply.
+- 21 neue SystemSuspend-AVCs betreffen neun der generisch markierten Verzeichnisse.
+- 56 Namen bleiben in Androids Statistik leer. 55 Pfade haben unpassende Labels;
+  zusätzlich enthält wakeup89 auch beim erfolgreichen Root-Lesen einen leeren
+  Namen. Diese beiden Ursachen dürfen nicht gleichgesetzt werden.
+- Die ROM-Policy enthält bereits sysfs_wakeup für /devices/virtual/wakeup.
+
+Gezielte Änderung
+Nur drivers/base/power/wakeup_stats.c erhält zusätzlichen Kernelcode. Die
+Statistik-Class-Geräte erhalten keinen Hardware-Elternknoten mehr und liegen
+dadurch einheitlich unter /sys/devices/virtual/wakeup/wakeupN. Der bestehende
+Zugang über /sys/class/wakeup/wakeupN und alle zehn Statistikattribute bleiben
+erhalten. Das ist eine Anpassung an die vorhandene VEUX-ROM-Policy.
+
+Die tatsächliche Hardware-Zuordnung device->power.wakeup, Aktivierung,
+Deaktivierung und Suspend-Callbacks werden nicht geändert. Der Treiberkern
+ordnet Class-Geräte ohne Elternknoten dem virtual-Verzeichnis zu. Bestehende
+70 Quellen benutzen bereits diesen Ort; drei weitere physische Pfade hatten
+bereits passende Labels. Die gerätespezifischen bisherigen
+Statistikpfade und deren automatisch erzeugte device-Verknüpfungen entfallen;
+Programme sollten /sys/class/wakeup verwenden. Diese Pfadänderung muss auf
+dem Gerät auf Verträglichkeit und tatsächliche SELinux-Labels geprüft werden.
+SELinux bleibt Enforcing; keine zusätzlichen Allow-Regeln werden installiert.
+
+Leerer Name: Diagnose, noch keine bewiesene Ursache
+Die Namensausgabe benutzt korrekt "%s\n". Userspace-PM-Wakelocks lehnen leere
+Eingaben bereits ab. epoll übernimmt hingegen den Dentry-Namen; sock_alloc_file
+kann einen leeren Namen erzeugen. Das ist ein möglicher Weg, aber kein Nachweis
+für die konkrete Quelle wakeup89. Laufende IDs können sich beim nächsten Boot
+ändern. Der Name allein beweist keinen fehlerhaften Suspend oder Root-Defekt.
+
+Nach erfolgreicher Registrierung eines leeren Namens wird deshalb begrenzt
+protokolliert:
+  wakeup_stats: empty source wakeupN registered by PROZESS[PID]
+Die Quelle behält ihren echten Namen und ihre Funktion. Es gibt keine
+Umbenennung, keinen Stackdump und keine Deaktivierung. Der Kernel-Ratelimiter
+begrenzt Meldungen; bei vielen gleichzeitigen Registrierungen ist die Liste
+daher nicht zwingend vollständig. Prozess und ID grenzen die Herkunft ein,
+beweisen allein aber noch nicht den verantwortlichen Aufrufpfad.
+
+Reproduzierbare Integration
+- Neues kumulatives wakeup-diag-r2-Paket enthält R3 unverändert plus die oben
+  genannte Statistikänderung. Das alte wakeup-diag-r1-Paket bleibt erhalten.
+- Quellbasis und alle P14-Restore-Patches werden über feste SHA256-Werte geprüft.
+- Manifest, Patch und beide Host-Testprogramme sind ebenfalls fest gehasht.
+- Anwendung nur auf vollständig bekannte Vor- oder Nachzustände; Tests vor der
+  Übernahme. Unbekannte oder gemischte Zustände blockieren.
+- Kompilierung verlangt zusätzlich eine nicht leere wakeup_stats.o. Die
+  bestehende Wakeup-Linkprüfung bleibt bestehen. Ergebnis- und Freigabeprüfung
+  verlangen den neuen Manifestnachweis; alte Ergebnisse gelten nicht als R4.
+- Die anderen fünf Kernel-Lineages, V4-Workflows, Golden, Root-Versionen,
+  Konfiguration und bestehenden Lade-/RPM-Reparaturen bleiben unverändert.
+- Fehlerdiagnosen enthalten bei Bedarf zusätzlich wakeup_stats.o.
+
+Prüfungen vor Übergabe
+- Tatsächlichen Statistik-C-Code auf dem Host mit GCC und UBSan ausführen:
+  94 Assertions zu Fehlerpfaden, Freigabe, PM-Zuordnung, Namensdiagnose,
+  Nur-Lese-Attributen und Zeit-/Ereigniszählern. Treiberkern wird dabei modelliert.
+- Bestehende 66 Wakeup-C-Assertions sowie deaktivierte CONFIG_SUSPEND-Stubs.
+- Rücknahme der Pfadkorrektur und Umkehrung der Leername-Bedingung müssen die
+  C-Tests scheitern lassen. Ungepatchter Statistikcode muss ebenfalls scheitern.
+- Vorherige Lade-/RPM-/Konfigurations-/Root-Lock- und Installerprüfungen.
+- Exakte ZIP/YAML in isoliertem Repository installieren und erneut installieren.
+  Spätere fremde Änderungen und veralteter main-Stand müssen blockieren.
+- YAML/Actions-Struktur sowie enthaltene Shell-/Python-Skripte prüfen.
+Hostprüfungen sind kein vollständiger ARM64-Build und kein Gerätenachweis.
+
+Smartphone – zwei Dateien
+1. VEUX_Basis_Stabilisierung_R4_Wakeup_Stats.zip UNENTPACKT ins Hauptverzeichnis
+   von main hochladen.
+2. VEUX_Basis_Stabilisierung_R4_Wakeup_Stats.yml nach .github/workflows/ hochladen.
+3. Actions: "VEUX Basis R4 - Wakeup-Statistikpfade korrigieren" starten.
+   build_kernel aktivieren, um nach bestandenen Prüfungen genau einen neuen
+   5.4.274-Kernel mit den eingefrorenen Root-Komponenten zu bauen.
+   Ohne Haken wird ausschließlich installiert und geprüft.
+4. Nur die anschließend erzeugte und geprüfte *_AnyKernel.zip ist flashbar.
+   Die Installations-ZIP ist kein Kernel und darf nicht geflasht werden.
+
+Nächster Gerätenachweis nach erfolgreichem Build und Flash
+Kernelidentität prüfen; dann Labels und Namen aller Wakeup-Pfade, neue AVCs,
+SystemSuspend-Statistik sowie Suspend-Zähler vor/nach einem Testfenster lesen.
+Erwartung: Statistikpfade unter virtual/wakeup mit sysfs_wakeup und keine neuen
+AVCs für diese Pfade. Ein weiter leerer tatsächlicher Name ist gesondert anhand
+der neuen Registrierungszeile zu untersuchen. Keine Zusage "alle Fehler weg".
+
+Quellenstand
+https://github.com/dereference23/kernel_xiaomi_sm6375/tree/b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+drivers/base/power/wakeup_stats.c – Statistikregistrierung und -ausgabe
+drivers/base/core.c – get_device_parent und virtuelle Class-Geräte
+kernel/power/wakelock.c – Ablehnung leerer Userspace-Wakelocknamen
+fs/eventpoll.c – ep_create_wakeup_source und Dentry-Namensübernahme
+net/socket.c – sock_alloc_file mit möglichem leeren Namen
