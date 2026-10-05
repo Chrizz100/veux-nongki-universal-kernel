@@ -1,0 +1,169 @@
+name: VEUX Basis R1 - ZIP installieren, feste Komponenten prüfen
+
+'on':
+  workflow_dispatch:
+    inputs:
+      build_kernel:
+        description: '5.4.274 bauen (ohne Haken nur Prüfungen)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: veux-stabilization-r1-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  VEUX_BASIS_ZIP_SHA256: 721a1a71d5d77230f12e5dd2ced819a4490a6e653a401b4e70e11dffeec72954
+
+jobs:
+  checks:
+    name: Installieren und prüfen ohne Kernelbau
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.save.outputs.commit }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: ZIP prüfen und Dateien vorbereiten
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          mkdir -p "$RUNNER_TEMP/veux-install-reports"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          p = Path('common/scripts/veux_zip_install.py')
+          if p.is_symlink() or hashlib.sha256(p.read_bytes()).hexdigest() != '96a4581f11e0946631b09bb9f42a58910c66614df53d53b5086e13fd27a6a94b':
+              raise SystemExit('BLOCKED: ZIP installer differs from reviewed version')
+          if not Path('VEUX_Basis_Stabilisierung_R1.zip').is_file():
+              raise SystemExit('BLOCKED: VEUX_Basis_Stabilisierung_R1.zip fehlt im Repo-Hauptverzeichnis')
+          PY
+          python3 common/scripts/veux_zip_install.py --archive VEUX_Basis_Stabilisierung_R1.zip \
+            --root "$GITHUB_WORKSPACE" --sha256 "$VEUX_BASIS_ZIP_SHA256" \
+            2>&1 | tee "$RUNNER_TEMP/veux-install-reports/install.log"
+      - name: Prüfumgebung
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1
+      - name: Feste Referenz und Fehlerfälle prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/veux_frozen_components.py check 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/lock.log"
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_frozen_components.py 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/frozen-tests.log"
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/test_veux_current_components.py 2>&1 | tee "$RUNNER_TEMP/veux-install-reports/uapi-tests.log"
+      - name: Nur die geprüften Dateien auf main speichern
+        id: save
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, subprocess, zipfile
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          base = os.environ['GITHUB_SHA']
+          if git('rev-parse', 'HEAD') != base or git('ls-remote', 'origin', 'refs/heads/main').split()[0] != base:
+              raise SystemExit('BLOCKED: main wurde inzwischen geändert; auf aktuellem main erneut starten')
+          with zipfile.ZipFile('VEUX_Basis_Stabilisierung_R1.zip') as z:
+              paths = sorted(json.loads(z.read('INSTALL_MANIFEST.json'))['files'])
+          git('add', '--', *paths)
+          if not set(git('diff', '--cached', '--name-only').splitlines()).issubset(paths):
+              raise SystemExit('BLOCKED: fremde Änderungen vorgemerkt')
+          if git('diff', '--cached', '--name-only'):
+              git('-c', 'user.name=github-actions[bot]', '-c',
+                  'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+                  'commit', '-m', 'Pin VEUX stabilization to flashed component commits [skip ci]')
+              env = dict(os.environ)
+              credential = base64.b64encode(('x-access-token:' + env.pop('GH_TOKEN')).encode()).decode()
+              print('::add-mask::' + credential, flush=True)
+              env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',
+                         GIT_CONFIG_VALUE_0='AUTHORIZATION: basic ' + credential)
+              subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/main'], env=env, check=True)
+          if git('status', '--porcelain'):
+              raise SystemExit('BLOCKED: Arbeitsverzeichnis nach Installation nicht sauber')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('commit=' + git('rev-parse', 'HEAD') + '\n')
+          print('BASIS_LOCK_INSTALLED=PASS; DEVICE_PASS=NO')
+          PY
+      - name: Installationsdiagnose nur bei Fehlschlag
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Basis-R1-Installation-Fehler-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-install-reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+  kernel:
+    name: Optionaler 5.4.274-Build mit eingefrorenen Root-Komponenten
+    needs: checks
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_kernel }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.checks.outputs.commit }}
+          persist-credentials: false
+      - name: Buildumgebung
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install ruamel.yaml==0.19.1 PyYAML==6.0.3
+      - name: Exakte Komponenten des geflashten Referenzbuilds laden
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_frozen_components.py resolve --work "$RUNNER_TEMP/veux-targets"
+      - name: Basis mit bestehenden Treiber- und Konfigurationsprüfungen bauen
+        id: kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+          "$RUNNER_TEMP/veux-python/bin/python" common/scripts/veux_frozen_components.py verify-result \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" --bundle "$RUNNER_TEMP/veux-targets"
+          cat "$RUNNER_TEMP/veux-public/5.4.274/RESULT.json"
+          test -z "$(git status --porcelain)"
+      - name: Nur die flashbare AK3 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: Basis-R1-${{ steps.kernel.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.274/*_AnyKernel.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Diagnose nur bei Fehlschlag
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Basis-R1-Fehler-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-builds/diagnostics/5.4.274/
+            ${{ runner.temp }}/veux-targets/targets.json
+          if-no-files-found: warn
+          retention-days: 14
