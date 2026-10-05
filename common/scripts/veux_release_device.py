@@ -18,12 +18,13 @@ import veux_device_fixes as fixes
 import veux_config_compat as compat
 import veux_source_transport as transport
 import veux_rpm_fixes as rpm
+import veux_wakeup_fixes as wakeup
 
 
 def preserve_device_diagnostics(work, public, diag):
     """Retain compact build evidence before deleting temporary source trees."""
     e.preserve_diagnostics(work, public, diag)
-    paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json', work / 'RPM-FIXES.json']
+    paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json', work / 'RPM-FIXES.json', work / 'WAKEUP-FIXES.json']
     # ConfigDiag10 writes the raw evidence below this directory. The legacy
     # preservation function only knows its own top-level JSON files.
     reports = work / 'config-reports'
@@ -70,11 +71,16 @@ def worker(args):
         fixes.verify_source(src, label, proof)
         rpm_proof = rpm.apply(src, label, work)
         rpm.verify_source(src, label, rpm_proof)
+        wakeup_proof = wakeup.apply(src, label, work)
+        wakeup.verify_source(src, label, wakeup_proof)
         image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
         fixes.verify_source(src, label, proof)
         rpm.verify_source(src, label, rpm_proof)
         result['device_fixes'] = proof
         result['rpm_fixes'] = rpm_proof
+        wakeup.verify_source(src, label, wakeup_proof)
+        result['wakeup_fixes'] = wakeup_proof
+        result['wakeup_linked_symbols'] = wakeup.verify_build(label, work)
         e.package_kernel(image, targets, result, work, public)
         e.static_boot(image, result, work)
         r.publish_files(result, work, public, targets)
@@ -105,6 +111,7 @@ def verify_results(args):
         e.require(row.get('device_fixes') == fixes.expected(label),
                   'missing or outdated device fixes: ' + label)
         rpm.verify_result(label, row)
+        wakeup.verify_result(label, row)
 
 
 def promote(args):

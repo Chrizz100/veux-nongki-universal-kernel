@@ -162,6 +162,7 @@ class FrozenComponentsTests(unittest.TestCase):
         import veux_config_compat as compat
         import veux_device_fixes as fixes
         import veux_rpm_fixes as rpm
+        import veux_wakeup_fixes as wakeup
         for case in ('good', 'component', 'kernel', 'device', 'build', 'manifest', 'repo'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -188,11 +189,13 @@ class FrozenComponentsTests(unittest.TestCase):
                      mock.patch.object(f.e, 'git', return_value='c' * 40), \
                      mock.patch.object(compat, 'verify_result') as config_gate, \
                      mock.patch.object(fixes, 'expected', return_value=['expected']), \
-                     mock.patch.object(rpm, 'verify_result') as rpm_gate:
+                     mock.patch.object(rpm, 'verify_result') as rpm_gate, \
+                     mock.patch.object(wakeup, 'verify_result') as wakeup_gate:
                     if case == 'good':
                         f.verify_result(public, bundle)
                         config_gate.assert_called_once()
                         rpm_gate.assert_called_once()
+                        wakeup_gate.assert_called_once()
                     else:
                         with self.assertRaises(f.e.Blocked):
                             f.verify_result(public, bundle)

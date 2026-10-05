@@ -1,0 +1,684 @@
+diff --git a/drivers/base/power/main.c b/drivers/base/power/main.c
+--- a/drivers/base/power/main.c
++++ b/drivers/base/power/main.c
+@@ -29,6 +29,7 @@
+ #include <linux/sched/debug.h>
+ #include <linux/async.h>
+ #include <linux/suspend.h>
++#include <linux/wakeup_reason.h>
+ #include <trace/events/power.h>
+ #include <linux/cpufreq.h>
+ #include <linux/devfreq.h>
+@@ -1338,6 +1339,8 @@
+ 	error = dpm_run_callback(callback, dev, state, info);
+ 	if (error) {
+ 		async_error = error;
++		log_suspend_abort_reason("Callback failed on %s in %pS returned %d",
++					 dev_name(dev), callback, error);
+ 		goto Complete;
+ 	}
+ 
+@@ -1543,6 +1546,8 @@
+ 	error = dpm_run_callback(callback, dev, state, info);
+ 	if (error) {
+ 		async_error = error;
++		log_suspend_abort_reason("Callback failed on %s in %pS returned %d",
++					 dev_name(dev), callback, error);
+ 		goto Complete;
+ 	}
+ 	dpm_propagate_wakeup_to_parent(dev);
+@@ -1813,6 +1818,9 @@
+ 
+ 		dpm_propagate_wakeup_to_parent(dev);
+ 		dpm_clear_superiors_direct_complete(dev);
++	} else {
++		log_suspend_abort_reason("Callback failed on %s in %pS returned %d",
++					 dev_name(dev), callback, error);
+ 	}
+ 
+ 	device_unlock(dev);
+@@ -2022,6 +2030,8 @@
+ 			}
+ 			pr_info("Device %s not prepared for power transition: code %d\n",
+ 				dev_name(dev), error);
++			log_suspend_abort_reason("Device %s not prepared: %d",
++						 dev_name(dev), error);
+ 			dpm_save_failed_dev(dev_name(dev));
+ 			put_device(dev);
+ 			break;
+diff --git a/drivers/base/power/wakeup.c b/drivers/base/power/wakeup.c
+--- a/drivers/base/power/wakeup.c
++++ b/drivers/base/power/wakeup.c
+@@ -12,6 +12,7 @@
+ #include <linux/capability.h>
+ #include <linux/export.h>
+ #include <linux/suspend.h>
++#include <linux/wakeup_reason.h>
+ #include <linux/seq_file.h>
+ #include <linux/debugfs.h>
+ #include <linux/pm_wakeirq.h>
+@@ -842,6 +843,36 @@
+ }
+ EXPORT_SYMBOL_GPL(pm_print_active_wakeup_sources);
+ 
++/* Snapshot pending sources under their existing SRCU lifetime protection.
++ * This records observations, not a claim that the last active source caused
++ * the abort. Always pass text as data, never as a printf format string.
++ */
++static void pm_log_pending_wakeup(void)
++{
++	struct wakeup_source *ws, *last = NULL;
++	char reason[MAX_SUSPEND_ABORT_LEN] = "Pending wakeup (source unavailable)";
++	int idx, len = 0;
++
++	idx = srcu_read_lock(&wakeup_srcu);
++	list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
++		if (ws->active) {
++			if (!len)
++				len = scnprintf(reason, sizeof(reason),
++						"Pending wakeup sources: ");
++			len += scnprintf(reason + len, sizeof(reason) - len,
++					 "%s ", ws->name);
++		} else if (!last || ktime_to_ns(ws->last_time) >
++				   ktime_to_ns(last->last_time)) {
++			last = ws;
++		}
++	}
++	if (!len && last)
++		scnprintf(reason, sizeof(reason),
++			  "Wakeup pending; last active source: %s", last->name);
++	srcu_read_unlock(&wakeup_srcu, idx);
++	log_suspend_abort_reason("%s", reason);
++}
++
+ /**
+  * pm_wakeup_pending - Check if power transition in progress should be aborted.
+  *
+@@ -868,6 +899,9 @@
+ 	if (ret) {
+ 		pm_pr_dbg("Wakeup pending, aborting suspend\n");
+ 		pm_print_active_wakeup_sources();
++		pm_log_pending_wakeup();
++	} else if (atomic_read(&pm_abort_suspend) > 0) {
++		log_suspend_abort_reason("Pending system wakeup");
+ 	}
+ 
+ 	return ret || atomic_read(&pm_abort_suspend) > 0;
+@@ -918,8 +952,10 @@
+ 
+ 	raw_spin_unlock_irqrestore(&wakeup_irq_lock, flags);
+ 
+-	if (irq_number)
++	if (irq_number) {
++		log_irq_wakeup_reason(irq_number);
+ 		pm_system_wakeup();
++	}
+ }
+ 
+ unsigned int pm_wakeup_irq(void)
+diff --git a/include/linux/wakeup_reason.h b/include/linux/wakeup_reason.h
+new file mode 100644
+--- /dev/null
++++ b/include/linux/wakeup_reason.h
+@@ -0,0 +1,37 @@
++/*
++ * include/linux/wakeup_reason.h
++ *
++ * Logs the reason which caused the kernel to resume
++ * from the suspend mode.
++ *
++ * Copyright (C) 2014 Google, Inc.
++ * This software is licensed under the terms of the GNU General Public
++ * License version 2, as published by the Free Software Foundation, and
++ * may be copied, distributed, and modified under those terms.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef _LINUX_WAKEUP_REASON_H
++#define _LINUX_WAKEUP_REASON_H
++
++#define MAX_SUSPEND_ABORT_LEN 256
++
++#ifdef CONFIG_SUSPEND
++void log_irq_wakeup_reason(int irq);
++void log_threaded_irq_wakeup_reason(int irq, int parent_irq);
++void log_suspend_abort_reason(const char *fmt, ...);
++void log_abnormal_wakeup_reason(const char *fmt, ...);
++void clear_wakeup_reasons(void);
++#else
++static inline void log_irq_wakeup_reason(int irq) { }
++static inline void log_threaded_irq_wakeup_reason(int irq, int parent_irq) { }
++static inline void log_suspend_abort_reason(const char *fmt, ...) { }
++static inline void log_abnormal_wakeup_reason(const char *fmt, ...) { }
++static inline void clear_wakeup_reasons(void) { }
++#endif
++
++#endif /* _LINUX_WAKEUP_REASON_H */
+diff --git a/kernel/power/Makefile b/kernel/power/Makefile
+--- a/kernel/power/Makefile
++++ b/kernel/power/Makefile
+@@ -8,7 +8,7 @@
+ obj-$(CONFIG_PM)		+= main.o
+ obj-$(CONFIG_VT_CONSOLE_SLEEP)	+= console.o
+ obj-$(CONFIG_FREEZER)		+= process.o
+-obj-$(CONFIG_SUSPEND)		+= suspend.o
++obj-$(CONFIG_SUSPEND)		+= suspend.o wakeup_reason.o
+ obj-$(CONFIG_PM_TEST_SUSPEND)	+= suspend_test.o
+ obj-$(CONFIG_HIBERNATION)	+= hibernate.o snapshot.o swap.o user.o
+ obj-$(CONFIG_PM_AUTOSLEEP)	+= autosleep.o
+diff --git a/kernel/power/process.c b/kernel/power/process.c
+--- a/kernel/power/process.c
++++ b/kernel/power/process.c
+@@ -12,6 +12,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/oom.h>
+ #include <linux/suspend.h>
++#include <linux/wakeup_reason.h>
+ #include <linux/module.h>
+ #include <linux/sched/debug.h>
+ #include <linux/sched/task.h>
+@@ -110,6 +111,12 @@
+ 			elapsed_msecs % 1000);
+ 	}
+ 
++	if (wakeup)
++		log_suspend_abort_reason("Freezing aborted by pending wakeup");
++	else if (todo)
++		log_suspend_abort_reason("Freezing timed out: %u tasks, wq_busy=%d",
++					 todo - wq_busy, wq_busy);
++
+ 	return todo || wakeup ? -EBUSY : 0;
+ }
+ 
+diff --git a/kernel/power/suspend.c b/kernel/power/suspend.c
+--- a/kernel/power/suspend.c
++++ b/kernel/power/suspend.c
+@@ -23,6 +23,7 @@
+ #include <linux/slab.h>
+ #include <linux/export.h>
+ #include <linux/suspend.h>
++#include <linux/wakeup_reason.h>
+ #include <linux/syscore_ops.h>
+ #include <linux/swait.h>
+ #include <linux/ftrace.h>
+@@ -140,6 +141,7 @@
+ 			break;
+ 		}
+ 
++		clear_wakeup_reasons();
+ 		s2idle_enter();
+ 	}
+ 
+@@ -362,6 +364,7 @@
+ 	if (!error)
+ 		return 0;
+ 
++	log_suspend_abort_reason("Process freeze failed: %d", error);
+ 	suspend_stats.failed_freeze++;
+ 	dpm_save_failed_step(SUSPEND_FREEZE);
+  Finish:
+@@ -400,6 +403,7 @@
+ 	error = dpm_suspend_late(PMSG_SUSPEND);
+ 	if (error) {
+ 		pr_err("late suspend of devices failed\n");
++		log_suspend_abort_reason("late suspend of devices failed: %d", error);
+ 		goto Platform_finish;
+ 	}
+ 	error = platform_suspend_prepare_late(state);
+@@ -409,6 +413,7 @@
+ 	error = dpm_suspend_noirq(PMSG_SUSPEND);
+ 	if (error) {
+ 		pr_err("noirq suspend of devices failed\n");
++		log_suspend_abort_reason("noirq suspend of devices failed: %d", error);
+ 		goto Platform_early_resume;
+ 	}
+ 	error = platform_suspend_prepare_noirq(state);
+@@ -496,6 +501,7 @@
+ 	error = dpm_suspend_start(PMSG_SUSPEND);
+ 	if (error) {
+ 		pr_err("Some devices failed to suspend, or early wake event detected\n");
++		log_suspend_abort_reason("Device suspend or early wake event: %d", error);
+ 		goto Recover_platform;
+ 	}
+ 	suspend_test_finish("suspend devices");
+diff --git a/kernel/power/wakeup_reason.c b/kernel/power/wakeup_reason.c
+new file mode 100644
+--- /dev/null
++++ b/kernel/power/wakeup_reason.c
+@@ -0,0 +1,432 @@
++/*
++ * kernel/power/wakeup_reason.c
++ *
++ * Logs the reasons which caused the kernel to resume from
++ * the suspend mode.
++ *
++ * Copyright (C) 2020 Google, Inc.
++ * This software is licensed under the terms of the GNU General Public
++ * License version 2, as published by the Free Software Foundation, and
++ * may be copied, distributed, and modified under those terms.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/wakeup_reason.h>
++#include <linux/kernel.h>
++#include <linux/irq.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kobject.h>
++#include <linux/sysfs.h>
++#include <linux/init.h>
++#include <linux/spinlock.h>
++#include <linux/notifier.h>
++#include <linux/suspend.h>
++#include <linux/slab.h>
++#include <linux/timekeeping.h>
++
++/*
++ * struct wakeup_irq_node - stores data and relationships for IRQs logged as
++ * either base or nested wakeup reasons during suspend/resume flow.
++ * @siblings - for membership on leaf or parent IRQ lists
++ * @irq      - the IRQ number
++ * @irq_name - the name associated with the IRQ, or a default if none
++ */
++struct wakeup_irq_node {
++	struct list_head siblings;
++	int irq;
++	const char *irq_name;
++};
++
++enum wakeup_reason_flag {
++	RESUME_NONE = 0,
++	RESUME_IRQ,
++	RESUME_ABORT,
++	RESUME_ABNORMAL,
++};
++
++static DEFINE_SPINLOCK(wakeup_reason_lock);
++
++static LIST_HEAD(leaf_irqs);   /* kept in ascending IRQ sorted order */
++static LIST_HEAD(parent_irqs); /* unordered */
++
++static struct kmem_cache *wakeup_irq_nodes_cache;
++
++static const char *default_irq_name = "(unnamed)";
++
++static struct kobject *kobj;
++
++static bool capture_reasons;
++static int wakeup_reason;
++static char non_irq_wake_reason[MAX_SUSPEND_ABORT_LEN];
++
++static ktime_t last_monotime; /* monotonic time before last suspend */
++static ktime_t last_stime; /* monotonic boottime offset before last suspend */
++static ktime_t suspend_resume_time;
++static ktime_t sleep_time;
++static bool time_prepared;
++
++static void init_node(struct wakeup_irq_node *p, int irq)
++{
++	struct irq_desc *desc;
++
++	INIT_LIST_HEAD(&p->siblings);
++
++	p->irq = irq;
++	desc = irq_to_desc(irq);
++	if (desc && desc->action && desc->action->name)
++		p->irq_name = desc->action->name;
++	else
++		p->irq_name = default_irq_name;
++}
++
++static struct wakeup_irq_node *create_node(int irq)
++{
++	struct wakeup_irq_node *result;
++
++	result = kmem_cache_alloc(wakeup_irq_nodes_cache, GFP_ATOMIC);
++	if (unlikely(!result))
++		pr_warn("Failed to log wakeup IRQ %d\n", irq);
++	else
++		init_node(result, irq);
++
++	return result;
++}
++
++static void delete_list(struct list_head *head)
++{
++	struct wakeup_irq_node *n;
++
++	while (!list_empty(head)) {
++		n = list_first_entry(head, struct wakeup_irq_node, siblings);
++		list_del(&n->siblings);
++		kmem_cache_free(wakeup_irq_nodes_cache, n);
++	}
++}
++
++static bool add_sibling_node_sorted(struct list_head *head, int irq)
++{
++	struct wakeup_irq_node *n = NULL;
++	struct list_head *predecessor = head;
++
++	if (unlikely(WARN_ON(!head)))
++		return false;
++
++	if (!list_empty(head))
++		list_for_each_entry(n, head, siblings) {
++			if (n->irq < irq)
++				predecessor = &n->siblings;
++			else if (n->irq == irq)
++				return true;
++			else
++				break;
++		}
++
++	n = create_node(irq);
++	if (n) {
++		list_add(&n->siblings, predecessor);
++		return true;
++	}
++
++	return false;
++}
++
++static struct wakeup_irq_node *find_node_in_list(struct list_head *head,
++						 int irq)
++{
++	struct wakeup_irq_node *n;
++
++	if (unlikely(WARN_ON(!head)))
++		return NULL;
++
++	list_for_each_entry(n, head, siblings)
++		if (n->irq == irq)
++			return n;
++
++	return NULL;
++}
++
++void log_irq_wakeup_reason(int irq)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++	if (wakeup_reason == RESUME_ABNORMAL || wakeup_reason == RESUME_ABORT) {
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	if (!capture_reasons) {
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	if (find_node_in_list(&parent_irqs, irq) == NULL)
++		add_sibling_node_sorted(&leaf_irqs, irq);
++
++	wakeup_reason = RESUME_IRQ;
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++}
++
++void log_threaded_irq_wakeup_reason(int irq, int parent_irq)
++{
++	struct wakeup_irq_node *parent;
++	unsigned long flags;
++
++	/*
++	 * Intentionally unsynchronized.  Calls that come in after we have
++	 * resumed should have a fast exit path since there's no work to be
++	 * done, any any coherence issue that could cause a wrong value here is
++	 * both highly improbable - given the set/clear timing - and very low
++	 * impact (parent IRQ gets logged instead of the specific child).
++	 */
++	if (!capture_reasons)
++		return;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++
++	if (wakeup_reason == RESUME_ABNORMAL || wakeup_reason == RESUME_ABORT) {
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	if (!capture_reasons || (find_node_in_list(&leaf_irqs, irq) != NULL)) {
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	parent = find_node_in_list(&parent_irqs, parent_irq);
++	if (parent != NULL)
++		add_sibling_node_sorted(&leaf_irqs, irq);
++	else {
++		parent = find_node_in_list(&leaf_irqs, parent_irq);
++		if (parent != NULL) {
++			list_del_init(&parent->siblings);
++			list_add_tail(&parent->siblings, &parent_irqs);
++			add_sibling_node_sorted(&leaf_irqs, irq);
++		}
++	}
++
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++}
++EXPORT_SYMBOL_GPL(log_threaded_irq_wakeup_reason);
++
++static void __log_abort_or_abnormal_wake(bool abort, const char *fmt,
++					 va_list args)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++
++	/* Suspend abort or abnormal wake reason has already been logged. */
++	if (!capture_reasons || wakeup_reason != RESUME_NONE) {
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	if (abort)
++		wakeup_reason = RESUME_ABORT;
++	else
++		wakeup_reason = RESUME_ABNORMAL;
++
++	vsnprintf(non_irq_wake_reason, MAX_SUSPEND_ABORT_LEN, fmt, args);
++
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++}
++
++void log_suspend_abort_reason(const char *fmt, ...)
++{
++	va_list args;
++
++	va_start(args, fmt);
++	__log_abort_or_abnormal_wake(true, fmt, args);
++	va_end(args);
++}
++EXPORT_SYMBOL_GPL(log_suspend_abort_reason);
++
++void log_abnormal_wakeup_reason(const char *fmt, ...)
++{
++	va_list args;
++
++	va_start(args, fmt);
++	__log_abort_or_abnormal_wake(false, fmt, args);
++	va_end(args);
++}
++EXPORT_SYMBOL_GPL(log_abnormal_wakeup_reason);
++
++void clear_wakeup_reasons(void)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++
++	delete_list(&leaf_irqs);
++	delete_list(&parent_irqs);
++	wakeup_reason = RESUME_NONE;
++	capture_reasons = wakeup_irq_nodes_cache != NULL;
++
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++}
++
++static void print_wakeup_sources(void)
++{
++	struct wakeup_irq_node *n;
++	unsigned long flags;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++
++	capture_reasons = false;
++
++	if (wakeup_reason == RESUME_ABORT) {
++		pr_info("Abort: %s\n", non_irq_wake_reason);
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return;
++	}
++
++	if (wakeup_reason == RESUME_IRQ && !list_empty(&leaf_irqs))
++		list_for_each_entry(n, &leaf_irqs, siblings)
++			pr_info("Resume caused by IRQ %d, %s\n", n->irq,
++				n->irq_name);
++	else if (wakeup_reason == RESUME_ABNORMAL)
++		pr_info("Resume caused by %s\n", non_irq_wake_reason);
++	else
++		pr_info("Resume cause unknown\n");
++
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++}
++
++static ssize_t last_resume_reason_show(struct kobject *kobj,
++				       struct kobj_attribute *attr, char *buf)
++{
++	ssize_t buf_offset = 0;
++	struct wakeup_irq_node *n;
++	unsigned long flags;
++
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++
++	if (wakeup_reason == RESUME_ABORT) {
++		buf_offset = scnprintf(buf, PAGE_SIZE, "Abort: %s",
++				       non_irq_wake_reason);
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		return buf_offset;
++	}
++
++	if (wakeup_reason == RESUME_IRQ && !list_empty(&leaf_irqs))
++		list_for_each_entry(n, &leaf_irqs, siblings)
++			buf_offset += scnprintf(buf + buf_offset,
++						PAGE_SIZE - buf_offset,
++						"%d %s\n", n->irq, n->irq_name);
++	else if (wakeup_reason == RESUME_ABNORMAL)
++		buf_offset = scnprintf(buf, PAGE_SIZE, "-1 %s",
++				       non_irq_wake_reason);
++
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++
++	return buf_offset;
++}
++
++static ssize_t last_suspend_time_show(struct kobject *kobj,
++			struct kobj_attribute *attr, char *buf)
++{
++	struct timespec64 overhead, asleep;
++	unsigned long flags;
++
++	/* Publish only a complete interval; readers never mix two attempts. */
++	spin_lock_irqsave(&wakeup_reason_lock, flags);
++	overhead = ktime_to_timespec64(suspend_resume_time);
++	asleep = ktime_to_timespec64(sleep_time);
++	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++	return scnprintf(buf, PAGE_SIZE, "%lld.%09ld %lld.%09ld\n",
++			 (long long)overhead.tv_sec, overhead.tv_nsec,
++			 (long long)asleep.tv_sec, asleep.tv_nsec);
++}
++
++static struct kobj_attribute resume_reason = __ATTR_RO(last_resume_reason);
++static struct kobj_attribute suspend_time = __ATTR_RO(last_suspend_time);
++
++static struct attribute *attrs[] = {
++	&resume_reason.attr,
++	&suspend_time.attr,
++	NULL,
++};
++static struct attribute_group attr_group = {
++	.attrs = attrs,
++};
++
++/* Detects a suspend and clears all the previous wake up reasons*/
++static int wakeup_reason_pm_event(struct notifier_block *notifier,
++		unsigned long pm_event, void *unused)
++{
++	ktime_t mono, offset;
++	unsigned long flags;
++
++	switch (pm_event) {
++	case PM_SUSPEND_PREPARE:
++		last_monotime = ktime_get();
++		/* BOOT - MONOTONIC is accumulated sleep, without sampling skew. */
++		last_stime = ktime_mono_to_any(0, TK_OFFS_BOOT);
++		time_prepared = true;
++		clear_wakeup_reasons();
++		break;
++	case PM_POST_SUSPEND:
++		if (!time_prepared)
++			break;
++		mono = ktime_get();
++		offset = ktime_mono_to_any(0, TK_OFFS_BOOT);
++		spin_lock_irqsave(&wakeup_reason_lock, flags);
++		suspend_resume_time = max_t(ktime_t, 0,
++					   ktime_sub(mono, last_monotime));
++		sleep_time = max_t(ktime_t, 0, ktime_sub(offset, last_stime));
++		spin_unlock_irqrestore(&wakeup_reason_lock, flags);
++		time_prepared = false;
++		print_wakeup_sources();
++		break;
++	default:
++		break;
++	}
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block wakeup_reason_pm_notifier_block = {
++	.notifier_call = wakeup_reason_pm_event,
++};
++
++static int __init wakeup_reason_init(void)
++{
++	int error;
++
++	/* Allocate before enabling any capture through the notifier. */
++	wakeup_irq_nodes_cache =
++		kmem_cache_create("wakeup_irq_node_cache",
++				  sizeof(struct wakeup_irq_node), 0, 0, NULL);
++	if (!wakeup_irq_nodes_cache)
++		return -ENOMEM;
++
++	kobj = kobject_create_and_add("wakeup_reasons", kernel_kobj);
++	if (!kobj) {
++		error = -ENOMEM;
++		goto fail_cache;
++	}
++	error = sysfs_create_group(kobj, &attr_group);
++	if (error)
++		goto fail_kobject;
++	error = register_pm_notifier(&wakeup_reason_pm_notifier_block);
++	if (error)
++		goto fail_group;
++	return 0;
++
++fail_group:
++	sysfs_remove_group(kobj, &attr_group);
++fail_kobject:
++	kobject_put(kobj);
++fail_cache:
++	kmem_cache_destroy(wakeup_irq_nodes_cache);
++	wakeup_irq_nodes_cache = NULL;
++	return error;
++}
++
++late_initcall(wakeup_reason_init);

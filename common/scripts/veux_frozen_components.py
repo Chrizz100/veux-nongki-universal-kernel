@@ -105,10 +105,12 @@ def verify_result(public, bundle):
     import veux_config_compat as compat
     import veux_device_fixes as fixes
     import veux_rpm_fixes as rpm
+    import veux_wakeup_fixes as wakeup
     compat.verify_result(lock['kernel'], row)
     e.require(row.get('device_fixes') == fixes.expected(lock['kernel']),
               'missing stabilization device fixes')
     rpm.verify_result(lock['kernel'], row)
+    wakeup.verify_result(lock['kernel'], row)
     print('FROZEN_BUILD=PASS; DEVICE_PASS=NO')
 
 

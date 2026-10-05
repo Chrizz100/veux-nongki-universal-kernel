@@ -15,6 +15,7 @@ import veux_device_fixes as f
 import veux_config_compat as compat
 import veux_release_device as d
 import veux_rpm_fixes as rpm
+import veux_wakeup_fixes as wakeup
 import veux_release as r
 import veux_update_engine as e
 import test_veux_release as release_tests
@@ -239,7 +240,7 @@ class DeviceTests(unittest.TestCase):
 
     def test_both_integration_paths_require_fixes_before_compile(self):
         for replay in (True, False):
-            for fail_fix in ('charger', 'rpm', None):
+            for fail_fix in ('charger', 'rpm', 'wakeup', None):
                 with self.subTest(replay=replay, fail_fix=fail_fix), tempfile.TemporaryDirectory() as tmp:
                     root = Path(tmp)
                     bundle = root / 'bundle'
@@ -265,8 +266,13 @@ class DeviceTests(unittest.TestCase):
                         if fail_fix == 'rpm':
                             raise e.Blocked('injected RPM drift')
                         return rpm.expected('5.4.274')
+                    def apply_wakeup(*unused):
+                        events.append('wakeup')
+                        if fail_fix == 'wakeup':
+                            raise e.Blocked('injected wakeup drift')
+                        return wakeup.expected('5.4.274')
                     def compile(label, state, targets, work, jobs):
-                        self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified'])
+                        self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified', 'wakeup', 'wakeup_verified'])
                         events.append('compile')
                         image = work / 'Image'
                         image.write_bytes(b'kernel')
@@ -291,6 +297,9 @@ class DeviceTests(unittest.TestCase):
                             (f, 'verify_source', dict(side_effect=lambda *a: events.append('verified'))),
                             (rpm, 'apply', dict(side_effect=apply_rpm)),
                             (rpm, 'verify_source', dict(side_effect=lambda *a: events.append('rpm_verified'))),
+                            (wakeup, 'apply', dict(side_effect=apply_wakeup)),
+                            (wakeup, 'verify_source', dict(side_effect=lambda *a: events.append('wakeup_verified'))),
+                            (wakeup, 'verify_build', dict(return_value=['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'])),
                             (compat, 'compile_kernel', dict(side_effect=compile)),
                             (e, 'package_kernel', dict(side_effect=package)),
                             (e, 'static_boot', dict(side_effect=boot))]:
@@ -303,10 +312,12 @@ class DeviceTests(unittest.TestCase):
                         else:
                             d.worker(args)
                             self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified',
-                                                      'compile', 'verified', 'rpm_verified'])
+                                                      'wakeup', 'wakeup_verified', 'compile', 'verified', 'rpm_verified', 'wakeup_verified'])
                             row = json.loads((args.public / 'RESULT.json').read_text())
                             self.assertEqual(row['device_fixes'], f.expected('5.4.274'))
                             self.assertEqual(row['rpm_fixes'], rpm.expected('5.4.274'))
+                            self.assertEqual(row['wakeup_fixes'], wakeup.expected('5.4.274'))
+                            wakeup.verify_build.assert_called_once_with('5.4.274', args.work)
                             self.assertEqual(row['config_compat'], compat.expected_proof())
                             self.assertFalse(row['device'])
                             self.assertEqual({p.name for p in args.public.iterdir()},
@@ -330,6 +341,8 @@ class DeviceTests(unittest.TestCase):
                 e.write_json(args.artifacts / '5.4.274/RESULT.json',
                              {'device_fixes': proof,
                               'rpm_fixes': rpm.expected('5.4.274'),
+                              'wakeup_fixes': wakeup.expected('5.4.274'),
+                              'wakeup_linked_symbols': ['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'],
                               'config_compat': compat.expected_proof(),
                               'config_audit': compat.reference_report()})
                 with mock.patch.object(r, 'promote') as promote:
@@ -357,6 +370,7 @@ class DeviceTests(unittest.TestCase):
     def test_real_promotion_retains_device_proof_in_current_build(self):
         expected = {label: f.expected(label) for label in e.config()['lineages']}
         rpm_expected = {label: rpm.expected(label) for label in e.config()['lineages']}
+        wakeup_expected = {label: wakeup.expected(label) for label in e.config()['lineages']}
         with tempfile.TemporaryDirectory() as tmp:
             repo, targets, args = release_tests.ReleaseTests().fixture(Path(tmp))
             for label in targets['lineages']:
@@ -364,6 +378,8 @@ class DeviceTests(unittest.TestCase):
                 row = json.loads(path.read_text())
                 row['device_fixes'] = expected[label]
                 row['rpm_fixes'] = rpm_expected[label]
+                row['wakeup_fixes'] = wakeup_expected[label]
+                row['wakeup_linked_symbols'] = ['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'] if label == '5.4.274' else []
                 if label == '5.4.274':
                     row['config_compat'] = compat.expected_proof()
                     row['config_audit'] = compat.reference_report()
@@ -373,12 +389,14 @@ class DeviceTests(unittest.TestCase):
                  mock.patch.object(e, 'config', return_value={'golden_contract': 'golden'}), \
                  mock.patch.object(e, 'normalized_resukisu', side_effect=lambda donor, entry, dest: shutil.copytree(donor/'kernel', dest)), \
                  mock.patch.object(f, 'expected', side_effect=lambda label: expected[label]), \
-                 mock.patch.object(rpm, 'expected', side_effect=lambda label: rpm_expected[label]):
+                 mock.patch.object(rpm, 'expected', side_effect=lambda label: rpm_expected[label]), \
+                 mock.patch.object(wakeup, 'expected', side_effect=lambda label: wakeup_expected[label]):
                 d.promote(args)
             current = json.loads((repo / r.CURRENT).read_text())
             self.assertEqual(current['lineages']['5.4.274']['device_fixes'], expected['5.4.274'])
             for label in targets['lineages']:
                 self.assertEqual(current['lineages'][label]['rpm_fixes'], rpm_expected[label])
+                self.assertEqual(current['lineages'][label]['wakeup_fixes'], wakeup_expected[label])
             self.assertEqual(current['lineages']['5.4.274']['config_compat'], compat.expected_proof())
             self.assertFalse(current['device_pass_inferred'])
 

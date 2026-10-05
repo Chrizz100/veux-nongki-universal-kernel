@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "wakeup-diag-r1",
+  "kernel": "5.4.274",
+  "recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+  "vendor_url": "https://raw.githubusercontent.com/dereference23/kernel_xiaomi_sm6375/",
+  "vendor_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632",
+  "android_common_commit": "250657e3e4fa0189d0ebf710093551ba4a1ea9c1",
+  "patch": "0001-android-wakeup-diagnostics.patch",
+  "test": "test_wakeup.py",
+  "device_pass_inferred": false,
+  "files": {
+    "drivers/base/power/main.c": {
+      "vendor_sha256": "bc85c38b2d4d2b06856b31af827fee58e3f8981f620362527272d7062651f5a8",
+      "before_sha256": "bc85c38b2d4d2b06856b31af827fee58e3f8981f620362527272d7062651f5a8",
+      "after_sha256": "a6f1eb63f3d648707db0ed3b49d6a87dff5005581d8a1d15f4987612558fd754"
+    },
+    "drivers/base/power/wakeup.c": {
+      "vendor_sha256": "ef60b28421b5d4d173bb60ef1c929b9c615c58e0ec80e5b6a992b234433867a0",
+      "before_sha256": "ef60b28421b5d4d173bb60ef1c929b9c615c58e0ec80e5b6a992b234433867a0",
+      "after_sha256": "572e77430710114c2feda4766b9b1329b613893a30ce791d612559421ec4ea8b"
+    },
+    "include/linux/wakeup_reason.h": {
+      "vendor_sha256": null,
+      "before_sha256": null,
+      "after_sha256": "26d9b1e2cc0a489e022106b5bc76d784cfc18e9f01495f76c31905180d0eef6c"
+    },
+    "kernel/power/Makefile": {
+      "vendor_sha256": "42c4a390a6ddac7bdba60c386daf118ed02d62d081f3c4d77957f0a093e19046",
+      "before_sha256": "42c4a390a6ddac7bdba60c386daf118ed02d62d081f3c4d77957f0a093e19046",
+      "after_sha256": "1820305cabaef4a0685b7386691473ee54cdaff48b895670b1fb79cbf854b039"
+    },
+    "kernel/power/process.c": {
+      "vendor_sha256": "3f8e31483c96aa4b9151594ce21d7b92f92e5952edc815af1b766c86c47bd984",
+      "before_sha256": "3f8e31483c96aa4b9151594ce21d7b92f92e5952edc815af1b766c86c47bd984",
+      "after_sha256": "853787f0a65ce5fa242a0a2e53530fd82a7e79fac4a9ff810d9bb991749f2219"
+    },
+    "kernel/power/suspend.c": {
+      "vendor_sha256": "9ee032abb491ac45fb41fa937ae464db34281ebd85031d5eb14cb19f32143459",
+      "before_sha256": "c0c9d23e31e8022629492a125e302070e784229525022dc496b3ffa81d148704",
+      "after_sha256": "13b1bc1df540a94a3959d9f6c48c0fdfc53b9607a30ad8ae84a45994d9f0fbe0"
+    },
+    "kernel/power/wakeup_reason.c": {
+      "vendor_sha256": null,
+      "before_sha256": null,
+      "after_sha256": "3e570c4f300018997c4a721b0ea1821600e18eccdad2177213f73237149e4726"
+    }
+  },
+  "restore": {
+    "archive": "lineages/5.4.274/P14_SOURCE_RESTORE_COMPACT_V2.zip",
+    "sha256": "20327b9edc783429bd4987febff3e77e42cc9be62493be41c7aaec2af3d3b0db",
+    "patches": {
+      "source-restore-kit/p5i/vendor-20240619-to-p5i-outer.patch": "4016649007e50b67389c3c5860b7124d1454f9f29973079e9f0754a439c50991",
+      "source-restore-kit/p5i-to-p6-source-compat.patch": "1edd7b005f8af7bd9cad955bced33c6d5509347a6c17c51c4678be89fd3c1cbc",
+      "source-restore-kit/p6v10-to-p6v11-full-susfs-outer.patch": "220c388cc13640971802f422fee3804ef78bd892d7c077bcf216e0e80bf14e44"
+    }
+  },
+  "assets": {
+    "0001-android-wakeup-diagnostics.patch": "3ca33d3c0ef280fd80a1f9d4ddcbf0c8ab02e1d0dd9a1718f230eb9ff0c19815",
+    "test_wakeup.py": "f87b491d916d859a78fd14dda0b730d5a65724a796f94b35202d581e8a3fa5c0"
+  }
+}

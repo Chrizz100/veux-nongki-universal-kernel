@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 import veux_rpm_fixes as rpm
+import veux_wakeup_fixes as wakeup
 import veux_device_fixes as fixes
 import veux_config_compat as compat
 import veux_release_device as device
@@ -124,6 +125,8 @@ class RPMTests(unittest.TestCase):
             args = argparse.Namespace(bundle=root / 'bundle', artifacts=root / 'artifacts')
             for proof in (None, [], forged, expected):
                 row = {'device_fixes': fixes.expected('5.4.274'),
+                       'wakeup_fixes': wakeup.expected('5.4.274'),
+                       'wakeup_linked_symbols': ['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'],
                        'config_compat': compat.expected_proof(),
                        'config_audit': compat.reference_report()}
                 if proof is not None:

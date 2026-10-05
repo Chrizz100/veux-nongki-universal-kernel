@@ -1,0 +1,90 @@
+VEUX Basis-Stabilisierung R3 – Wakeup-Diagnose
+Stand: 2026-10-05
+
+Zweck
+Die geflashte R2-Basis bleibt erhalten. R3 ergänzt die auf dem Gerät fehlenden
+Android-Schnittstellen /sys/kernel/wakeup_reasons/last_resume_reason und
+last_suspend_time. Das ist eine Reparatur der Diagnose, keine Zusage, dass damit
+alle Suspend-Abbrüche behoben sind.
+
+Gerätebeleg
+VEUX_Wakeup_Check_R2_20261005_150135_7278.txt
+SHA256 a733f52bb2f7fee9432b843db6b644490d39910855b3da9cd4ecd53812b64f47
+R2 GNU Build ID 23a2fd921fba3014; Build 37304428928.
+Die Schnittstellen fehlen auch im rekonstruierten Quellstand. Androids bisherige
+0-ms-Werte und "unknown" sind deshalb kein Beweis für fehlenden Tiefschlaf.
+Die separate Erfassung aller physischen Wakeup-Knoten war zeitlich unvollständig.
+Die ROM-Regeln wurden erfasst. Ihre Pfadzuordnung ist eine weitere offene Baustelle.
+
+Änderungen
+- Android-5.4-Wakeup-Reason-Code mit bestehender GPLv2-Kennzeichnung übernehmen.
+- IRQ-Gründe an pm_system_irq_wakeup anbinden; s2idle-Wiederholungen zurücksetzen.
+- Aktuelle Callbackfehler mit Gerät und Fehlercode melden; keinen alten
+  suspend_stats.last_failed_dev als Ursache eines neuen Abbruchs verwenden.
+- Pending-Wakeup-Quellen mit SRCU-Lebensdauerschutz erfassen. "Last active" bleibt
+  eine Beobachtung und ist ausdrücklich kein eindeutiger Ursachennachweis.
+- Freezer-Abbruch durch Wakeup und Timeout unterscheiden.
+- Nur abgeschlossene Zeitintervalle veröffentlichen. CLOCK_MONOTONIC misst den
+  Suspend/Resume-Aufwand; die Veränderung des BOOT-MONOTONIC-Offsets die von der
+  Kernel-Zeitführung erfasste Schlafzeit. Negative Intervalle werden auf 0 begrenzt.
+- Speicher vor der PM-Notifier-Registrierung anlegen; Initialisierungsfehler
+  vollständig zurücknehmen. Beide sysfs-Attribute sind nur lesbar (0444).
+- Sieben Kerneldateien sind vor/nach der Änderung mit SHA256 festgelegt.
+  Unbekannte oder gemischte Quellstände werden abgelehnt; kein unscharfes Patchen.
+- Der reguläre 5.4.274-Worker verlangt Reparaturbeleg, Objektdatei und die drei
+  verlinkten Schnittstellen-Symbole. Dieselbe Prüfung gilt vor einer Promotion.
+
+Erhalten
+ReSukiSU 35203/UAPI5: 8770c7e324a22895703c4916b8a16520e0b81c79
+SUSFS 2.3.0: 5326e21a7eb232f9e21debdd5164e99bee3d1e2f
+NoMount Wire 20: c5fad9d8f97c5a207f7342fd91789449915ea047
+Der Stabilisierungslauf verwendet weiterhin den bestehenden Component-Lock.
+Ladefixes, WT-Freezable-Workqueue, RPM-Fix, ConfigDiag10, DTB, Golden-Verträge,
+alle sechs Lineages und die V4-Workflowdatei bleiben bestehen. Die fünf anderen
+Lineages erhalten keine Wakeup-Quelländerung. Der V4-Worker behält bei 5.4.274
+die neue Diagnose mit; seine sonstige Updater- und Fehlerupload-Logik bleibt erhalten.
+Keine Änderung an SELinux-Policy, Enforcement, Partitionen oder Root-Modulen.
+
+Prüfungen
+- Vollständige neue C-Implementierung und echter Pending-Source-Collector:
+  66 Host-Assertions mit GCC, Warnungen als Fehler und UndefinedBehaviorSanitizer.
+- CONFIG_SUSPEND=n: Header-Stubs kompiliert und ausgeführt.
+- Neue Integrationstests: Erstinstallation, Wiederholung, Quell-/Payload-Drift,
+  Symlinks, vorhandene neue Dateien, gemischter Zustand, Hosttestfehler,
+  fehlende Link-Symbole und fehlende/verfälschte Promotionsbelege.
+- Fehler-Injektionen für falsche Zeitrechnung und verlorene Meldepfade.
+- Vorhandene Lade-, RPM-, Component-Lock- und ConfigDiag10-Prüfungen weiterführen.
+- ZIP-Installation in isolierter Git-Fixture: Erstlauf, Wiederholung, spätere
+  Dateiänderung und konkurrierend geändertes main; YAML/Bash/Actionlint prüfen.
+Hosttests modellieren Kernel-Dienste. Sie beweisen weder ARM64-Kompilierung noch
+Interrupt-Nebenläufigkeit auf dem Gerät. Der vollständige Build und Gerätenachweis
+stehen für R3 noch aus. CI setzt weiterhin device=false.
+
+Smartphone-Installation
+1. VEUX_Basis_Stabilisierung_R3_Wakeup.zip UNENTPACKT ins Hauptverzeichnis von main.
+2. VEUX_Basis_Stabilisierung_R3_Wakeup.yml nach .github/workflows/ hochladen.
+3. Actions: "VEUX Basis R3 - Wakeup-Diagnose reparieren" starten.
+   Ohne Haken: nur installieren und prüfen. Mit "build_kernel": nach bestandenen
+   Prüfungen genau den installierten Commit als 5.4.274 bauen.
+Ein grüner checks-Job allein enthält keinen neuen Kernel.
+Bei einem vollständigen erfolgreichen Build enthält der Download nur eine AK3;
+GitHub verpackt Actions-Artefakte dennoch in eine äußere Download-ZIP. Zum Flashen
+wird ausschließlich die darin liegende *_AnyKernel.zip verwendet. Die R3-
+Installations-ZIP ist kein Kernel und darf nicht geflasht werden.
+
+Danach
+Build und AK3 prüfen, dann Gerätevergleich mit eindeutigem neuen Build-ID-Nachweis.
+Prüfen: Lesbarkeit/Label der zwei neuen Schnittstellen, Gründe/Zeitintervalle,
+neue Suspend-Abbrüche sowie Lade-/Temperaturregressionen. Physische Wakeup-
+Knotenlabels sind mit diesem Paket noch nicht korrigiert. Kein Geräte-PASS aus CI.
+
+Quellen
+Kernelbasis: dereference23/kernel_xiaomi_sm6375,
+b2b7a3bbc36d120ee523ebc8d68e0f13a97df632 plus authentifiziertes P14-Restore-Kit
+(erst das Restore-Kit ergibt den bestehenden nativen 5.4.274-Quellstand).
+Android common 5.4 Implementierung:
+https://android.googlesource.com/kernel/common/+/250657e3e4fa0189d0ebf710093551ba4a1ea9c1/kernel/power/wakeup_reason.c
+https://android.googlesource.com/kernel/common/+/250657e3e4fa0189d0ebf710093551ba4a1ea9c1/include/linux/wakeup_reason.h
+Die Zeitveröffentlichung, Init-Fehlerpfade, Capture-Grenze und sichere
+Pending-Source-Erfassung sind gezielte lokale Anpassungen, kein unveränderter
+Upstream-Import. Die Android-SystemSuspend-ABI bleibt erhalten.
