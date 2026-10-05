@@ -1,0 +1,54 @@
+VEUX 5.4.274 - Stabilisierung R1, 05.10.2026
+
+AUFTRAG
+Die vorhandene 5.4.274-Basis stabilisieren. Während Basisreparaturen keine
+gleichzeitigen Updates von ReSukiSU, SUSFS oder NoMount. Die sechs Lineages,
+der V4-Updater und die bestehenden Referenzartefakte bleiben erhalten.
+
+FESTER VERGLEICHSSTAND
+Referenz: geflashter Build aus GitHub-Run 37206832975, Repository-Commit
+48c4dce74a88e31e62ac827689ae2c2cccc353fa. Die originale RESULT.json wird
+unverändert als REFERENCE_RESULT.json archiviert und über ihren Hash geprüft.
+ReSukiSU: 35203, UAPI 5, 8770c7e324a22895703c4916b8a16520e0b81c79.
+SUSFS: 2.3.0, 5326e21a7eb232f9e21debdd5164e99bee3d1e2f.
+NoMount: Kernel-Wire-Version 20, c5fad9d8f97c5a207f7342fd91789449915ea047.
+Das ist ein Vergleichsstand mit bekannten offenen Fehlern, keine neue
+vollständige Gerätefreigabe. Die SUSFS-Variantenerkennung bleibt vorerst offen.
+
+UMSETZUNG
+veux_frozen_components.py lädt ausschließlich diese vollständigen Commit-IDs.
+Ein fehlender Commit, abweichender Quellstand oder geänderte UAPI bricht ab.
+Es gibt keinen Ersatz durch den neuesten Branch-Stand. Der normale Release-
+Worker mit Lade-, Temperatur-, RPM-, ConfigDiag10-, Paket- und Bootprüfungen
+wird weiterverwendet. Nur 5.4.274 wird ausgewählt. Kein automatisches Promote.
+Die bisherigen Update-Workflows werden nicht umgeschrieben oder gelöscht.
+
+SMARTPHONE
+1. VEUX_Basis_Stabilisierung_R1.zip unverändert in das Hauptverzeichnis von main.
+2. VEUX_Basis_Stabilisierung_R1.yml nach .github/workflows/ hochladen.
+3. Actions -> VEUX Basis R1 -> Run workflow auf main.
+   build_kernel zunächst ausgeschaltet lassen.
+Dieser Lauf installiert und prüft die Versionsbindung. Er baut keinen Kernel.
+Der optionale Kerneljob verwendet den erfolgreich installierten Commit.
+Bei einem später benötigten Build wird ausschließlich die innere AK3-ZIP als
+Kerneldatei hochgeladen; GitHub verpackt Actions-Artefakte weiterhin zusätzlich.
+Zusätzliche Diagnoseartefakte werden nur im Fehlerfall hochgeladen.
+
+NÄCHSTER BASISBEFUND
+Im Bericht VEUX_Folgecheck_R1_20261004_151121_6655.txt folgt bei Uptime
+1762.771114 der Timeout von pmk8350_main_therm auf das Einfrieren der Tasks
+und das Suspendieren der Konsole. wt_chg meldet danach korrekt
+cp_master_temp unavailable, rc=-110. Die neue Temperatur-Fehlerbehandlung
+greift damit; die Ursache des Timeouts besteht in diesem Bericht weiterhin.
+
+Der gepinnte Ausgangscode wt_chg.c verwendet schedule_delayed_work für
+batt_chg_work und besitzt keine suspend/resume-Callbacks. Der bereits
+eingebaute Temperaturpatch ändert diese Arbeitsplanung nicht. Damit ist die
+Koordination zwischen WT-Hintergrundarbeit und Geräte-Suspend konkret zu
+prüfen. Ein identischer Timeout ist bereits im älteren R3-Bericht bei Uptime
+7507.354520 enthalten. Ein Zusammenhang mit sämtlichen Suspend-Abbrüchen
+oder mit LSPosed ist nicht bewiesen.
+
+Die Beseitigung dieses Problems ist mit R1 noch nicht behauptet. R1 friert
+die Vergleichsbedingungen ein; es ändert keine Kernel-Treiber und erfordert
+deshalb jetzt kein erneutes Flashen.

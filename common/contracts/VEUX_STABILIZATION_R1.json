@@ -1,0 +1,41 @@
+{
+  "components": {
+    "nomount": {
+      "ahead": 159,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
+      "ref": "refs/heads/master",
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "20",
+      "version_kind": "kernel-wire-version"
+    },
+    "resukisu": {
+      "ahead": 33,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
+      "local_version": 4503,
+      "ref": "refs/heads/main",
+      "tag": "v4.2.0-rc3",
+      "uapi": 5,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35203"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "ref": "refs/heads/gki-android13-5.10",
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  },
+  "device_pass_inferred": false,
+  "id": "veux-5.4.274-stabilization-r1",
+  "kernel": "5.4.274",
+  "reference_image_sha256": "45fe0f0b6f39d4c677f68f450d652dcafd0782ca75dc5e837d2f18440ed32c88",
+  "reference_repository_sha": "48c4dce74a88e31e62ac827689ae2c2cccc353fa",
+  "reference_result_sha256": "cf7239d03cf0562daf1df7ead149744dd5213583103d88c72a5b04fa587a7f72",
+  "reference_run": 37206832975,
+  "schema": 1,
+  "source_recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab"
+}

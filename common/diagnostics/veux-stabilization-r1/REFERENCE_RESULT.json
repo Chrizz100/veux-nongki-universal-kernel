@@ -1,0 +1,272 @@
+{
+  "artifact_name": "Kernel_5.4.274_ReSukiSU_35203_SUSFS_2.3.0_NoMount_20",
+  "boot_file": "Kernel_5.4.274_ReSukiSU_35203_SUSFS_2.3.0_NoMount_20_boot.img",
+  "compile": true,
+  "config_audit": {
+    "actual_config_sha256": "5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229",
+    "cfi": "configured-and-core-instrumented",
+    "cfi_runtime_test": "not-performed",
+    "configuration_unchanged_during_compile": true,
+    "core_compile_commands": {
+      "kernel/.cfi.o.cmd": {
+        "cfi_flag": false,
+        "lto_flag": true,
+        "sha256": "3e59375f8526a8862ff7a151a215796e9a3a3fbc3a884f923af24011765f5084"
+      },
+      "kernel/.configs.o.cmd": {
+        "cfi_flag": true,
+        "lto_flag": true,
+        "sha256": "eca4340ef7d05e22e601c3898ef0c7c3616ab01a6bb2c829d66edd3d8316d791"
+      },
+      "kernel/.fork.o.cmd": {
+        "cfi_flag": true,
+        "lto_flag": true,
+        "sha256": "af95cd65b9eb6dc3da6d709de990bdfd9bdabd7ea931d57195cc5fee2377427e"
+      }
+    },
+    "device": false,
+    "embedded_config_sha256": "5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229",
+    "id": "ConfigDiag10",
+    "image_sha256": "45fe0f0b6f39d4c677f68f450d652dcafd0782ca75dc5e837d2f18440ed32c88",
+    "options": {
+      "CFI_CLANG": "y",
+      "CFI_CLANG_SHADOW": "y",
+      "CFI_PERMISSIVE": "n",
+      "IKCONFIG": "y",
+      "IKCONFIG_PROC": "y",
+      "LTO": "y",
+      "LTO_CLANG": "y",
+      "THINLTO": "y"
+    },
+    "source_patch": {
+      "after_sha256": "49921ac5eee19f52c1623963951a7ac0fceb8297f4736aff3cad7641672c032f",
+      "before_sha256": "f27b67d514325559eade0530c2bb3265ecd25ece0c3e3fedd89e56b3507d2744",
+      "id": "ConfigDiag10",
+      "path": "kernel/Makefile",
+      "purpose": "Embed actual KCONFIG_CONFIG; restore captured ROM kernel requirements via build configuration",
+      "regular_patchset": "charger-diag08",
+      "scheduler_patch": {
+        "after_sha256": "b21b0fe59da27970be0971e0321d46cc43feefbca7b385907415a1e38d01ca7b",
+        "before_sha256": "1b156c025085839c15a6114ea3eb3dcf0c0b79f9bdc817d9ab43344b1e67de03",
+        "id": "ConfigDiag10-sched-debug-pm",
+        "observed_failure_run": "36734671570",
+        "patch_sha256": "a12bd25d37d5b7bcbc03713f9c11a3f145789758daf3ddd8272f0a65cf296e09",
+        "path": "kernel/sched/debug.c",
+        "purpose": "Print the masked scheduler utilization estimate directly without referencing undefined __PS; retain the existing mask",
+        "source_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632",
+        "source_git_blob": "76f74c238a5a2dada979f0e779ba31dcf1c49b0f"
+      },
+      "source_commit": "b2b7a3bbc36d120ee523ebc8d68e0f13a97df632"
+    },
+    "stack_protector": "strong-configured-and-core-instrumented",
+    "status": "PASS",
+    "vintf_kernel": {
+      "changes_from_diag09": {
+        "CONFIG_ARM64_MODULE_PLTS": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_ASM_MODVERSIONS": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_AUDIT": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_AUDITSYSCALL": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_AUDIT_COMPAT_GENERIC": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_AUDIT_GENERIC": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CFI_CLANG": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CFI_CLANG_SHADOW": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CRYPTO_CTR": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CRYPTO_GCM": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CRYPTO_GF128MUL": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CRYPTO_GHASH": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_CRYPTO_SEQIV": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_DEBUG_KERNEL": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_DEBUG_MISC": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_DEBUG_PREEMPT": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_HAVE_MOD_ARCH_SPECIFIC": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_INTEGRITY_AUDIT": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_MODULES": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_MODULE_UNLOAD": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_MODVERSIONS": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_PROFILING": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_SCHED_DEBUG": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_STACKPROTECTOR": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_STACKPROTECTOR_STRONG": {
+          "after": "y",
+          "before": "n"
+        },
+        "CONFIG_STRICT_MODULE_RWX": {
+          "after": "y",
+          "before": "n"
+        }
+      },
+      "device": false,
+      "failures": [],
+      "groups_applied": 5,
+      "groups_skipped": 4,
+      "kernel": "5.4.274",
+      "kernel_level": 5,
+      "matrix_level": 5,
+      "matrix_sha256": "69cb367264e7377cc04e545c96067bffcc77106aa13aed9a197cb8564e149712",
+      "passed": 261,
+      "requirements": 261,
+      "scope": "captured ROM kernel requirements only",
+      "status": "PASS"
+    }
+  },
+  "config_compat": {
+    "actual_config_sha256": "5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229",
+    "cfi": "configured-and-core-instrumented",
+    "device_pass_inferred": false,
+    "id": "ConfigDiag10",
+    "reference_run": "36738661110",
+    "rom_requirements": 261,
+    "rom_status": "PASS",
+    "stack_protector": "strong-configured-and-core-instrumented"
+  },
+  "device": false,
+  "device_fixes": [
+    {
+      "host_tests": true,
+      "id": "charger-temp-r1",
+      "manifest_sha256": "4b178b1bb1b8e33baf736b8a6bd9a59e5d295eb7c8cd0c9c5c833459e1f18d0c",
+      "reference_run": "not-built",
+      "source_sha256": {
+        "drivers/power/supply/qcom/bq2589x_charger.c": "0aa9b1516a8a5fa2efe30b4cc9be56c03d030f7282e1b7ef8066615c9172c241",
+        "drivers/power/supply/qcom/sc8551_charger.c": "035d1204b1a4796546c90ab1f448f9ba00889164c731719e3096e4fcafc5cd69",
+        "drivers/power/supply/qcom/wt_chg.c": "107cbc7bc8c1816f9821bcef8a201ef2977c948e5acd171ec2b7a4c4c1650ce4"
+      }
+    }
+  ],
+  "dtb_reference": {
+    "kernel": "5.4.274",
+    "mode": "pinned",
+    "path": "arch/arm64/boot/dts/vendor/xiaomi/veux.dtb",
+    "sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
+    "source_recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab"
+  },
+  "dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
+  "image_bytes": 34834944,
+  "image_sha256": "45fe0f0b6f39d4c677f68f450d652dcafd0782ca75dc5e837d2f18440ed32c88",
+  "integration_overlay_sha256": "d040cb924777709548db4532cb2591316c1cac703ad3e877b3684229351da826",
+  "kernel": "5.4.274",
+  "kernelrelease": "5.4.274-qgki-g82179e362f33",
+  "package": true,
+  "package_file": "Kernel_5.4.274_ReSukiSU_35203_SUSFS_2.3.0_NoMount_20_AnyKernel.zip",
+  "package_sha256": "992916419d86e2f1010988a0bf13f15430bdbf2bd13fb69d7afd926b15b8b4e3",
+  "repository_sha": "48c4dce74a88e31e62ac827689ae2c2cccc353fa",
+  "rpm_fixes": [
+    {
+      "device_pass_inferred": false,
+      "host_cases": 22,
+      "host_tests": true,
+      "id": "rpm-sleep-r1",
+      "manifest_sha256": "e530b5df0fc78f90a867dd2e15fb85f4a63cb2a4f4f287d67ba1e35e976645d7",
+      "source_recipe_blob": "7599e13e10d5ea8ce9e1984076d23a40d7f438ab",
+      "source_sha256": {
+        "drivers/rpmsg/rpm-smd.c": "8c7416abec4c2c28ccc9829ad9f6abaee2c42bdcfda8fd8420236c6b1cb5c655"
+      }
+    }
+  ],
+  "static_boot": true,
+  "static_boot_sha256": "90c03a3c53fb77035bd3c9f65be4a97da5b0a79e973b0ef34ccb7a3ac08e750d",
+  "target_manifest_sha256": "9887f4b6eae17e186fb0a76f984f7942b5db65b527cbea63d91a657134d3a7c5",
+  "targets": {
+    "nomount": {
+      "ahead": 159,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
+      "ref": "refs/heads/master",
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "20",
+      "version_kind": "kernel-wire-version"
+    },
+    "resukisu": {
+      "ahead": 33,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
+      "local_version": 4503,
+      "ref": "refs/heads/main",
+      "tag": "v4.2.0-rc3",
+      "uapi": 5,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35203"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "ref": "refs/heads/gki-android13-5.10",
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  },
+  "warnings": 2
+}
