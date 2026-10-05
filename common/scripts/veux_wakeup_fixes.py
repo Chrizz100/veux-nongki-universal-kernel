@@ -11,6 +11,7 @@ import veux_update_engine as e
 KERNEL = '5.4.274'
 PAYLOAD = 'common/device-fixes/5.4.274/wakeup-diag-r1'
 MANIFEST_SHA256 = 'a85be9f6a854338cacee93b55cda0b4edd86ed6c1bd4b8250b84fa7692c99638'
+ABI_SYMBOLS = ('wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show')
 
 
 def path_in(root, name, missing=False):
@@ -93,21 +94,32 @@ def verify_source(src, label, proof):
             e.require(e.digest(path_in(src, name)) == digest, 'wakeup source changed during build')
 
 
+def verify_symbols(symbols):
+    """Require function bodies, including the internal names in the R3 LTO build.
+
+    Run 37335256954 contains name$<32 hex digits> for these static functions.
+    A .cfi body is also valid, but a .cfi_jt jump-table entry alone is not proof
+    that the corresponding implementation was linked.
+    """
+    for name in ABI_SYMBOLS:
+        pattern = (r'^[0-9a-fA-F]+[ \t]+[tT][ \t]+' + re.escape(name)
+                   + r'(?:\$[0-9a-fA-F]{32})?(?:\.cfi)?[ \t]*$')
+        e.require(re.search(pattern, symbols, re.M) is not None,
+                  'wakeup symbol not linked: ' + name)
+    return list(ABI_SYMBOLS)
+
+
 def verify_build(label, work):
     if label != KERNEL:
         return []
     obj = path_in(work, 'build/kernel/power/wakeup_reason.o')
     e.require(obj.stat().st_size > 0, 'wakeup object empty')
     symbols = path_in(work, 'build/System.map').read_text()
-    names = ['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show']
-    for name in names:
-        e.require(re.search(r'^[0-9a-fA-F]+\s+[a-zA-Z]\s+' + name + r'(?:\.[^\s]+)?$',
-                            symbols, re.M) is not None, 'wakeup symbol not linked: ' + name)
-    return names
+    return verify_symbols(symbols)
 
 
 def verify_result(label, row):
     e.require(row.get('wakeup_fixes', []) == expected(label),
               'missing or outdated wakeup fix proof: ' + label)
-    wanted = ['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'] if label == KERNEL else []
+    wanted = list(ABI_SYMBOLS) if label == KERNEL else []
     e.require(row.get('wakeup_linked_symbols', []) == wanted, 'wakeup link proof missing: ' + label)

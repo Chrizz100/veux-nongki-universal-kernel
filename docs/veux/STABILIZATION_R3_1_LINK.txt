@@ -1,0 +1,65 @@
+VEUX Basis R3.1 – Korrektur der Wakeup-Linkprüfung
+Stand: 2026-10-05
+
+Fehlerbeleg
+https://github.com/Chrizz100/veux-nongki-universal-kernel/actions/runs/37335256954
+Build-Job 111848495619, installierter Commit:
+f9b6c3d9b1338af6fc9cbc8495be6bb340c3868a
+Die Kernelkompilierung und 261/261 ROM-Konfigurationsanforderungen bestanden.
+Danach meldete die neue R3-Linkprüfung fälschlich:
+  BLOCKED: wakeup symbol not linked: wakeup_reason_init
+Alle drei verlangten Funktionen sind in System.map enthalten. Ihre statischen
+Namen tragen $e7a9be69868996ddc7b91d92771f8869 als Compiler-Suffix. Der bisherige
+Prüfer erlaubte nur einen Punkt-Suffix und wies deshalb gültige Funktionsnamen ab.
+Paketierung und statische Bootprüfung wurden danach nicht ausgeführt.
+Das ist kein Nachweis eines fehlenden Kernelcodes und kein Geräte-PASS.
+
+Diagnose-Artefakt 11357931433:
+SHA256 09198fe555c66040b13bcef64db16775549d27eda73c4a849277daa1b3916b8f
+Vollständige System.map, 8548749 Bytes, 162959 Zeilen:
+SHA256 2fc58e797efce705e5fd4a92f712e500c0d75a73bf2a9b4752cfda419922797e
+Die Testfixture common/scripts/fixtures/wakeup-run-37335256954.map enthält
+unverändert alle sieben Zeilen mit einem der drei gesuchten Funktionsnamen.
+SHA256 b3abc616eb77d5b63c02e129db73e144ef4b6048d84b3710c2bb4d918a545f0d
+
+Reparatur
+- Gültige Textsymbole t/T: exakter Funktionsname, optional $ plus 32 Hexzeichen,
+  optional .cfi für den Funktionskörper. Keine beliebigen Namenszusätze.
+- .cfi_jt-Sprungtabellen, __initcall-Daten und andere Symboltypen ersetzen
+  keinen Funktionskörper. Objektdatei und alle drei Funktionen bleiben Pflicht.
+- Fehlgeschlagene Builds behalten zusätzlich Image und wakeup_reason.o in den
+  Fehlerdiagnosen, sofern vorhanden. Diese sind keine freigegebene AK3.
+  Erfolgreiche Builds liefern weiterhin nur die flashbare AK3 als Artefakt.
+- Kein Kernelquellcode, keine Kernelkonfiguration und keine Root-Version geändert.
+  Alle sechs Lineages, V4, Golden sowie Lade-/RPM-Reparaturen bleiben erhalten.
+
+Prüfungen
+- Echte vollständige Symboltabelle des fehlgeschlagenen Runs lokal prüfen.
+- Originalfehler mit altem Ausdruck reproduzieren, mit Korrektur akzeptieren.
+- Jeweils einen Funktionskörper entfernen, echte Sprungtabellen beibehalten:
+  alle drei Fälle müssen weiterhin blockieren.
+- Gültige Namensformen und falsche Namen, Symboltypen und Suffixe abgrenzen.
+- Fehlerdiagnosen: exakte Image-/Objektbytes nur bei Fehlschlag sichern,
+  keine Veröffentlichung als freigegebenes Paket.
+- Bestehende Wakeup-C-, Lade-, RPM-, Konfigurations- und Root-Lock-Tests ausführen.
+- Neue ZIP/YAML in isoliertem Git-Repository installieren und erneut installieren;
+  fremde Änderungen und veraltetes main müssen blockiert bleiben.
+- YAML, eingebettete Bash-/Python-Skripte und Actions-Struktur prüfen.
+Ein vollständiger neuer ARM64-Build und der Gerätenachweis stehen noch aus.
+
+Smartphone
+1. VEUX_Basis_Stabilisierung_R3_1_Link.zip UNENTPACKT ins Hauptverzeichnis von main.
+2. VEUX_Basis_Stabilisierung_R3_1_Link.yml nach .github/workflows/ hochladen.
+3. Actions: "VEUX Basis R3.1 - Wakeup-Linkpruefung korrigieren" starten.
+   build_kernel aktivieren, wenn die neue AK3 gebaut werden soll.
+Die YAML prüft/installiert zuerst und baut dann exakt den geprüften Commit.
+Ohne build_kernel wird nur geprüft/installiert. Die Installations-ZIP nie flashen.
+Den alten R3-Installer nicht erneut verwenden: dessen archivierte Prüfer-Version
+enthält den Fehler. Nach R3.1 verhindert die Dateihash-Prüfung diesen Rückschritt.
+
+Warum nochmals bauen?
+Das Diagnose-Artefakt des fehlgeschlagenen R3-Runs enthält nur Logs, Konfiguration
+und Symboltabelle, nicht das kompilierte Image. Daraus lässt sich keine AK3
+erstellen. Die zusätzliche Fehlersicherung verhindert künftig diesen Verlust,
+ist aber kein Ersatz für noch ausstehende Paket- und statische Bootprüfungen.
+Danach: AK3 prüfen, flashen und Wakeup-Diagnose auf dem Gerät verifizieren.

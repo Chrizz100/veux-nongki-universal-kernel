@@ -35,6 +35,13 @@ def preserve_device_diagnostics(work, public, diag):
         'static/unpack-decoded.log', 'build/.config', 'build/Module.symvers',
         'build/System.map', 'build/include/config/kernel.release',
     ))
+    # A later validation/package failure must not discard the compiled image.
+    # These are failure diagnostics, not a validated or flashable release.
+    if (work / 'BLOCKED.json').is_file():
+        paths.extend(work / rel for rel in (
+            'build/arch/arm64/boot/Image',
+            'build/kernel/power/wakeup_reason.o',
+        ))
     for path in paths:
         e.require(not path.is_symlink(), 'linked diagnostic file: ' + str(path))
         if path.is_file():

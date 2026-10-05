@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import hashlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -102,6 +103,61 @@ class WakeupTests(unittest.TestCase):
                     with self.assertRaisesRegex(e.Blocked,'symbol not linked'):w.verify_build(w.KERNEL,root)
             obj.write_bytes(b'')
             with self.assertRaisesRegex(e.Blocked,'object empty'):w.verify_build(w.KERNEL,root)
+
+    def test_real_r3_map_accepts_bodies_and_rejects_jump_table_only(self):
+        fixture = Path(__file__).with_name('fixtures') / 'wakeup-run-37335256954.map'
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                         'b3abc616eb77d5b63c02e129db73e144ef4b6048d84b3710c2bb4d918a545f0d')
+        symbols = fixture.read_text()
+        self.assertEqual(w.verify_symbols(symbols), SYMBOLS)
+        for missing in SYMBOLS:
+            with self.subTest(missing=missing):
+                # Keep the real trampoline and initcall entry: neither may
+                # substitute for the missing compiled function body.
+                remaining = '\n'.join(line for line in symbols.splitlines()
+                                      if not (line.split()[2].startswith(missing + '$')
+                                              and not line.endswith('.cfi_jt')))
+                self.assertIn(missing + '$', remaining)
+                with self.assertRaisesRegex(e.Blocked, 'symbol not linked: ' + missing):
+                    w.verify_symbols(remaining)
+
+    def test_symbol_name_and_type_boundaries(self):
+        tag = '$e7a9be69868996ddc7b91d92771f8869'
+        for suffix in ('', '.cfi', tag, tag + '.cfi'):
+            for kind in ('t', 'T'):
+                with self.subTest(valid=suffix, kind=kind):
+                    symbols = ''.join('ffffff00 ' + kind + ' ' + n + suffix + '\n' for n in SYMBOLS)
+                    self.assertEqual(w.verify_symbols(symbols), SYMBOLS)
+        invalid = [('', suffix, 't') for suffix in
+                   ('.cfi_jt', tag + '.cfi_jt', '.cold', '.invalid', '_extra',
+                    '$123', '$' + 'g' * 32, tag + '0', tag + ' extra')]
+        invalid += [('prefix_', '', 't'), ('__initcall_', '', 'd')]
+        invalid += [('', '', kind) for kind in ('U', 'D', 'd', 'b', 'R', 'W')]
+        for missing in SYMBOLS:
+            for prefix, suffix, kind in invalid:
+                with self.subTest(missing=missing, prefix=prefix, suffix=suffix, kind=kind):
+                    symbols = ''.join('ffffff00 t ' + n + '\n' for n in SYMBOLS if n != missing)
+                    symbols += 'ffffff00 ' + kind + ' ' + prefix + missing + suffix + '\n'
+                    with self.assertRaisesRegex(e.Blocked, 'symbol not linked: ' + missing):
+                        w.verify_symbols(symbols)
+
+    def test_failed_build_retains_image_and_object_only_as_diagnostics(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); work = root/'work'; public = root/'public'; diag = root/'diagnostics'
+                public.mkdir()
+                paths = ('build/arch/arm64/boot/Image', 'build/kernel/power/wakeup_reason.o')
+                for rel in paths:
+                    p = work/rel; p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(b'\x00compiled fixture\xff')
+                if failed:
+                    e.write_json(work/'BLOCKED.json', {'reason': 'post-compile fixture'})
+                device.preserve_device_diagnostics(work, public, diag)
+                for rel in paths:
+                    self.assertEqual((diag/rel).exists(), failed)
+                    if failed:
+                        self.assertEqual((diag/rel).read_bytes(), (work/rel).read_bytes())
+                self.assertEqual(list(public.iterdir()), [])
 
     def test_promotion_blocks_missing_forged_or_unlinked_repair(self):
         with tempfile.TemporaryDirectory() as tmp:
