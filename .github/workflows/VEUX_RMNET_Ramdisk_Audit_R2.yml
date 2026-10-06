@@ -1,0 +1,624 @@
+name: VEUX RMNET R5 - Stock-Ramdisk Audit R2
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-rmnet-r5-ramdisk-audit-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  LC_ALL: C.UTF-8
+
+  W21_ARTIFACT_NAME: veux-5.4.274-resukisu-susfs-2.2-workflow21-exact-w19-final-flashable-1
+  W21_FINAL_ZIP_NAME: VEUX_5.4.274_ReSukiSU_SUSFS_2.2_EXACT_W19_BOOT_FLASHABLE.zip
+  W21_FINAL_ZIP_SHA256: b6f9c22582cf90aca3bd40d946f44f465f3b4324d377cabdd9a23668113fe4f2
+  W21_FINAL_ZIP_BYTES: '75516120'
+
+  STOCK_BOOT_SHA256: ac6522e4eed55782dd2ae61362e9d345d01a1f229c87333818511d5537fa79c5
+  STOCK_BOOT_BYTES: '134217728'
+  STOCK_RAMDISK_SHA256: 0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a
+  STOCK_RAMDISK_BYTES: '22061278'
+  ROLLBACK_GZIP_SHA256: 9a1532ccfc57b465256bba97863f927b80823fa8812a4d13e4f4c8bf9af0c78b
+
+  EXPECTED_AK3_COMMIT: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+  EXPECTED_AK3_TREE: c6af9eb7018bce852819ab1585de426a426e6806
+  EXPECTED_R4_SOURCE_SNAPSHOT: 20c142b62b6f39282771b0397ce77748ce6a552a
+  EXPECTED_STABILIZATION_CONTRACT_SHA256: eaceb5c620adba6cb5fce34ee8e64b2f9ec1efa5707e8a7e3c1bf88d7f3df1b9
+  EXPECTED_REFERENCE_RESULT_SHA256: cf7239d03cf0562daf1df7ead149744dd5213583103d88c72a5b04fa587a7f72
+
+jobs:
+  audit:
+    name: Nur Stock-Ramdisk untersuchen - kein Build, kein Flash
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Repository unveraendert auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Repo- und R4-Autoritaet fail-closed pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          def sha256(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+          recipe_path = Path('common/update/source-recipes.json')
+          contract_path = Path('common/contracts/VEUX_STABILIZATION_R1.json')
+          reference_path = Path('common/diagnostics/veux-stabilization-r1/REFERENCE_RESULT.json')
+          frozen_path = Path('common/scripts/veux_frozen_components.py')
+          r4_path = Path('.github/workflows/VEUX_Basis_Stabilisierung_R4_Wakeup_Stats.yml')
+          shs_path = Path('.github/workflows/VEUX_SHS_Modul_R1.yml')
+          engine_path = Path('common/scripts/veux_update_engine.py')
+
+          for path in (
+              recipe_path, contract_path, reference_path, frozen_path,
+              r4_path, shs_path, engine_path,
+          ):
+              if not path.is_file() or path.is_symlink():
+                  raise SystemExit(f'BLOCKED: authority file missing/linked: {path}')
+
+          recipe = json.loads(recipe_path.read_text())
+          ak3 = recipe['ak3']
+          if ak3['commit'] != os.environ['EXPECTED_AK3_COMMIT']:
+              raise SystemExit('BLOCKED: AK3 commit changed')
+          if ak3['tree'] != os.environ['EXPECTED_AK3_TREE']:
+              raise SystemExit('BLOCKED: AK3 tree changed')
+
+          lineage = recipe['lineages']['5.4.274']
+          if lineage['blob'] != '7599e13e10d5ea8ce9e1984076d23a40d7f438ab':
+              raise SystemExit('BLOCKED: 5.4.274 source recipe changed')
+          checkouts = lineage.get('checkouts', [])
+          if len(checkouts) != 1 or checkouts[0].get('commit') != 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+              raise SystemExit('BLOCKED: 5.4.274 vendor source identity changed')
+
+          if sha256(contract_path) != os.environ['EXPECTED_STABILIZATION_CONTRACT_SHA256']:
+              raise SystemExit('BLOCKED: stabilization contract hash changed')
+          contract = json.loads(contract_path.read_text())
+          if contract.get('schema') != 1 or contract.get('kernel') != '5.4.274':
+              raise SystemExit('BLOCKED: stabilization identity changed')
+          if contract.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: invalid device-pass inference')
+          if contract.get('source_recipe_blob') != lineage['blob']:
+              raise SystemExit('BLOCKED: stabilization/source-recipe mismatch')
+          if contract.get('reference_run') != 37206832975:
+              raise SystemExit('BLOCKED: stabilization reference run changed')
+          if contract.get('reference_repository_sha') != '48c4dce74a88e31e62ac827689ae2c2cccc353fa':
+              raise SystemExit('BLOCKED: stabilization reference repository changed')
+          if contract.get('reference_image_sha256') != '45fe0f0b6f39d4c677f68f450d652dcafd0782ca75dc5e837d2f18440ed32c88':
+              raise SystemExit('BLOCKED: stabilization reference image changed')
+
+          expected_components = {
+              'resukisu': '8770c7e324a22895703c4916b8a16520e0b81c79',
+              'susfs': '5326e21a7eb232f9e21debdd5164e99bee3d1e2f',
+              'nomount': 'c5fad9d8f97c5a207f7342fd91789449915ea047',
+          }
+          components = contract.get('components', {})
+          if set(components) != set(expected_components):
+              raise SystemExit('BLOCKED: stabilization component set changed')
+          for name, commit in expected_components.items():
+              if components[name].get('commit') != commit:
+                  raise SystemExit(f'BLOCKED: frozen component changed: {name}')
+
+          if sha256(reference_path) != os.environ['EXPECTED_REFERENCE_RESULT_SHA256']:
+              raise SystemExit('BLOCKED: reference result hash changed')
+          if contract.get('reference_result_sha256') != os.environ['EXPECTED_REFERENCE_RESULT_SHA256']:
+              raise SystemExit('BLOCKED: contract/reference-result hash mismatch')
+
+          reference = json.loads(reference_path.read_text())
+          if reference.get('kernel') != '5.4.274':
+              raise SystemExit('BLOCKED: reference kernel changed')
+          if reference.get('kernelrelease') != '5.4.274-qgki-g82179e362f33':
+              raise SystemExit('BLOCKED: reference kernelrelease changed')
+          if reference.get('repository_sha') != contract['reference_repository_sha']:
+              raise SystemExit('BLOCKED: reference repository mismatch')
+          if reference.get('image_sha256') != contract['reference_image_sha256']:
+              raise SystemExit('BLOCKED: reference image mismatch')
+          if reference.get('targets') != contract['components']:
+              raise SystemExit('BLOCKED: reference frozen components mismatch')
+          config = reference.get('config_audit', {}).get('actual_config_sha256')
+          if config != '5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229':
+              raise SystemExit('BLOCKED: reference config changed')
+          if not all(reference.get(k) is True for k in ('compile', 'package', 'static_boot')):
+              raise SystemExit('BLOCKED: reference build incomplete')
+          if reference.get('device') is not False:
+              raise SystemExit('BLOCKED: reference unexpectedly claims device pass')
+
+          frozen = frozen_path.read_text()
+          if "CONTRACT = 'common/contracts/VEUX_STABILIZATION_R1.json'" not in frozen:
+              raise SystemExit('BLOCKED: frozen helper contract changed')
+          if "REFERENCE = 'common/diagnostics/veux-stabilization-r1/REFERENCE_RESULT.json'" not in frozen:
+              raise SystemExit('BLOCKED: frozen helper reference changed')
+          if os.environ['EXPECTED_STABILIZATION_CONTRACT_SHA256'] not in frozen:
+              raise SystemExit('BLOCKED: frozen helper reviewed hash changed')
+
+          r4 = r4_path.read_text()
+          if 'common/scripts/veux_frozen_components.py check' not in r4:
+              raise SystemExit('BLOCKED: R4 no longer checks frozen authority')
+          if 'common/scripts/veux_frozen_components.py resolve' not in r4:
+              raise SystemExit('BLOCKED: R4 no longer resolves frozen components')
+          if '--kernel 5.4.274' not in r4:
+              raise SystemExit('BLOCKED: R4 target kernel changed')
+
+          shs = shs_path.read_text()
+          expected_snapshot = 'ref: ' + os.environ['EXPECTED_R4_SOURCE_SNAPSHOT']
+          if expected_snapshot not in shs:
+              raise SystemExit('BLOCKED: SHS reconstruction snapshot changed')
+
+          engine = engine_path.read_text()
+          if 'do.modules=0' not in engine:
+              raise SystemExit('BLOCKED: current AK3 module packaging policy changed')
+          if 'do.systemless=1' not in engine:
+              raise SystemExit('BLOCKED: current AK3 systemless policy changed')
+          if 'def package_kernel(' not in engine:
+              raise SystemExit('BLOCKED: package kernel entrypoint missing')
+
+          print('REPO_R4_AUTHORITY=PASS')
+          print('FROZEN_CONTRACT=PASS')
+          print('FROZEN_REFERENCE_RESULT=PASS')
+          print('SHS_RECONSTRUCTION_SNAPSHOT=PASS')
+          print('AK3_PIN=PASS')
+          print('CURRENT_AK3_MODULE_PACKAGING=IMAGE_ONLY_CONFIRMED')
+          PY
+
+      - name: Nur Audit-Werkzeuge installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl file jq lz4 unzip
+
+          command -v curl
+          command -v jq
+          command -v lz4
+          command -v unzip
+          python3 --version
+
+      - name: Historisches W21-Stock-Boot-Artefakt exakt laden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          WORK="$RUNNER_TEMP/veux-rmnet-r5-ramdisk-audit-r2"
+          REPORT="$WORK/report"
+          W21="$WORK/w21"
+          mkdir -p "$REPORT" "$W21"
+
+          ALL="$WORK/repository-artifacts.ndjson"
+          : > "$ALL"
+
+          page=1
+          while :; do
+            PAGE="$WORK/artifacts-${page}.json"
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --retry 3 \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100&page=$page" \
+              -o "$PAGE"
+
+            jq -e '.artifacts | type == "array"' "$PAGE" >/dev/null
+            count="$(jq '.artifacts | length' "$PAGE")"
+            jq -c '.artifacts[]' "$PAGE" >> "$ALL"
+
+            if [ "$count" -lt 100 ]; then
+              break
+            fi
+
+            page=$((page + 1))
+            [ "$page" -le 30 ] || {
+              echo "BLOCKED: artifact pagination safety limit reached" >&2
+              exit 1
+            }
+          done
+
+          MATCHES="$(
+            jq -s \
+              --arg NAME "$W21_ARTIFACT_NAME" \
+              '[.[] | select(.name == $NAME and .expired == false)] | sort_by(.created_at)' \
+              "$ALL"
+          )"
+
+          test "$(jq 'length' <<< "$MATCHES")" -ge 1
+          SELECTED="$(jq '.[-1]' <<< "$MATCHES")"
+          URL="$(jq -r '.archive_download_url' <<< "$SELECTED")"
+
+          jq . <<< "$SELECTED" > "$REPORT/01-w21-artifact-metadata.json"
+
+          curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            --retry 3 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$URL" \
+            -o "$WORK/w21-artifact.zip"
+
+          unzip -t "$WORK/w21-artifact.zip" > "$REPORT/02-w21-outer-zip-crc.txt"
+          unzip -q "$WORK/w21-artifact.zip" -d "$W21"
+
+          mapfile -t candidates < <(find "$W21" -type f -name "$W21_FINAL_ZIP_NAME" -print)
+          test "${#candidates[@]}" -eq 1
+          FINAL="${candidates[0]}"
+
+          test "$(stat -c '%s' "$FINAL")" = "$W21_FINAL_ZIP_BYTES"
+          test "$(sha256sum "$FINAL" | awk '{print $1}')" = "$W21_FINAL_ZIP_SHA256"
+          unzip -t "$FINAL" > "$REPORT/03-w21-final-zip-crc.txt"
+
+          unzip -Z1 "$FINAL" > "$REPORT/04-w21-final-members.txt"
+          grep -Fxq 'rollback_stock_boot.img.gz' "$REPORT/04-w21-final-members.txt"
+
+          unzip -p "$FINAL" rollback_stock_boot.img.gz > "$WORK/rollback_stock_boot.img.gz"
+          test "$(sha256sum "$WORK/rollback_stock_boot.img.gz" | awk '{print $1}')" = "$ROLLBACK_GZIP_SHA256"
+          gzip -t "$WORK/rollback_stock_boot.img.gz"
+
+          gzip -dc "$WORK/rollback_stock_boot.img.gz" > "$WORK/stock_boot.img"
+          test "$(stat -c '%s' "$WORK/stock_boot.img")" = "$STOCK_BOOT_BYTES"
+          test "$(sha256sum "$WORK/stock_boot.img" | awk '{print $1}')" = "$STOCK_BOOT_SHA256"
+
+          {
+            echo "W21_ARTIFACT=PASS"
+            echo "W21_FINAL_ZIP_SHA256=$W21_FINAL_ZIP_SHA256"
+            echo "STOCK_BOOT_SHA256=$STOCK_BOOT_SHA256"
+            echo "STOCK_BOOT_BYTES=$STOCK_BOOT_BYTES"
+          } > "$REPORT/05-stock-boot-input-gate.txt"
+
+      - name: Stock-Boot v3 und komprimierte Ramdisk extrahieren
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK="$RUNNER_TEMP/veux-rmnet-r5-ramdisk-audit-r2"
+          REPORT="$WORK/report"
+
+          python3 - "$WORK/stock_boot.img" "$WORK/stock-ramdisk.lz4" "$REPORT/06-boot-layout.json" <<'PY'
+          import hashlib
+          import json
+          import struct
+          import sys
+          from pathlib import Path
+
+          boot_path = Path(sys.argv[1])
+          ramdisk_path = Path(sys.argv[2])
+          report_path = Path(sys.argv[3])
+
+          STOCK_BOOT_SHA = 'ac6522e4eed55782dd2ae61362e9d345d01a1f229c87333818511d5537fa79c5'
+          RAMDISK_SHA = '0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a'
+          RAMDISK_BYTES = 22061278
+
+          data = boot_path.read_bytes()
+
+          def sha(blob):
+              return hashlib.sha256(blob).hexdigest()
+
+          def align(value, size=4096):
+              return (value + size - 1) // size * size
+
+          if sha(data) != STOCK_BOOT_SHA:
+              raise SystemExit('BLOCKED: stock boot digest changed')
+          if data[:8] != b'ANDROID!':
+              raise SystemExit('BLOCKED: Android boot magic missing')
+
+          kernel_size, ramdisk_size, os_version, header_size = struct.unpack_from('<4I', data, 8)
+          header_version = struct.unpack_from('<I', data, 40)[0]
+
+          if header_version != 3 or header_size != 1580:
+              raise SystemExit('BLOCKED: unexpected boot header v3 layout')
+          if ramdisk_size != RAMDISK_BYTES:
+              raise SystemExit('BLOCKED: ramdisk size changed')
+
+          ramdisk_offset = 4096 + align(kernel_size)
+          end = ramdisk_offset + ramdisk_size
+          if end > len(data):
+              raise SystemExit('BLOCKED: ramdisk outside boot image')
+
+          ramdisk = data[ramdisk_offset:end]
+          if sha(ramdisk) != RAMDISK_SHA:
+              raise SystemExit('BLOCKED: stock ramdisk digest changed')
+
+          ramdisk_path.write_bytes(ramdisk)
+
+          report = {
+              'status': 'PASS_STOCK_BOOT_LAYOUT_ONLY',
+              'boot_header_version': header_version,
+              'boot_header_size': header_size,
+              'kernel_size': kernel_size,
+              'ramdisk_size': ramdisk_size,
+              'ramdisk_offset': ramdisk_offset,
+              'ramdisk_sha256': sha(ramdisk),
+              'boot_sha256': sha(data),
+              'device_accessed': False,
+              'flashable_output_created': False,
+          }
+          report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          print('STOCK_BOOT_LAYOUT=PASS')
+          print('STOCK_RAMDISK_EXTRACT=PASS')
+          PY
+
+          test "$(stat -c '%s' "$WORK/stock-ramdisk.lz4")" = "$STOCK_RAMDISK_BYTES"
+          test "$(sha256sum "$WORK/stock-ramdisk.lz4" | awk '{print $1}')" = "$STOCK_RAMDISK_SHA256"
+
+          file "$WORK/stock-ramdisk.lz4" > "$REPORT/07-ramdisk-compression.txt" || true
+          lz4 -d -f "$WORK/stock-ramdisk.lz4" "$WORK/stock-ramdisk.cpio" \
+            2> "$REPORT/08-lz4-decompress.txt"
+
+          test -s "$WORK/stock-ramdisk.cpio"
+
+      - name: CPIO sicher parsen und Init-Importstruktur erfassen
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK="$RUNNER_TEMP/veux-rmnet-r5-ramdisk-audit-r2"
+          REPORT="$WORK/report"
+
+          python3 - "$WORK/stock-ramdisk.cpio" "$REPORT" <<'PY'
+          import hashlib
+          import json
+          import re
+          import stat
+          import sys
+          from pathlib import Path, PurePosixPath
+
+          cpio_path = Path(sys.argv[1])
+          out = Path(sys.argv[2])
+          data = cpio_path.read_bytes()
+
+          def align4(n):
+              return (n + 3) & ~3
+
+          def safe_name(name):
+              p = PurePosixPath(name)
+              return (
+                  name not in ('', '.', '..') and
+                  not p.is_absolute() and
+                  '..' not in p.parts and
+                  '\\' not in name
+              )
+
+          entries = []
+          rc_rows = []
+          init_payload = None
+          off = 0
+          trailer_seen = False
+
+          while off + 110 <= len(data):
+              magic = data[off:off+6]
+              if magic not in (b'070701', b'070702'):
+                  if trailer_seen and not any(data[off:]):
+                      break
+                  raise SystemExit(f'BLOCKED: invalid CPIO magic at {off}')
+
+              header = data[off:off+110]
+              fields = [
+                  int(header[6 + i*8:14 + i*8], 16)
+                  for i in range(13)
+              ]
+              mode = fields[1]
+              filesize = fields[6]
+              namesize = fields[11]
+
+              name_start = off + 110
+              name_end = name_start + namesize
+              if name_end > len(data) or namesize < 1:
+                  raise SystemExit('BLOCKED: invalid CPIO name bounds')
+
+              raw_name = data[name_start:name_end]
+              if raw_name[-1:] != b'\0':
+                  raise SystemExit('BLOCKED: CPIO name lacks terminator')
+              name = raw_name[:-1].decode('utf-8', errors='strict')
+
+              payload_start = align4(name_end)
+              payload_end = payload_start + filesize
+              if payload_end > len(data):
+                  raise SystemExit('BLOCKED: invalid CPIO payload bounds')
+
+              payload = data[payload_start:payload_end]
+              off = align4(payload_end)
+
+              if name == 'TRAILER!!!':
+                  trailer_seen = True
+                  break
+
+              if not safe_name(name):
+                  raise SystemExit(f'BLOCKED: unsafe CPIO path: {name!r}')
+
+              ftype = stat.S_IFMT(mode)
+              if ftype == stat.S_IFREG:
+                  kind = 'file'
+              elif ftype == stat.S_IFDIR:
+                  kind = 'dir'
+              elif ftype == stat.S_IFLNK:
+                  kind = 'symlink'
+              elif ftype == stat.S_IFCHR:
+                  kind = 'char'
+              elif ftype == stat.S_IFBLK:
+                  kind = 'block'
+              elif ftype == stat.S_IFIFO:
+                  kind = 'fifo'
+              elif ftype == stat.S_IFSOCK:
+                  kind = 'socket'
+              else:
+                  kind = 'other'
+
+              row = {
+                  'name': name,
+                  'kind': kind,
+                  'mode': oct(mode & 0o7777),
+                  'bytes': filesize,
+                  'sha256': hashlib.sha256(payload).hexdigest() if kind == 'file' else None,
+              }
+              entries.append(row)
+
+              if name == 'init' and kind == 'file':
+                  init_payload = payload
+
+              if kind == 'file' and name.endswith('.rc'):
+                  text = payload.decode('utf-8', errors='replace')
+                  imports = []
+                  triggers = []
+                  services = []
+                  for lineno, line in enumerate(text.splitlines(), 1):
+                      stripped = line.strip()
+                      m = re.match(r'^import\s+(.+)$', stripped)
+                      if m:
+                          imports.append({'line': lineno, 'value': m.group(1)})
+                      m = re.match(r'^on\s+(.+)$', stripped)
+                      if m:
+                          triggers.append({'line': lineno, 'value': m.group(1)})
+                      m = re.match(r'^service\s+(.+)$', stripped)
+                      if m:
+                          services.append({'line': lineno, 'value': m.group(1)})
+                  rc_rows.append({
+                      'name': name,
+                      'bytes': filesize,
+                      'sha256': hashlib.sha256(payload).hexdigest(),
+                      'imports': imports,
+                      'triggers': triggers,
+                      'services': services,
+                  })
+
+          if not trailer_seen:
+              raise SystemExit('BLOCKED: CPIO trailer not found')
+
+          names = {row['name'] for row in entries}
+          init_strings = {
+              'system_hw_init_rc': False,
+              'system_init_dir': False,
+              'vendor_init_dir': False,
+          }
+          if init_payload is not None:
+              init_strings = {
+                  'system_hw_init_rc': b'/system/etc/init/hw/init.rc' in init_payload,
+                  'system_init_dir': b'/system/etc/init' in init_payload,
+                  'vendor_init_dir': b'/vendor/etc/init' in init_payload,
+              }
+
+          summary = {
+              'status': 'AUDIT_ONLY_NOT_FLASHABLE',
+              'entry_count': len(entries),
+              'rc_count': len(rc_rows),
+              'root_init_binary_present': 'init' in names,
+              'root_init_rc_present': 'init.rc' in names,
+              'system_hw_init_rc_in_boot_ramdisk': 'system/etc/init/hw/init.rc' in names,
+              'first_stage_ramdisk_present': any(n.startswith('first_stage_ramdisk/') for n in names),
+              'overlay_d_present': any(n == 'overlay.d' or n.startswith('overlay.d/') for n in names),
+              'init_binary_strings': init_strings,
+              'classification': (
+                  'DIRECT_ROOT_INIT_RC_PRESENT_REVIEW_REQUIRED'
+                  if 'init.rc' in names
+                  else 'NO_DIRECT_ROOT_INIT_RC_IN_BOOT_RAMDISK'
+              ),
+              'device_accessed': False,
+              'boot_image_modified': False,
+              'flashable_output_created': False,
+          }
+
+          (out / '09-ramdisk-inventory.json').write_text(
+              json.dumps(entries, indent=2, sort_keys=True) + '\n'
+          )
+          (out / '10-rc-audit.json').write_text(
+              json.dumps(rc_rows, indent=2, sort_keys=True) + '\n'
+          )
+          (out / '11-ramdisk-summary.json').write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + '\n'
+          )
+
+          lines = [
+              'VEUX_RMNET_R5_STOCK_RAMDISK_AUDIT=PASS',
+              f"ENTRY_COUNT={summary['entry_count']}",
+              f"RC_COUNT={summary['rc_count']}",
+              f"ROOT_INIT_BINARY_PRESENT={str(summary['root_init_binary_present']).upper()}",
+              f"ROOT_INIT_RC_PRESENT={str(summary['root_init_rc_present']).upper()}",
+              f"SYSTEM_HW_INIT_RC_IN_BOOT_RAMDISK={str(summary['system_hw_init_rc_in_boot_ramdisk']).upper()}",
+              f"FIRST_STAGE_RAMDISK_PRESENT={str(summary['first_stage_ramdisk_present']).upper()}",
+              f"OVERLAY_D_PRESENT={str(summary['overlay_d_present']).upper()}",
+              f"INIT_BINARY_STRING_SYSTEM_HW_INIT_RC={str(init_strings['system_hw_init_rc']).upper()}",
+              f"INIT_BINARY_STRING_SYSTEM_INIT_DIR={str(init_strings['system_init_dir']).upper()}",
+              f"INIT_BINARY_STRING_VENDOR_INIT_DIR={str(init_strings['vendor_init_dir']).upper()}",
+              f"CLASSIFICATION={summary['classification']}",
+              'DEVICE_ACCESSED=NO',
+              'BOOT_IMAGE_MODIFIED=NO',
+              'FLASHABLE_OUTPUT_CREATED=NO',
+          ]
+          (out / '12-final.txt').write_text('\n'.join(lines) + '\n')
+
+          print('\n'.join(lines))
+          PY
+
+      - name: Sicherheitsgate - nur Berichte, keine flashbaren Dateien
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WORK="$RUNNER_TEMP/veux-rmnet-r5-ramdisk-audit-r2"
+          REPORT="$WORK/report"
+
+          test -s "$REPORT/11-ramdisk-summary.json"
+          test -s "$REPORT/12-final.txt"
+          grep -Fxq 'VEUX_RMNET_R5_STOCK_RAMDISK_AUDIT=PASS' "$REPORT/12-final.txt"
+          grep -Fxq 'DEVICE_ACCESSED=NO' "$REPORT/12-final.txt"
+          grep -Fxq 'BOOT_IMAGE_MODIFIED=NO' "$REPORT/12-final.txt"
+          grep -Fxq 'FLASHABLE_OUTPUT_CREATED=NO' "$REPORT/12-final.txt"
+
+          if find "$REPORT" -type f \( \
+              -name '*.img' -o \
+              -name '*.zip' -o \
+              -name '*.ko' -o \
+              -name '*.bin' \
+            \) -print -quit | grep -q .; then
+            echo "BLOCKED: flashable/binary payload leaked into report artifact" >&2
+            exit 1
+          fi
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          {
+            echo "FINAL_SAFETY_GATE=PASS"
+            echo "REPO_MUTATION=NO"
+            echo "DEVICE_ACCESS=NO"
+            echo "KERNEL_BUILD=NO"
+            echo "FLASHABLE_ARTIFACT=NO"
+          } > "$REPORT/13-safety-gate.txt"
+
+      - name: Nur Auditberichte bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-RMNET-R5-Stock-Ramdisk-Audit-R2-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-rmnet-r5-ramdisk-audit-r2/report/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
