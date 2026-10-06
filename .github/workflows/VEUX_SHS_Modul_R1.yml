@@ -1,0 +1,119 @@
+name: VEUX SHS R1 - passendes Testmodul ohne Kernelneubau
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: veux-shs-r4-module-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  LC_ALL: C.UTF-8
+  VEUX_SHS_ZIP_SHA256: f24905e150e328ab53ec0a3fe6f3bbbb2b605b6f299762d1238712a53ac9b03d
+
+jobs:
+  shs:
+    name: SHS fuer den unveraenderten R4 bauen und ABI pruefen
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: request
+          persist-credentials: false
+      - name: ZIP vollstaendig authentifizieren und sicher entpacken
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          python3 - <<'PY'
+          import hashlib, json, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          archive = Path('request/VEUX_SHS_Modul_R1.zip')
+          if archive.is_symlink() or not archive.is_file():
+              raise SystemExit('BLOCKED: ZIP fehlt im Hauptverzeichnis von main')
+          if hashlib.sha256(archive.read_bytes()).hexdigest() != os.environ['VEUX_SHS_ZIP_SHA256']:
+              raise SystemExit('BLOCKED: ZIP-Pruefsumme stimmt nicht')
+          root = Path(os.environ['RUNNER_TEMP'])/'veux-shs-payload'
+          if root.exists():
+              raise SystemExit('BLOCKED: Ausgabeverzeichnis existiert bereits')
+          with zipfile.ZipFile(archive) as z:
+              entries = z.infolist()
+              names = [p.filename for p in entries]
+              if len(names) != len(set(names)) or len(names) > 20:
+                  raise SystemExit('BLOCKED: doppelte/zu viele ZIP-Eintraege')
+              if sum(p.file_size for p in entries) > 3*1024*1024:
+                  raise SystemExit('BLOCKED: ZIP groesser als erwartet')
+              for item in entries:
+                  rel = PurePosixPath(item.filename)
+                  mode = item.external_attr >> 16
+                  if (rel.is_absolute() or '..' in rel.parts or '\\' in item.filename
+                          or rel.as_posix() != item.filename or item.is_dir()
+                          or (stat.S_IFMT(mode) and not stat.S_ISREG(mode))):
+                      raise SystemExit('BLOCKED: unsicherer ZIP-Pfad')
+              manifest = json.loads(z.read('MANIFEST.json'))
+              if set(names) != set(manifest['files']) | {'MANIFEST.json'}:
+                  raise SystemExit('BLOCKED: Manifest unvollstaendig')
+              data = {name:z.read(name) for name in manifest['files']}
+              for name, blob in data.items():
+                  if hashlib.sha256(blob).hexdigest() != manifest['files'][name]:
+                      raise SystemExit('BLOCKED: Dateipruefsumme stimmt nicht: '+name)
+              for name, blob in data.items():
+                  p = root/name
+                  p.parent.mkdir(parents=True, exist_ok=True)
+                  p.write_bytes(blob)
+          print('PAYLOAD=PASS')
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 20c142b62b6f39282771b0397ce77748ce6a552a
+          path: baseline
+          persist-credentials: false
+      - name: Buildumgebung vorbereiten
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc binutils bison build-essential ca-certificates cpio curl file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-shs-python"
+          "$RUNNER_TEMP/veux-shs-python/bin/python" -m pip install ruamel.yaml==0.19.1 pyelftools==0.32
+      - name: ABI-Abbruchregeln vor dem Build testen
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-shs-python/bin/python" "$RUNNER_TEMP/veux-shs-payload/test_shs.py" ABI
+      - name: Nur SHS bauen und gegen R4 pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-shs-python/bin/python" -u "$RUNNER_TEMP/veux-shs-payload/build_shs.py" \
+            --repo "$GITHUB_WORKSPACE/baseline" \
+            --work "$RUNNER_TEMP/veux-shs-work" \
+            --public "$RUNNER_TEMP/veux-shs-public" --jobs "$(nproc)"
+          "$RUNNER_TEMP/veux-shs-python/bin/python" "$RUNNER_TEMP/veux-shs-payload/test_shs.py" \
+            --module "$RUNNER_TEMP/veux-shs-public/rmnet_shs_R4_test.ko" \
+            2>&1 | tee "$RUNNER_TEMP/veux-shs-work/binary-tests.log"
+          test -z "$(git -C baseline status --porcelain --untracked-files=all)"
+          cat "$RUNNER_TEMP/veux-shs-public/SHS-BUILD.json"
+      - name: Geprueftes Testmodul bereitstellen - kein Flash-ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-SHS-Testmodul-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-shs-public/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Diagnose nur bei Fehlschlag
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-SHS-Fehler-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-shs-work/*.log
+            ${{ runner.temp }}/veux-shs-work/*.json
+            ${{ runner.temp }}/veux-shs-work/build/.config
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
