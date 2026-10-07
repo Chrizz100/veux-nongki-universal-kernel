@@ -1,0 +1,195 @@
+name: VEUX RMNET R6 - No-Overlay Loader Audit R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-rmnet-r6-no-overlay-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ZIP_NAME: VEUX_R4_RMNET_Loader_R2_NO_OVERLAY_TEST.zip
+  ZIP_SHA256: 23395748f82378ff0af9c3d081d193604e4781ca9b93333881397da17e20fab3
+  OFFLOAD_SHA256: 74d3a077bb20905ba41d2d6a621893f2b014e7f9cef9c0081e5f8fdfd1693091
+  SHS_SHA256: eaebe113373313672238a93f3a4b24285c1ff3063542520ffa55866e0d237b86
+  EXPECTED_KERNEL: 5.4.274-qgki-g82179e362f33
+  EXPECTED_NOTES: cf28a097181133ea1fd1c372617258be5fd3e4a74b9bca26e2f229b69679fedc
+  EXPECTED_CONFIG: 5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229
+
+jobs:
+  audit:
+    name: Nur Loader-Paket statisch pruefen - kein Build, kein Flash
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Paket fail-closed authentifizieren und pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test -f "$ZIP_NAME"
+          test "$(sha256sum "$ZIP_NAME" | awk '{print $1}')" = "$ZIP_SHA256"
+
+          WORK="$RUNNER_TEMP/veux-rmnet-r6"
+          REPORT="$WORK/report"
+          mkdir -p "$REPORT"
+
+          python3 - "$ZIP_NAME" "$WORK/unpack" "$REPORT" <<'PY'
+          import hashlib, json, os, stat, sys, zipfile
+          from pathlib import Path, PurePosixPath
+
+          zpath = Path(sys.argv[1])
+          root = Path(sys.argv[2])
+          report = Path(sys.argv[3])
+
+          expected = {
+              'README.txt',
+              'boot-completed.sh',
+              'customize.sh',
+              'module.prop',
+              'skip_mount',
+              'payload/rmnet_offload.ko',
+              'payload/rmnet_shs.ko',
+          }
+
+          with zipfile.ZipFile(zpath) as z:
+              infos = z.infolist()
+              names = [i.filename for i in infos]
+              if len(names) != len(set(names)):
+                  raise SystemExit('BLOCKED: duplicate ZIP entries')
+              if set(names) != expected:
+                  raise SystemExit('BLOCKED: unexpected ZIP file set')
+
+              for info in infos:
+                  p = PurePosixPath(info.filename)
+                  mode = (info.external_attr >> 16) & 0xffff
+                  if p.is_absolute() or '..' in p.parts or '\\' in info.filename:
+                      raise SystemExit('BLOCKED: unsafe ZIP path')
+                  if stat.S_IFMT(mode) and not stat.S_ISREG(mode):
+                      raise SystemExit('BLOCKED: non-regular ZIP entry')
+
+              root.mkdir()
+              for name in names:
+                  p = root / name
+                  p.parent.mkdir(parents=True, exist_ok=True)
+                  p.write_bytes(z.read(name))
+
+          if (root/'skip_mount').read_bytes() != b'':
+              raise SystemExit('BLOCKED: skip_mount must be empty marker')
+
+          for forbidden in ('system','vendor','product','system_ext','odm'):
+              if (root/forbidden).exists():
+                  raise SystemExit('BLOCKED: forbidden mount tree: '+forbidden)
+
+          if (root/'post-mount.sh').exists() or (root/'service.sh').exists():
+              raise SystemExit('BLOCKED: early/mount-stage script present')
+
+          def sha(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          if sha(root/'payload/rmnet_offload.ko') != os.environ['OFFLOAD_SHA256']:
+              raise SystemExit('BLOCKED: offload payload mismatch')
+          if sha(root/'payload/rmnet_shs.ko') != os.environ['SHS_SHA256']:
+              raise SystemExit('BLOCKED: SHS payload mismatch')
+
+          custom = (root/'customize.sh').read_text()
+          boot = (root/'boot-completed.sh').read_text()
+          prop = (root/'module.prop').read_text()
+
+          required_custom = [
+              os.environ['EXPECTED_KERNEL'],
+              os.environ['EXPECTED_NOTES'],
+              os.environ['EXPECTED_CONFIG'],
+              'skip_mount',
+              'SYSTEM_VENDOR_OVERLAY=NEIN',
+              'PHYSICAL_VENDOR_WRITE=NEIN',
+              'MODPROBE=NEIN',
+          ]
+          for item in required_custom:
+              if item not in custom:
+                  raise SystemExit('BLOCKED: customize gate missing: '+item)
+
+          required_boot = [
+              'VEUX_RMNET_NO_OVERLAY_LOADER=START',
+              'persist.vendor.data.offload_ko_load',
+              'persist.vendor.data.shs_ko_load',
+              '/sys/class/net/rmnet_data0',
+              'rmnet_offload',
+              'rmnet_shs',
+              'DYNAMIC_PROPERTY_UNLOAD=NICHT_IMPLEMENTIERT_IN_R2',
+          ]
+          for item in required_boot:
+              if item not in boot:
+                  raise SystemExit('BLOCKED: boot loader gate missing: '+item)
+
+          forbidden_text = [
+              'modprobe', 'modules.dep', 'setprop ', 'rmmod',
+              '/vendor/lib/modules', 'post-mount.sh',
+          ]
+          for item in forbidden_text:
+              if item in boot:
+                  raise SystemExit('BLOCKED: forbidden boot action: '+item)
+
+          if 'system/' in '\n'.join(expected) or 'vendor/' in '\n'.join(expected):
+              raise SystemExit('BLOCKED: overlay path in file set')
+
+          result = {
+              'status':'PASS_STATIC_NO_OVERLAY_ONLY',
+              'zip_sha256':sha(zpath),
+              'offload_sha256':sha(root/'payload/rmnet_offload.ko'),
+              'shs_sha256':sha(root/'payload/rmnet_shs.ko'),
+              'skip_mount':True,
+              'system_vendor_overlay':False,
+              'post_mount_script':False,
+              'service_script':False,
+              'boot_completed_only':True,
+              'dynamic_property_unload':False,
+              'device_accessed':False,
+              'flash_performed':False,
+          }
+          (report/'RESULT.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          (report/'FINAL.txt').write_text(
+              'VEUX_RMNET_R6_NO_OVERLAY_AUDIT=PASS\n'
+              'SKIP_MOUNT=PASS\n'
+              'SYSTEM_VENDOR_OVERLAY=NO\n'
+              'POST_MOUNT_SCRIPT=NO\n'
+              'SERVICE_SCRIPT=NO\n'
+              'BOOT_COMPLETED_ONLY=YES\n'
+              'MODPROBE=NO\n'
+              'MODULES_DEP_PATCH=NO\n'
+              'PHYSICAL_VENDOR_WRITE=NO\n'
+              'DYNAMIC_PROPERTY_UNLOAD=NOT_IMPLEMENTED_R2\n'
+              'DEVICE_ACCESSED=NO\n'
+              'FLASH_PERFORMED=NO\n'
+          )
+          print('STATIC_PACKAGE_AUDIT=PASS')
+          PY
+
+          bash -n "$WORK/unpack/customize.sh"
+          bash -n "$WORK/unpack/boot-completed.sh"
+
+          grep -Fxq 'VEUX_RMNET_R6_NO_OVERLAY_AUDIT=PASS' "$REPORT/FINAL.txt"
+          grep -Fxq 'SYSTEM_VENDOR_OVERLAY=NO' "$REPORT/FINAL.txt"
+          grep -Fxq 'PHYSICAL_VENDOR_WRITE=NO' "$REPORT/FINAL.txt"
+          grep -Fxq 'DEVICE_ACCESSED=NO' "$REPORT/FINAL.txt"
+
+      - name: Nur Auditbericht bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-RMNET-R6-No-Overlay-Audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-rmnet-r6/report/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
