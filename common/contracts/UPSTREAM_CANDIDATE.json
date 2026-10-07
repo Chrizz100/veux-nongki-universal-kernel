@@ -1,0 +1,165 @@
+{
+  "build_ready": true,
+  "compile_performed": false,
+  "component_gate": true,
+  "components": {
+    "nomount": {
+      "ahead": 195,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "changed": true,
+      "commit": "c7f63e3feb4125d591b6969a33aac04feb40f8ba",
+      "compatibility_errors": [],
+      "component_gate": true,
+      "current_commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
+      "dynamic_commit_count": true,
+      "fast_forward_from_current": true,
+      "historical_base_is_ancestor": true,
+      "ref": "refs/heads/master",
+      "reviewed_interface": true,
+      "snapshot_complete": true,
+      "snapshot_missing": [],
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "21",
+      "version_kind": "base-version-dynamic-commit-count"
+    },
+    "resukisu": {
+      "ahead": 47,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "changed": true,
+      "commit": "c9246641b9eee8b9986050e8bf1832f88da880c2",
+      "compatibility_errors": [],
+      "component_gate": true,
+      "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
+      "fast_forward_from_current": true,
+      "historical_base_is_ancestor": true,
+      "local_version": 4517,
+      "ref": "refs/heads/main",
+      "reviewed_interface": true,
+      "snapshot_complete": true,
+      "snapshot_missing": [],
+      "tag": "v4.2.0-rc3",
+      "uapi": 5,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35217"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "changed": false,
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "compatibility_errors": [],
+      "component_gate": true,
+      "current_commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "fast_forward_from_current": true,
+      "historical_base_is_ancestor": true,
+      "ref": "refs/heads/gki-android13-5.10",
+      "reviewed_interface": true,
+      "snapshot_complete": true,
+      "snapshot_missing": [],
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  },
+  "current_build_run": "37624455838",
+  "current_targets": {
+    "nomount": {
+      "ahead": 159,
+      "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
+      "ref": "refs/heads/master",
+      "url": "https://github.com/maxsteeel/nomount.git",
+      "version": "20",
+      "version_kind": "kernel-wire-version"
+    },
+    "resukisu": {
+      "ahead": 33,
+      "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
+      "commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
+      "local_version": 4503,
+      "ref": "refs/heads/main",
+      "tag": "v4.2.0-rc3",
+      "uapi": 5,
+      "url": "https://github.com/ReSukiSU/ReSukiSU.git",
+      "version": "35203"
+    },
+    "susfs": {
+      "ahead": 5,
+      "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
+      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "ref": "refs/heads/gki-android13-5.10",
+      "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
+      "version": "2.3.0"
+    }
+  },
+  "device_pass_inferred": false,
+  "lineages": {
+    "5.4.274": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.274",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    },
+    "5.4.292": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.292",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    },
+    "5.4.293": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.293",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    },
+    "5.4.300": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.300",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    },
+    "5.4.301": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.301",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    },
+    "5.4.302": {
+      "compile_performed": false,
+      "device_fix_source_gate": true,
+      "device_pass_inferred": false,
+      "kernel": "5.4.302",
+      "rpm_source_gate": true,
+      "source_integration": true,
+      "status": "PASS",
+      "wakeup_source_gate": true
+    }
+  },
+  "note": "PASS means source/integration gates accept the candidate. It does NOT prove that the kernel compiles; only a manually started compile can prove that.",
+  "package_performed": false,
+  "repository_sha": "5ca745a9ae5cad072e6adb03e8562986da73982c",
+  "schema": 1,
+  "snapshot_complete": true,
+  "static_boot_performed": false,
+  "status": "build-preflight-pass",
+  "updates_found": true
+}

@@ -1,0 +1,12 @@
+{
+  "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  "README.md": "09f344c135dfa9b89c1faf8fb8d80dac37d09eed28be48eff3b6258057ff05ea",
+  "_VEUX_CANDIDATE.json": "c119a8bca4baf9016f6aed7bc97b2f5edc07576d5d8bda65a3ce260080c74411",
+  "kernel/LICENSE": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+  "kernel/README.md": "c42cad879c216d643444b448e8bd461a757cc2754e716520c9d36da6e799324f",
+  "kernel/setup.sh": "d87fa9eec2b5b886a1d77f3cc28b04d4e8b466dcbe5408764f14663387ab3838",
+  "kernel/src/Kconfig": "1df7ad3589a282128f797f7a46b28aee315d080550aae26b681a898f11c7abc7",
+  "kernel/src/Makefile": "de7d5c267ddd397d86e07800084b63d20b1dfcffde25afdf11fd00260b5b05ef",
+  "kernel/src/nomount.c": "f9f3aaa2a5cdfbddffaeb643e3598c12d66fb0fc292a1deea9e6268446aa4a27",
+  "kernel/src/nomount.h": "d4b9ff0d95e00f9104c992f74c05c721d61ede521e8f641e463024615500ed5b"
+}

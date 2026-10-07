@@ -1,0 +1,19 @@
+{
+  "ahead": 195,
+  "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+  "changed": true,
+  "commit": "c7f63e3feb4125d591b6969a33aac04feb40f8ba",
+  "compatibility_errors": [],
+  "component_gate": true,
+  "current_commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
+  "dynamic_commit_count": true,
+  "fast_forward_from_current": true,
+  "historical_base_is_ancestor": true,
+  "ref": "refs/heads/master",
+  "reviewed_interface": true,
+  "snapshot_complete": true,
+  "snapshot_missing": [],
+  "url": "https://github.com/maxsteeel/nomount.git",
+  "version": "21",
+  "version_kind": "base-version-dynamic-commit-count"
+}
