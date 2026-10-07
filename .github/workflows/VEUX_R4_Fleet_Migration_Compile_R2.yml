@@ -1,0 +1,337 @@
+name: VEUX R4 - Fleet Migration Compile R2
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: veux-r4-fleet-migration-compile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Frozen-R4-Migration vorpruefen
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Repository exakt auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Python-Pruefumgebung
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Workflow und bestehende Release-Gates pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+          import json
+          import yaml
+
+          path = Path('.github/workflows/VEUX_R4_Fleet_Migration_Compile_R2.yml')
+          if not path.is_file() or path.is_symlink():
+              raise SystemExit('BLOCKED: workflow file missing or linked')
+          text = path.read_text()
+          doc = yaml.safe_load(text)
+
+          if doc.get('permissions') != {'contents': 'read'}:
+              raise SystemExit('BLOCKED: workflow is not contents-read only')
+
+          forbidden = [
+              'contents:' + ' write',
+              'git ' + 'push',
+              'promote ' + '--bundle',
+              'package_' + 'kernel(',
+              'static_' + 'boot(',
+              'create_' + 'release',
+          ]
+          for token in forbidden:
+              if token in text:
+                  raise SystemExit('BLOCKED: forbidden mutation/release token: ' + token)
+
+          bad_wakeup_call = '"$PY" common/scripts/' + 'test_veux_wakeup_fixes.py'
+          if bad_wakeup_call in text:
+              raise SystemExit('BLOCKED: wakeup regression test needs an actual --source and must not run standalone')
+
+          kernels = doc['jobs']['compile']['strategy']['matrix']['kernel']
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          if kernels != expected:
+              raise SystemExit('BLOCKED: six-lineage matrix changed')
+
+          contract = json.loads(Path('common/contracts/VEUX_STABILIZATION_R1.json').read_text())
+          if contract.get('kernel') != '5.4.274':
+              raise SystemExit('BLOCKED: stabilization contract changed')
+          if contract['components']['resukisu']['commit'] != '8770c7e324a22895703c4916b8a16520e0b81c79':
+              raise SystemExit('BLOCKED: ReSukiSU pin changed')
+          if contract['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: ReSukiSU UAPI changed')
+          if contract['components']['susfs']['commit'] != '5326e21a7eb232f9e21debdd5164e99bee3d1e2f':
+              raise SystemExit('BLOCKED: SUSFS pin changed')
+          if contract['components']['nomount']['commit'] != 'c5fad9d8f97c5a207f7342fd91789449915ea047':
+              raise SystemExit('BLOCKED: NoMount pin changed')
+
+          recipes = json.loads(Path('common/update/source-recipes.json').read_text())
+          if list(recipes['lineages']) != expected:
+              raise SystemExit('BLOCKED: source-recipe lineage set/order changed')
+
+          print('SELF_AUDIT=PASS')
+          print('MUTATION_PERMISSION=NO')
+          print('PACKAGE_OR_STATIC_BOOT=NO')
+          print('LINEAGES=6')
+          PY
+
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_frozen_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path.cwd() / 'common/scripts'))
+          import veux_wakeup_fixes as wakeup
+          folder, data, proof = wakeup.load()
+          if data.get('id') != 'wakeup-diag-r2':
+              raise SystemExit('BLOCKED: wakeup payload identity changed')
+          if proof.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: wakeup payload infers device PASS')
+          print('WAKEUP_PAYLOAD_AUTH=PASS')
+          print('WAKEUP_ACTUAL_SOURCE_TEST=DEFERRED_TO_COMPILE_5.4.274')
+          PY
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+          "$PY" common/scripts/veux_frozen_components.py check
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  compile:
+    name: Compile-only ${{ matrix.kernel }} mit R4-Pins
+    needs: preflight
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        kernel:
+          - '5.4.274'
+          - '5.4.292'
+          - '5.4.293'
+          - '5.4.300'
+          - '5.4.301'
+          - '5.4.302'
+
+    steps:
+      - name: Repository exakt auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Build-Abhaengigkeiten installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex git jq \
+            libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml \
+            rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Exakte R4-Komponenten integrieren und nur kompilieren
+        shell: bash
+        env:
+          VEUX_KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" - "$VEUX_KERNEL" "$RUNNER_TEMP" <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          import traceback
+
+          label = sys.argv[1]
+          runner = Path(sys.argv[2])
+          repo = Path.cwd()
+          sys.path.insert(0, str(repo / 'common/scripts'))
+
+          import veux_update_engine as e
+          import veux_source_transport as transport
+          import veux_frozen_components as frozen
+          import veux_device_fixes as fixes
+          import veux_rpm_fixes as rpm
+          import veux_wakeup_fixes as wakeup
+          import veux_config_compat as compat
+
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          if label not in expected:
+              raise SystemExit('BLOCKED: unexpected matrix kernel: ' + label)
+
+          root = runner / ('veux-r4-migration-' + label)
+          report = runner / 'veux-r4-migration-report' / label
+          if root.exists():
+              shutil.rmtree(root)
+          if report.exists():
+              shutil.rmtree(report)
+          root.mkdir(parents=True)
+          report.mkdir(parents=True)
+
+          bundle = root / 'bundle'
+          work = root / 'work'
+          work.mkdir()
+
+          def copy_evidence():
+              wanted = [
+                  'source.json', 'DTB-REFERENCE.json', 'integration.json',
+                  'DEVICE-FIXES.json', 'RPM-FIXES.json', 'WAKEUP-FIXES.json',
+                  'build-result.json', 'BLOCKED.json'
+              ]
+              for name in wanted:
+                  p = work / name
+                  if p.is_file() and not p.is_symlink():
+                      shutil.copy2(p, report / name)
+              for p in work.glob('*.log'):
+                  if p.is_file() and not p.is_symlink():
+                      shutil.copy2(p, report / p.name)
+              cfg_reports = work / 'config-reports'
+              if cfg_reports.is_dir() and not cfg_reports.is_symlink():
+                  shutil.copytree(cfg_reports, report / 'config-reports', dirs_exist_ok=True)
+
+          try:
+              cfg, _ = e.check_repo()
+              if list(cfg['lineages']) != expected:
+                  raise e.Blocked('source lineage set/order changed')
+
+              # This clones and authenticates ONLY the exact R4 frozen commits.
+              targets = frozen.resolve(bundle)
+              targets['lineages'] = expected
+              targets['migration_scope'] = 'compile-only-six-lineage-r4-pins'
+              targets['device_pass_inferred'] = False
+              e.write_json(bundle / 'targets.json', targets)
+
+              if targets['components']['resukisu']['commit'] != '8770c7e324a22895703c4916b8a16520e0b81c79':
+                  raise e.Blocked('frozen ReSukiSU mismatch')
+              if targets['components']['resukisu'].get('uapi') != 5:
+                  raise e.Blocked('frozen ReSukiSU UAPI mismatch')
+              if targets['components']['susfs']['commit'] != '5326e21a7eb232f9e21debdd5164e99bee3d1e2f':
+                  raise e.Blocked('frozen SUSFS mismatch')
+              if targets['components']['nomount']['commit'] != 'c5fad9d8f97c5a207f7342fd91789449915ea047':
+                  raise e.Blocked('frozen NoMount mismatch')
+
+              state = transport.materialize(label, work)
+              state['dtb_reference'] = e.prepare_dtb_reference(
+                  label, state, work, max(1, os.cpu_count() or 1)
+              )
+              src = Path(state['source'])
+
+              # Fresh integration from the authenticated source recipe.
+              # Deliberately do NOT replay CURRENT_FLEET_V10 overlays.
+              e.apply_update(src, state, bundle, work)
+
+              device_proof = fixes.apply(src, label, work)
+              fixes.verify_source(src, label, device_proof)
+              rpm_proof = rpm.apply(src, label, work)
+              rpm.verify_source(src, label, rpm_proof)
+              wakeup_proof = wakeup.apply(src, label, work)
+              wakeup.verify_source(src, label, wakeup_proof)
+
+              image, result = compat.compile_kernel(
+                  label, state, targets, work, max(1, os.cpu_count() or 1)
+              )
+
+              fixes.verify_source(src, label, device_proof)
+              rpm.verify_source(src, label, rpm_proof)
+              wakeup.verify_source(src, label, wakeup_proof)
+
+              result['device_fixes'] = device_proof
+              result['rpm_fixes'] = rpm_proof
+              result['wakeup_fixes'] = wakeup_proof
+              result['wakeup_linked_symbols'] = wakeup.verify_build(label, work)
+
+              compat.verify_result(label, result)
+              e.require(result['device_fixes'] == fixes.expected(label),
+                        'device-fix proof mismatch: ' + label)
+              rpm.verify_result(label, result)
+              wakeup.verify_result(label, result)
+
+              result.update(
+                  migration_compile_only=True,
+                  package=False,
+                  static_boot=False,
+                  promotion=False,
+                  repository_mutated=False,
+                  device_pass_inferred=False,
+                  frozen_components=targets['components'],
+              )
+              e.write_json(report / 'RESULT.json', result)
+              (report / 'FINAL.txt').write_text(
+                  'VEUX_R4_FLEET_MIGRATION_COMPILE=PASS\n'
+                  f'KERNEL={label}\n'
+                  'R4_FROZEN_COMPONENTS=PASS\n'
+                  'COMPILE=PASS\n'
+                  'PACKAGE=NO\n'
+                  'STATIC_BOOT=NO\n'
+                  'PROMOTION=NO\n'
+                  'REPOSITORY_MUTATED=NO\n'
+                  'DEVICE_PASS_INFERRED=NO\n'
+              )
+              print('MIGRATION_COMPILE ' + label + '=PASS', flush=True)
+
+          except Exception as exc:
+              (report / 'FAILURE.txt').write_text(
+                  'VEUX_R4_FLEET_MIGRATION_COMPILE=FAIL\n'
+                  f'KERNEL={label}\n'
+                  f'EXCEPTION={type(exc).__name__}\n'
+                  f'REASON={exc}\n'
+                  'PACKAGE=NO\n'
+                  'STATIC_BOOT=NO\n'
+                  'PROMOTION=NO\n'
+                  'REPOSITORY_MUTATED=NO\n'
+                  'DEVICE_PASS_INFERRED=NO\n'
+                  '\nTRACEBACK_BEGIN\n'
+                  + ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                  + 'TRACEBACK_END\n'
+              )
+              copy_evidence()
+              raise
+          finally:
+              copy_evidence()
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Nur Compile-Bericht bereitstellen
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-Migration-Compile-${{ matrix.kernel }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r4-migration-report/${{ matrix.kernel }}/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
