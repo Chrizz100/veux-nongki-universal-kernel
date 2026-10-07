@@ -1,0 +1,618 @@
+name: VEUX V4 - Daily Upstream Candidate Sync R2
+
+'on':
+  workflow_dispatch:
+  schedule:
+    - cron: '47 3 * * *'
+
+permissions:
+  contents: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: veux-v4-daily-upstream-candidate-main
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Fetch upstream candidates and run source preflight
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout exact main snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install preflight dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git python3 python3-venv python3-yaml rsync
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Validate current V4/UAPI5 control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+
+          "$PY" - <<'PY'
+          import json
+          from pathlib import Path
+
+          current = json.loads(Path('common/contracts/CURRENT_BUILD.json').read_text())
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+
+          if current.get('status') != 'compile-package-static-validated':
+              raise SystemExit('BLOCKED: CURRENT_BUILD is not validated')
+          if current.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: CURRENT_BUILD inferred device PASS')
+          if set(current.get('lineages', {})) != set(expected):
+              raise SystemExit('BLOCKED: CURRENT_BUILD lineage set changed')
+          if current['targets']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: validated current ReSukiSU is not UAPI5')
+
+          print('CURRENT_BUILD_CONTROL_PLANE=PASS')
+          print('CURRENT_REPOSITORY_STATE=VALIDATED_R4_UAPI5')
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Fetch candidates, snapshot them and run no-compile preflight
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import subprocess
+          import sys
+          import traceback
+
+          ROOT = Path.cwd()
+          RUNNER = Path(os.environ['RUNNER_TEMP'])
+          BUNDLE = RUNNER / 'veux-upstream-candidate-bundle'
+          PREFLIGHT_ROOT = RUNNER / 'veux-upstream-source-preflight'
+          SNAPSHOT_ROOT = ROOT / 'third_party/candidate'
+          CONTRACT = ROOT / 'common/contracts/UPSTREAM_CANDIDATE.json'
+          COMPONENTS = ('resukisu', 'susfs', 'nomount')
+          LINEAGES = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+
+          sys.path.insert(0, str(ROOT / 'common/scripts'))
+          import veux_update_engine as e
+          import veux_current_components as current_resolver
+          import veux_source_transport as transport
+          import veux_device_fixes as device_fixes
+          import veux_rpm_fixes as rpm_fixes
+          import veux_wakeup_fixes as wakeup_fixes
+
+          def require(ok, message):
+              if not ok:
+                  raise RuntimeError(message)
+
+          def command(args, cwd=None, check=True):
+              p = subprocess.run(
+                  [str(x) for x in args],
+                  cwd=str(cwd) if cwd else None,
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  env=dict(os.environ, GIT_TERMINAL_PROMPT='0'),
+              )
+              if check and p.returncode:
+                  raise RuntimeError(
+                      'command failed rc=%d: %s\n%s' %
+                      (p.returncode, ' '.join(str(x) for x in args), p.stderr[-2000:])
+                  )
+              return p
+
+          def git(repo, *args, check=True):
+              return command(['git', '-C', repo, *args], check=check)
+
+          def remote_head(url, ref):
+              p = command(['git', 'ls-remote', '--exit-code', '--refs', url, ref])
+              rows = [line.split() for line in p.stdout.splitlines() if line.strip()]
+              require(len(rows) == 1 and len(rows[0]) == 2, 'ambiguous upstream ref: ' + ref)
+              sha, got_ref = rows[0]
+              require(got_ref == ref and re.fullmatch(r'[0-9a-f]{40}', sha),
+                      'invalid upstream response: ' + ref)
+              return sha
+
+          def checkout_full(url, commit, dest):
+              require(not dest.exists(), 'candidate checkout already exists: ' + str(dest))
+              command(['git', 'clone', '--quiet', url, dest])
+              git(dest, 'checkout', '--quiet', '--detach', commit)
+              require(git(dest, 'rev-parse', 'HEAD').stdout.strip() == commit,
+                      'candidate checkout identity mismatch')
+
+          def sha256(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def snapshot_hashes(root):
+              result = {}
+              for p in sorted(root.rglob('*')):
+                  rel = p.relative_to(root).as_posix()
+                  if p.is_symlink():
+                      result[rel] = 'link:' + hashlib.sha256(os.readlink(p).encode()).hexdigest()
+                  elif p.is_file():
+                      result[rel] = sha256(p)
+              return result
+
+          def copy_candidate(component, donor, entry):
+              dest = SNAPSHOT_ROOT / component
+              if dest.exists():
+                  shutil.rmtree(dest)
+              dest.mkdir(parents=True)
+
+              selected = {
+                  'resukisu': ('kernel', 'uapi', 'LICENSE'),
+                  'susfs': ('kernel_patches', 'LICENSE', 'README.md'),
+                  'nomount': ('kernel', 'LICENSE', 'README.md'),
+              }[component]
+
+              copied = []
+              missing = []
+              for name in selected:
+                  source = donor / name
+                  if not source.exists():
+                      missing.append(name)
+                      continue
+                  target = dest / name
+                  if source.is_dir():
+                      shutil.copytree(source, target, symlinks=True)
+                  else:
+                      shutil.copy2(source, target)
+                  copied.append(name)
+
+              meta = dict(entry)
+              meta.update(
+                  schema=1,
+                  component=component,
+                  snapshot_kind='unbuilt-upstream-candidate',
+                  copied_paths=copied,
+                  missing_paths=missing,
+                  build_verified=False,
+                  device_pass_inferred=False,
+              )
+              (dest / '_VEUX_CANDIDATE.json').write_text(
+                  json.dumps(meta, indent=2, sort_keys=True) + '\n'
+              )
+              (dest / 'SHA256SUMS.json').write_text(
+                  json.dumps(snapshot_hashes(dest), indent=2, sort_keys=True) + '\n'
+              )
+              return not missing, missing
+
+          current = json.loads((ROOT / 'common/contracts/CURRENT_BUILD.json').read_text())
+          require(current.get('status') == 'compile-package-static-validated',
+                  'CURRENT_BUILD is not validated')
+          require(current.get('device_pass_inferred') is False,
+                  'CURRENT_BUILD inferred device PASS')
+          require(set(current.get('lineages', {})) == set(LINEAGES),
+                  'CURRENT_BUILD lineage set mismatch')
+          require(set(current.get('targets', {})) == set(COMPONENTS),
+                  'CURRENT_BUILD component set mismatch')
+          require(current['targets']['resukisu'].get('uapi') == 5,
+                  'current ReSukiSU is not UAPI5')
+
+          BUNDLE.mkdir(parents=True)
+          PREFLIGHT_ROOT.mkdir(parents=True)
+
+          report = {
+              'schema': 1,
+              'repository_sha': command(['git', 'rev-parse', 'HEAD']).stdout.strip(),
+              'current_build_run': str(current.get('run_id', '')),
+              'current_targets': current['targets'],
+              'components': {},
+              'lineages': {},
+              'updates_found': False,
+              'component_gate': True,
+              'build_ready': False,
+              'compile_performed': False,
+              'package_performed': False,
+              'static_boot_performed': False,
+              'device_pass_inferred': False,
+          }
+
+          for component in COMPONENTS:
+              old = current['targets'][component]
+              url = old['url']
+              ref = old['ref']
+              head = remote_head(url, ref)
+              changed = head != old['commit']
+              report['updates_found'] = report['updates_found'] or changed
+
+              donor = BUNDLE / component
+              checkout_full(url, head, donor)
+
+              ff = git(donor, 'merge-base', '--is-ancestor', old['commit'], head,
+                       check=False).returncode == 0
+
+              historical_base = old.get('base', old['commit'])
+              historical_ok = git(
+                  donor, 'merge-base', '--is-ancestor', historical_base, head, check=False
+              ).returncode == 0
+
+              entry = {
+                  'url': url,
+                  'ref': ref,
+                  'commit': head,
+                  'base': historical_base,
+                  'current_commit': old['commit'],
+                  'changed': changed,
+                  'fast_forward_from_current': ff,
+                  'historical_base_is_ancestor': historical_ok,
+                  'reviewed_interface': True,
+                  'compatibility_errors': [],
+              }
+
+              try:
+                  if historical_ok:
+                      entry['ahead'] = int(
+                          git(donor, 'rev-list', '--count',
+                              historical_base + '..' + head).stdout.strip()
+                      )
+                  else:
+                      entry['ahead'] = None
+
+                  if component == 'resukisu':
+                      count = int(git(donor, 'rev-list', '--count', head).stdout.strip())
+                      kbuild = (donor / 'kernel/Kbuild').read_text()
+                      require('expr 30000 + $(KSU_LOCAL_VERSION) + 700' in kbuild,
+                              'ReSukiSU version formula changed')
+                      tag = git(donor, 'describe', '--tags', '--abbrev=0', head).stdout.strip()
+                      raw_header = (donor / 'uapi/supercall.h').read_text()
+                      versions = re.findall(
+                          r'^static const __u32 KERNEL_SU_UAPI_VERSION = ([0-9]+);$',
+                          raw_header, re.M
+                      )
+                      require(len(versions) == 1, 'ambiguous ReSukiSU UAPI')
+                      raw_uapi = int(versions[0])
+                      entry.update(
+                          version=str(30700 + count),
+                          local_version=count,
+                          tag=tag,
+                          uapi=raw_uapi,
+                      )
+                      reviewed = current_resolver.checked_uapi(donor)
+                      require(reviewed == old.get('uapi') == 5,
+                              'ReSukiSU UAPI differs from validated UAPI5')
+                  elif component == 'susfs':
+                      text = (donor / 'kernel_patches/include/linux/susfs.h').read_text()
+                      m = re.search(r'#define SUSFS_VERSION "v?([^"]+)"', text)
+                      require(m is not None, 'SUSFS version missing')
+                      entry['version'] = m.group(1)
+                  else:
+                      text = (donor / 'kernel/src/nomount.h').read_text()
+                      m = re.search(r'#define NOMOUNT_VERSION "([^"]+)"', text)
+                      require(m is not None, 'NoMount version missing')
+                      entry['version'] = m.group(1)
+                      entry['version_kind'] = 'kernel-wire-version'
+              except Exception as exc:
+                  entry['reviewed_interface'] = False
+                  entry['compatibility_errors'].append(str(exc))
+
+              if not ff:
+                  entry['compatibility_errors'].append(
+                      'candidate is not a fast-forward from validated current commit'
+                  )
+              if not historical_ok:
+                  entry['compatibility_errors'].append(
+                      'validated historical base is not an ancestor of candidate'
+                  )
+
+              entry['component_gate'] = (
+                  ff and historical_ok and entry['reviewed_interface']
+                  and not entry['compatibility_errors']
+              )
+              report['component_gate'] = report['component_gate'] and entry['component_gate']
+              report['components'][component] = entry
+
+          if not report['updates_found']:
+              report['status'] = 'up-to-date'
+              report['build_ready'] = True
+              report['note'] = 'No new upstream commits; no repository candidate update required.'
+          else:
+              snapshot_ok = True
+              for component in COMPONENTS:
+                  ok, missing = copy_candidate(
+                      component, BUNDLE / component, report['components'][component]
+                  )
+                  report['components'][component]['snapshot_complete'] = ok
+                  report['components'][component]['snapshot_missing'] = missing
+                  snapshot_ok = snapshot_ok and ok
+
+              report['snapshot_complete'] = snapshot_ok
+              if not snapshot_ok:
+                  report['component_gate'] = False
+
+              targets = {
+                  'schema': 1,
+                  'repository_sha': report['repository_sha'],
+                  'golden_sha256': e.digest(ROOT / e.config()['golden_contract']),
+                  'lineages': LINEAGES,
+                  'components': {
+                      name: {
+                          key: value
+                          for key, value in report['components'][name].items()
+                          if key in (
+                              'commit','base','url','ref','ahead','version',
+                              'local_version','tag','uapi','version_kind'
+                          )
+                          and value is not None
+                      }
+                      for name in COMPONENTS
+                  },
+                  'candidate_only': True,
+                  'compile_performed': False,
+                  'device_pass_inferred': False,
+              }
+              e.write_json(BUNDLE / 'targets.json', targets)
+
+              if report['component_gate']:
+                  for label in LINEAGES:
+                      work = PREFLIGHT_ROOT / label
+                      work.mkdir(parents=True)
+                      row = {
+                          'kernel': label,
+                          'source_integration': False,
+                          'device_fix_source_gate': False,
+                          'rpm_source_gate': False,
+                          'wakeup_source_gate': False,
+                          'compile_performed': False,
+                          'device_pass_inferred': False,
+                      }
+                      try:
+                          state = transport.materialize(label, work)
+                          src = Path(state['source'])
+
+                          e.apply_update(src, state, BUNDLE, work)
+
+                          device_proof = device_fixes.apply(src, label, work)
+                          device_fixes.verify_source(src, label, device_proof)
+
+                          rpm_proof = rpm_fixes.apply(src, label, work)
+                          rpm_fixes.verify_source(src, label, rpm_proof)
+
+                          wakeup_proof = wakeup_fixes.apply(src, label, work)
+                          wakeup_fixes.verify_source(src, label, wakeup_proof)
+
+                          vendor, _ = e.topology(src)
+                          if label == '5.4.274':
+                              require(
+                                  current_resolver.checked_uapi(vendor)
+                                  == targets['components']['resukisu'].get('uapi') == 5,
+                                  'integrated ReSukiSU UAPI5 source gate failed'
+                              )
+
+                          row.update(
+                              source_integration=True,
+                              device_fix_source_gate=True,
+                              rpm_source_gate=True,
+                              wakeup_source_gate=True,
+                              status='PASS',
+                          )
+                      except Exception as exc:
+                          row.update(
+                              status='BLOCKED',
+                              reason=str(exc),
+                              traceback=''.join(
+                                  traceback.format_exception(
+                                      type(exc), exc, exc.__traceback__
+                                  )
+                              )[-6000:],
+                          )
+                      report['lineages'][label] = row
+                      shutil.rmtree(work, ignore_errors=True)
+              else:
+                  for label in LINEAGES:
+                      report['lineages'][label] = {
+                          'kernel': label,
+                          'status': 'SKIPPED',
+                          'reason': 'component candidate gate blocked before source integration',
+                          'compile_performed': False,
+                          'device_pass_inferred': False,
+                      }
+
+              all_source_pass = (
+                  report['component_gate']
+                  and all(
+                      report['lineages'][label].get('status') == 'PASS'
+                      for label in LINEAGES
+                  )
+              )
+              report['build_ready'] = bool(all_source_pass)
+              report['status'] = (
+                  'build-preflight-pass'
+                  if report['build_ready']
+                  else 'build-preflight-blocked'
+              )
+              report['note'] = (
+                  'PASS means source/integration gates accept the candidate. '
+                  'It does NOT prove that the kernel compiles; only a manually '
+                  'started compile can prove that.'
+              )
+
+              CONTRACT.parent.mkdir(parents=True, exist_ok=True)
+              CONTRACT.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+              for component in COMPONENTS:
+                  p = ROOT / 'common/upstream' / component / 'candidate.json'
+                  p.write_text(
+                      json.dumps(report['components'][component],
+                                 indent=2, sort_keys=True) + '\n'
+                  )
+
+          summary = [
+              '# VEUX Daily Upstream Candidate Sync',
+              '',
+              f"Status: **{report['status']}**",
+              f"Updates found: **{'YES' if report['updates_found'] else 'NO'}**",
+              'Kernel compile performed: **NO**',
+              f"Build preflight ready: **{'YES' if report['build_ready'] else 'NO'}**",
+              '',
+              '| Component | Current | Candidate | Changed | FF | Reviewed |',
+              '|---|---|---|---|---|---|',
+          ]
+          for name in COMPONENTS:
+              row = report['components'][name]
+              summary.append(
+                  '| %s | `%s` | `%s` | %s | %s | %s |' % (
+                      name,
+                      row['current_commit'][:12],
+                      row['commit'][:12],
+                      'YES' if row['changed'] else 'NO',
+                      'PASS' if row['fast_forward_from_current'] else 'BLOCKED',
+                      'PASS' if row['reviewed_interface'] else 'BLOCKED',
+                  )
+              )
+
+          if report['updates_found']:
+              summary += [
+                  '',
+                  '| Kernel | Source preflight | Compile |',
+                  '|---|---|---|',
+              ]
+              for label in LINEAGES:
+                  row = report['lineages'][label]
+                  summary.append(
+                      '| %s | %s | NOT RUN |' % (label, row['status'])
+                  )
+              summary += [
+                  '',
+                  'Candidate sources: `third_party/candidate/`',
+                  'Candidate contract: `common/contracts/UPSTREAM_CANDIDATE.json`',
+                  '',
+                  '**Important:** preflight PASS is not a compile PASS. '
+                  'The actual kernel build remains manual.',
+              ]
+
+          text = '\n'.join(summary) + '\n'
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                  f.write(text)
+          print(text)
+
+          out = os.environ.get('GITHUB_OUTPUT')
+          require(out, 'GITHUB_OUTPUT missing')
+          with open(out, 'a') as f:
+              f.write('updates_found=%s\n' % ('true' if report['updates_found'] else 'false'))
+              f.write('build_ready=%s\n' % ('true' if report['build_ready'] else 'false'))
+              f.write('candidate_status=%s\n' % report['status'])
+
+          print('UPDATES_FOUND=' + ('YES' if report['updates_found'] else 'NO'))
+          print('KERNEL_COMPILE=NO')
+          print('BUILD_PREFLIGHT=' + ('PASS' if report['build_ready'] else 'BLOCKED'))
+          PY
+
+      - name: Commit candidate snapshots only
+        if: ${{ steps.candidate.outputs.updates_found == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          START_SHA="$GITHUB_SHA"
+          REMOTE_HEAD="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$REMOTE_HEAD"
+          if [ "$REMOTE_HEAD" != "$START_SHA" ]; then
+            echo "main moved during candidate preflight; refusing candidate commit." >&2
+            exit 1
+          fi
+
+          git add -- \
+            third_party/candidate \
+            common/contracts/UPSTREAM_CANDIDATE.json \
+            common/upstream/resukisu/candidate.json \
+            common/upstream/susfs/candidate.json \
+            common/upstream/nomount/candidate.json
+
+          bad_staged="$(
+            git diff --cached --name-only |
+            awk '
+              NF &&
+              $0 !~ /^third_party\/candidate\// &&
+              $0 != "common\/contracts\/UPSTREAM_CANDIDATE.json" &&
+              $0 != "common\/upstream\/resukisu\/candidate.json" &&
+              $0 != "common\/upstream\/susfs\/candidate.json" &&
+              $0 != "common\/upstream\/nomount\/candidate.json"
+              { print }
+            '
+          )"
+          if [ -n "$bad_staged" ]; then
+            echo "Refusing candidate commit outside approved paths:" >&2
+            printf '%s\n' "$bad_staged" >&2
+            exit 1
+          fi
+
+          if git diff --cached --quiet; then
+            echo "CANDIDATE_REPOSITORY_CHANGE=NO"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(upstream): refresh unbuilt candidate snapshots [skip ci]"
+
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+
+          git push origin HEAD:refs/heads/main
+          echo "CANDIDATE_REPOSITORY_CHANGE=YES"
+          echo "VALIDATED_CURRENT_BUILD_UNCHANGED=YES"
+
+      - name: Verify validated current state was not replaced
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          current = json.loads(Path('common/contracts/CURRENT_BUILD.json').read_text())
+          if current.get('status') != 'compile-package-static-validated':
+              raise SystemExit('CURRENT_BUILD validation status changed')
+          if current.get('device_pass_inferred') is not False:
+              raise SystemExit('CURRENT_BUILD inferred device PASS')
+          print('CURRENT_BUILD_PRESERVED=YES')
+          print('THIRD_PARTY_CURRENT_PRESERVED=YES')
+          PY
+
+      - name: Signal incompatible candidate after snapshot commit
+        if: ${{ steps.candidate.outputs.updates_found == 'true' && steps.candidate.outputs.build_ready != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Candidate was stored, but source/integration preflight is BLOCKED." >&2
+          echo "Do not start the manual kernel build until the blocking reason is reviewed." >&2
+          exit 1
