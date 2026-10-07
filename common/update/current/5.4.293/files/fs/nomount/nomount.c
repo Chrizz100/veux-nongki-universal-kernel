@@ -1186,8 +1186,10 @@ static struct nomount_dir_node *__nomount_delete_child_locked(struct nomount_rul
         if (old_count == 1 && !parent) {
             smp_mb();
             if (!rcu_access_pointer(dir_node->iop) && !rcu_access_pointer(dir_node->fop) &&
-                cmpxchg(&dir_node->v_inode, NULL, (struct inode *)-1L) == NULL)
+                cmpxchg(&dir_node->v_inode, NULL, (struct inode *)-1L) == NULL) {
+                if (dir_node->pinned_dentry) dput(dir_node->pinned_dentry);
                 call_rcu(&dir_node->rcu, nm_dir_rcu_free);
+            }
         }
         rcu_read_unlock();
         if (old_arr) kfree_rcu(old_arr, rcu);
@@ -1271,6 +1273,7 @@ static int nomount_generate_virtual_topology(struct nomount_rule *target_rule)
                 if (!old_node) kfree(dir_node);
             } else {
                 if (!is_virtual) {
+                    if (!old_node) dir_node->pinned_dentry = dget(p_path.dentry);
                     nomount_hijack_dir_ops(dir_node, v_inode);
                     nomount_hijack_superblock(p_path.dentry->d_sb);
                 }

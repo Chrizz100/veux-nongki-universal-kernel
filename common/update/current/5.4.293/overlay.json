@@ -3,7 +3,7 @@
     ".resukisu/kernel/Kbuild": {
       "after": {
         "mode": 420,
-        "sha256": "d2165d9e9b486e3417c87493892ccb9d6d5715730cc2d3d4cb74642eebd8d74d"
+        "sha256": "139c983704c4eb4192b3737a05de04e0c0bd83c318cbccf127284f4ebddeae50"
       },
       "before": {
         "mode": 420,
@@ -23,7 +23,7 @@
     ".resukisu/kernel/compat/kernel_compat.h": {
       "after": {
         "mode": 420,
-        "sha256": "e83804a1eb8d1f5b4414986067e6f595395a4f2511956f15cda627b1d54133df"
+        "sha256": "36b6213ea9388a7a9590f2b663ea26ac175f000d26f1f86c092558486059c58b"
       },
       "before": {
         "mode": 420,
@@ -258,6 +258,16 @@
         "sha256": "08eaff5d81ece05f062b018398a7f1cc787addf77ddcf83af5d76abad9663f88"
       }
     },
+    ".resukisu/kernel/policy/allowlist.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "025402cac3593c90becc3ef72fb40c0fac2c83e4fa05263f4ea7a0e46f082912"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "ee4f4d3c9af9afec23c96a5baceda19bbe1f82328bc7376f4732ebbb9d8cd979"
+      }
+    },
     ".resukisu/kernel/runtime/ksud_integration.c": {
       "after": {
         "mode": 420,
@@ -281,11 +291,21 @@
     ".resukisu/kernel/selinux/sepolicy.c": {
       "after": {
         "mode": 420,
-        "sha256": "ec139ae30b24d3b4b7d553ad5720e682afbd9fb26575cdf4581ded4b0dcf9b22"
+        "sha256": "414e6bcd22bd082b23633f417a20cb06d39adbc0ef1b2fc2acacdc9696bbfd07"
       },
       "before": {
         "mode": 420,
         "sha256": "99b029fc3f31f32448eb6a28a8807b2269947b92b17adc82c9944f27dd2a113e"
+      }
+    },
+    ".resukisu/kernel/supercall/dispatch.c": {
+      "after": {
+        "mode": 420,
+        "sha256": "f9e7194378a442acf65b47ebaa2b4f78fc7507dc10861dd8ae2caa2506473f07"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "2fcc6576a414eaf032527b00cf02d4f18d1cb9bd5c8fae0825aa5b82d4668393"
       }
     },
     ".resukisu/kernel/supercall/supercall.c": {
@@ -316,6 +336,16 @@
       "before": {
         "mode": 420,
         "sha256": "565b9f7cf36ad4bb2f91c5de83998b5597cb51e56fedab5d28ee3cca7fa2e2f5"
+      }
+    },
+    ".resukisu/uapi/supercall.h": {
+      "after": {
+        "mode": 420,
+        "sha256": "ca897ddb31f0a910fb5eac0e4ad14d562a14af212243acdf1b5dd87f711a3618"
+      },
+      "before": {
+        "mode": 420,
+        "sha256": "faee7c638e3a291afba1ef61a8ef390030b093945da748b06a10e5111c703fa2"
       }
     },
     "fs/Kconfig": {
@@ -355,14 +385,14 @@
     "fs/nomount/nomount.c": {
       "after": {
         "mode": 420,
-        "sha256": "9b76eee61f0b1ac319999ae0520325df224fbae798da6ca56c9021bc1610a266"
+        "sha256": "957ffa2f9ca8788d9363b3305bd9ce0d27e3a09ec92d2e1fd87bb3c9afdc133e"
       },
       "before": null
     },
     "fs/nomount/nomount.h": {
       "after": {
         "mode": 420,
-        "sha256": "6129075bcfcedd4b9c33e3207c94392e9d6824f7f940c50d611892b048c01227"
+        "sha256": "139da32afca6b0b55d9b37fbfad40e4f47cec75d1a00f3aa56f985ddfa1b0370"
       },
       "before": null
     },
@@ -401,24 +431,24 @@
   "recipe_blob": "25a7a1c3d51194e26cfd929f85a81045dbdfac7b",
   "targets": {
     "nomount": {
-      "ahead": 155,
+      "ahead": 159,
       "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
-      "commit": "6b1be186322d4e0bdc465cf27f6fc0d3679087c6",
+      "commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
       "ref": "refs/heads/master",
       "url": "https://github.com/maxsteeel/nomount.git",
       "version": "20",
       "version_kind": "kernel-wire-version"
     },
     "resukisu": {
-      "ahead": 17,
+      "ahead": 33,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
-      "commit": "94dd3c93c2053a84fd752df6eb85db99b7d70ab8",
-      "local_version": 4487,
+      "commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
+      "local_version": 4503,
       "ref": "refs/heads/main",
       "tag": "v4.2.0-rc3",
-      "uapi": 4,
+      "uapi": 5,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35187"
+      "version": "35203"
     },
     "susfs": {
       "ahead": 5,

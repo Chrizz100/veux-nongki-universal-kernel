@@ -98,6 +98,7 @@ struct nomount_dir_node {
     void __rcu *children;
     u64 bloom_mask;
     struct inode *v_inode;
+    struct dentry *pinned_dentry;
     union {
         unsigned long _tag_ptr;
         struct {

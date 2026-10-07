@@ -71,10 +71,10 @@ ifdef KBUILD_EXTMOD
 include $(KSU_SRC)/tools/ddk_compatible.mk
 endif
 
-KSU_LOCAL_VERSION := 4487
-KSU_VERSION := 35187
+KSU_LOCAL_VERSION := 4503
+KSU_VERSION := 35203
 KSU_TAG_NAME := v4.2.0-rc3
-KSU_COMMIT_SHA := 94dd3c93
+KSU_COMMIT_SHA := 8770c7e3
 KSU_BRANCH_NAME := main
 
 # call subst to process placeholders
