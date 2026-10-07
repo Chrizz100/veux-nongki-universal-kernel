@@ -1,0 +1,177 @@
+name: VEUX R4 - Fleet Gap Audit R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r4-fleet-gap-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: R4 gegen bestehende Sechser-Flotte vergleichen - nur lesen
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Repository exakt auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: R4 und Fleet fail-closed vergleichen
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          OUT="$RUNNER_TEMP/veux-r4-fleet-gap"
+          mkdir -p "$OUT"
+
+          python3 - "$OUT" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          out = Path(sys.argv[1])
+          fleet_path = Path('common/contracts/CURRENT_FLEET_V10.yml')
+          r4_path = Path('common/contracts/VEUX_STABILIZATION_R1.json')
+          recipes_path = Path('common/update/source-recipes.json')
+          updater_path = Path('.github/workflows/veux-all-in-one-updater-v4.yml')
+
+          for p in (fleet_path, r4_path, recipes_path, updater_path):
+              if not p.is_file() or p.is_symlink():
+                  raise SystemExit(f'BLOCKED: missing/linked authority: {p}')
+
+          r4 = json.loads(r4_path.read_text())
+          recipes = json.loads(recipes_path.read_text())
+          fleet = fleet_path.read_text()
+          updater = updater_path.read_text()
+
+          if r4.get('kernel') != '5.4.274' or r4.get('schema') != 1:
+              raise SystemExit('BLOCKED: unexpected R4 stabilization identity')
+
+          expected_r4 = {
+              'resukisu': ('35203', '8770c7e324a22895703c4916b8a16520e0b81c79'),
+              'susfs': ('2.3.0', '5326e21a7eb232f9e21debdd5164e99bee3d1e2f'),
+              'nomount': ('20', 'c5fad9d8f97c5a207f7342fd91789449915ea047'),
+          }
+          for name, (version, commit) in expected_r4.items():
+              row = r4['components'][name]
+              if str(row.get('version')) != version or row.get('commit') != commit:
+                  raise SystemExit(f'BLOCKED: R4 component changed: {name}')
+          if r4['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: R4 ReSukiSU UAPI changed')
+
+          lineages = list(recipes.get('lineages', {}))
+          expected_lineages = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          if lineages != expected_lineages:
+              raise SystemExit(f'BLOCKED: six-lineage order/set changed: {lineages}')
+
+          def block(text, header):
+              m = re.search(rf'(?ms)^  {re.escape(header)}:\n(.*?)(?=^  [^\s].*:\n|\Z)', text)
+              if not m:
+                  raise SystemExit(f'BLOCKED: fleet lineage missing: {header}')
+              return m.group(1)
+
+          def scalar(text, key):
+              m = re.search(rf'(?m)^\s+{re.escape(key)}:\s*[\'"]?([^\'"\n]+)[\'"]?\s*$', text)
+              return m.group(1).strip() if m else None
+
+          rows = []
+          for kernel in expected_lineages:
+              b = block(fleet, kernel)
+              # Component sub-blocks are simple and stable in CURRENT_FLEET_V10.
+              def comp(name):
+                  m = re.search(rf'(?ms)^\s{{4}}{name}:\n(.*?)(?=^\s{{4}}\S.*:\n|\Z)', b)
+                  if not m:
+                      raise SystemExit(f'BLOCKED: {kernel} component missing: {name}')
+                  return m.group(1)
+              rr, ss, nn = comp('resukisu'), comp('susfs'), comp('nomount')
+              rows.append({
+                  'kernel': kernel,
+                  'fleet_resukisu_version': scalar(rr,'version'),
+                  'fleet_resukisu_commit': scalar(rr,'commit'),
+                  'fleet_resukisu_uapi': scalar(rr,'uapi'),
+                  'fleet_susfs_version': scalar(ss,'version'),
+                  'fleet_susfs_commit': scalar(ss,'commit'),
+                  'fleet_nomount_version': scalar(nn,'version'),
+                  'fleet_nomount_commit': scalar(nn,'commit'),
+              })
+
+          if any(r['fleet_resukisu_version'] != '35170' for r in rows):
+              raise SystemExit('BLOCKED: CURRENT_FLEET_V10 no longer uniformly 35170')
+          if any(r['fleet_resukisu_uapi'] != '4' for r in rows):
+              raise SystemExit('BLOCKED: CURRENT_FLEET_V10 no longer uniformly UAPI4')
+
+          writes_main = ('contents: write' in updater and
+                         'Commit validated sources to main' in updater and
+                         'promote --bundle' in updater)
+          builds_all = all(f'Build and validate {k}' in updater for k in expected_lineages)
+          if not writes_main or not builds_all:
+              raise SystemExit('BLOCKED: updater V4 behavior changed')
+
+          report = {
+              'status': 'PASS_GAP_AUDIT_ONLY',
+                        'r4': {
+                  'kernel': '5.4.274',
+                  'resukisu_version': r4['components']['resukisu']['version'],
+                  'resukisu_commit': r4['components']['resukisu']['commit'],
+                  'resukisu_uapi': r4['components']['resukisu']['uapi'],
+                  'susfs_version': r4['components']['susfs']['version'],
+                  'susfs_commit': r4['components']['susfs']['commit'],
+                  'nomount_wire_version': r4['components']['nomount']['version'],
+                  'nomount_commit': r4['components']['nomount']['commit'],
+              },
+              'current_fleet_v10': rows,
+              'classification': 'R4_STABILIZATION_IS_NEWER_AND_DIVERGENT_FROM_CURRENT_FLEET_V10',
+              'updater_v4_builds_all_six': builds_all,
+              'updater_v4_writes_main': writes_main,
+              'safe_next_action': 'DO_NOT_RUN_UPDATER_V4_UNTIL_MIGRATION_CONTRACT_IS_REVIEWED',
+              'device_pass_inferred': False,
+              'repository_mutated': False,
+          }
+          # Avoid subprocess in the parser; GitHub SHA is written by shell below.
+          (out/'FLEET-GAP.json').write_text(json.dumps(report, indent=2, sort_keys=True)+'\n')
+          (out/'FLEET-GAP.txt').write_text(
+              'VEUX_R4_FLEET_GAP_AUDIT=PASS\n'
+              'R4_RESUKISU=35203\n'
+              'R4_RESUKISU_UAPI=5\n'
+              'R4_SUSFS=2.3.0\n'
+              'R4_NOMOUNT_WIRE=20\n'
+              'FLEET_V10_RESUKISU=35170\n'
+              'FLEET_V10_RESUKISU_UAPI=4\n'
+              'LINEAGE_COUNT=6\n'
+              'UPDATER_V4_BUILDS_ALL_SIX=YES\n'
+              'UPDATER_V4_WRITES_MAIN=YES\n'
+              'CLASSIFICATION=R4_STABILIZATION_IS_NEWER_AND_DIVERGENT_FROM_CURRENT_FLEET_V10\n'
+              'NEXT=REVIEW_MIGRATION_CONTRACT_BEFORE_UPDATER_V4\n'
+              'DEVICE_PASS_INFERRED=NO\n'
+              'REPOSITORY_MUTATED=NO\n'
+          )
+          PY
+
+          echo "GITHUB_SHA=$GITHUB_SHA" >> "$OUT/FLEET-GAP.txt"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          grep -Fxq 'VEUX_R4_FLEET_GAP_AUDIT=PASS' "$OUT/FLEET-GAP.txt"
+          grep -Fxq 'UPDATER_V4_WRITES_MAIN=YES' "$OUT/FLEET-GAP.txt"
+          grep -Fxq 'REPOSITORY_MUTATED=NO' "$OUT/FLEET-GAP.txt"
+
+      - name: Nur Gap-Bericht bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-Fleet-Gap-Audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r4-fleet-gap/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
