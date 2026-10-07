@@ -1,0 +1,400 @@
+name: VEUX R4 - V4 Promotion R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: veux-r4-v4-promotion-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: R4 V4 6-von-6 bauen und promoten
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Repository exakt auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Exakten main-Stand verwenden
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B main "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Build-Abhaengigkeiten installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex git jq \
+            libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml \
+            rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: V4 und R4 Promotion-Gates vorpruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_frozen_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+          "$PY" common/scripts/veux_frozen_components.py check
+
+          "$PY" - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          lock = json.loads(Path('common/contracts/VEUX_STABILIZATION_R1.json').read_text())
+          expected = {
+              'resukisu': ('8770c7e324a22895703c4916b8a16520e0b81c79', '35203'),
+              'susfs': ('5326e21a7eb232f9e21debdd5164e99bee3d1e2f', '2.3.0'),
+              'nomount': ('c5fad9d8f97c5a207f7342fd91789449915ea047', '20'),
+          }
+          if lock.get('kernel') != '5.4.274' or lock.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: invalid R4 stabilization identity')
+          for name, (commit, version) in expected.items():
+              row = lock['components'][name]
+              if row.get('commit') != commit or str(row.get('version')) != version:
+                  raise SystemExit('BLOCKED: R4 component changed: ' + name)
+          if lock['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: R4 ReSukiSU is not UAPI5')
+
+          validation = Path('.github/workflows/VEUX_R4_V4_Package_Static_Validation_R1.yml')
+          if not validation.is_file() or validation.is_symlink():
+              raise SystemExit('BLOCKED: successful validation workflow missing or linked')
+          blob = subprocess.check_output(['git', 'hash-object', str(validation)], text=True).strip()
+          if blob != '40ec7cfd68ff3c9f66c8da7b66f091a559d26936':
+              raise SystemExit('BLOCKED: successful validation workflow changed')
+
+          print('R4_COMPONENT_LOCK=PASS')
+          print('REFERENCE_VALIDATION_RUN=37606862328')
+          print('REFERENCE_VALIDATION=6/6_GREEN')
+          print('RESUKISU=35203/UAPI5')
+          print('SUSFS=2.3.0')
+          print('NOMOUNT=20')
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Exakte R4-Komponenten fuer alle sechs Kernel aufloesen
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" common/scripts/veux_frozen_components.py resolve \
+            --work "$RUNNER_TEMP/veux-targets"
+
+          "$PY" - "$RUNNER_TEMP/veux-targets/targets.json" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          data = json.loads(path.read_text())
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          data['lineages'] = expected
+          data['validation_scope'] = 'v4-promotion-six-lineage-r4-uapi5'
+          data['device_pass_inferred'] = False
+          path.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
+
+          if data['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: resolved ReSukiSU is not UAPI5')
+          if data['components']['resukisu']['commit'] != '8770c7e324a22895703c4916b8a16520e0b81c79':
+              raise SystemExit('BLOCKED: ReSukiSU pin drift')
+          if data['components']['susfs']['commit'] != '5326e21a7eb232f9e21debdd5164e99bee3d1e2f':
+              raise SystemExit('BLOCKED: SUSFS pin drift')
+          if data['components']['nomount']['commit'] != 'c5fad9d8f97c5a207f7342fd91789449915ea047':
+              raise SystemExit('BLOCKED: NoMount pin drift')
+          # Promotion normalizes ReSukiSU before storing third_party/current.
+          # Prove that exact transformation against the frozen UAPI5 donor now,
+          # before spending hours on the six release builds.
+          import shutil
+          sys.path.insert(0, str(Path.cwd() / 'common/scripts'))
+          import veux_update_engine as engine
+          import veux_current_components as current
+          stage = path.parent / 'promotion-normalization-preflight'
+          if stage.exists():
+              shutil.rmtree(stage)
+          engine.normalized_resukisu(path.parent / 'resukisu', data['components']['resukisu'], stage)
+          if current.checked_uapi(stage) != 5:
+              raise SystemExit('BLOCKED: normalized ReSukiSU snapshot is not UAPI5')
+          shutil.rmtree(stage)
+          print('R4_SIX_LINEAGE_TARGETS=PASS')
+          print('PROMOTION_NORMALIZATION_UAPI5=PASS')
+          PY
+
+      - name: Build und validiere 5.4.274
+        id: kernel_5_4_274
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.274 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_274.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.274/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Build und validiere 5.4.292
+        id: kernel_5_4_292
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.292 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.292" \
+            --public "$RUNNER_TEMP/veux-public/5.4.292" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.292 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_292.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.292/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Build und validiere 5.4.293
+        id: kernel_5_4_293
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.293 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.293" \
+            --public "$RUNNER_TEMP/veux-public/5.4.293" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.293 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_293.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.293/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Build und validiere 5.4.300
+        id: kernel_5_4_300
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.300 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.300" \
+            --public "$RUNNER_TEMP/veux-public/5.4.300" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.300 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_300.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.300/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Build und validiere 5.4.301
+        id: kernel_5_4_301
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.301 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.301" \
+            --public "$RUNNER_TEMP/veux-public/5.4.301" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.301 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_301.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.301/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Build und validiere 5.4.302
+        id: kernel_5_4_302
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.302 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.302" \
+            --public "$RUNNER_TEMP/veux-public/5.4.302" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Artefakt 5.4.302 bereitstellen
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_302.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.302/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Vor Promotion erneut 6 von 6 pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" - "$RUNNER_TEMP/veux-targets" "$RUNNER_TEMP/veux-public" <<'PY'
+          import json
+          from pathlib import Path
+          from types import SimpleNamespace
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / 'common/scripts'))
+          import veux_release_device as release
+
+          bundle = Path(sys.argv[1])
+          artifacts = Path(sys.argv[2])
+          release.verify_results(SimpleNamespace(bundle=bundle, artifacts=artifacts))
+
+          targets = json.loads((bundle / 'targets.json').read_text())
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          if targets['lineages'] != expected:
+              raise SystemExit('BLOCKED: lineage set/order changed')
+          if targets['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: final component set is not UAPI5')
+          for kernel in expected:
+              row = json.loads((artifacts / kernel / 'RESULT.json').read_text())
+              if not all(row.get(k) is True for k in ('compile','package','static_boot')):
+                  raise SystemExit('BLOCKED: incomplete release validation: ' + kernel)
+              if row.get('device') is not False:
+                  raise SystemExit('BLOCKED: CI inferred device PASS: ' + kernel)
+              if row.get('targets') != targets['components']:
+                  raise SystemExit('BLOCKED: component set differs: ' + kernel)
+
+          print('V4_R4_PREPROMOTION=PASS')
+          print('LINEAGES=6/6')
+          print('DEVICE_PASS_INFERRED=NO')
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Validierten R4 V4 Stand nach main promoten
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py promote \
+            --bundle "$RUNNER_TEMP/veux-targets" \
+            --artifacts "$RUNNER_TEMP/veux-public" \
+            --overlays "$RUNNER_TEMP/veux-overlays" \
+            --output "$RUNNER_TEMP/veux-promotion"
+
+      - name: Promotion und Remote-main verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" - <<'PY'
+          import json
+          from pathlib import Path
+
+          current = json.loads(Path('common/contracts/CURRENT_BUILD.json').read_text())
+          expected_lineages = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          expected_commits = {
+              'resukisu': '8770c7e324a22895703c4916b8a16520e0b81c79',
+              'susfs': '5326e21a7eb232f9e21debdd5164e99bee3d1e2f',
+              'nomount': 'c5fad9d8f97c5a207f7342fd91789449915ea047',
+          }
+          if current.get('status') != 'compile-package-static-validated':
+              raise SystemExit('BLOCKED: CURRENT_BUILD status invalid')
+          if current.get('repository_mutation') is not True:
+              raise SystemExit('BLOCKED: CURRENT_BUILD does not record promotion')
+          if current.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: CURRENT_BUILD inferred device PASS')
+          lineages = current.get('lineages', {})
+          if set(lineages) != set(expected_lineages) or len(lineages) != 6:
+              raise SystemExit('BLOCKED: CURRENT_BUILD lineage set changed')
+          for name, commit in expected_commits.items():
+              if current['targets'][name]['commit'] != commit:
+                  raise SystemExit('BLOCKED: promoted component mismatch: ' + name)
+          if current['targets']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: promoted ReSukiSU is not UAPI5')
+          for kernel in expected_lineages:
+              row = current['lineages'][kernel]
+              if not all(row.get(k) is True for k in ('compile','package','static_boot')):
+                  raise SystemExit('BLOCKED: promoted lineage incomplete: ' + kernel)
+              if row.get('device') is not False:
+                  raise SystemExit('BLOCKED: promoted lineage inferred device PASS: ' + kernel)
+          print('V4_R4_PROMOTION=PASS')
+          print('CURRENT_BUILD=R4_UAPI5_6_OF_6')
+          print('DEVICE_PASS_INFERRED=NO')
+          PY
+
+          LOCAL_HEAD="$(git rev-parse HEAD)"
+          REMOTE_HEAD="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$REMOTE_HEAD"
+          test "$LOCAL_HEAD" = "$REMOTE_HEAD"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo "REMOTE_MAIN_PROMOTION=PASS"
+
+      - name: Promotion-Nachweis bereitstellen
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-V4-Promotion-Proof-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-promotion/PROMOTION-READY.json
+            common/contracts/CURRENT_BUILD.json
+            common/upstream/resukisu/current.json
+            common/upstream/susfs/current.json
+            common/upstream/nomount/current.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Fehlerdiagnose bereitstellen
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R4-V4-Promotion-Diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-builds/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
