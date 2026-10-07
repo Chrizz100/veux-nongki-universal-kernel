@@ -1,0 +1,403 @@
+name: VEUX V4 - Candidate Manual Build R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+concurrency:
+  group: veux-v4-candidate-manual-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build saved upstream candidate - 6 of 6
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout exact candidate repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex git jq \
+            libelf-dev libncurses-dev libssl-dev perl python3 python3-venv python3-yaml \
+            rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Validate candidate contract and V4 gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+
+          "$PY" - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          contract_path = Path('common/contracts/UPSTREAM_CANDIDATE.json')
+          current_path = Path('common/contracts/CURRENT_BUILD.json')
+
+          if not contract_path.is_file():
+              raise SystemExit('BLOCKED: UPSTREAM_CANDIDATE.json missing')
+
+          candidate = json.loads(contract_path.read_text())
+          current = json.loads(current_path.read_text())
+
+          if candidate.get('status') != 'build-preflight-pass':
+              raise SystemExit('BLOCKED: latest candidate preflight is not PASS')
+          if candidate.get('build_ready') is not True:
+              raise SystemExit('BLOCKED: candidate build_ready is not true')
+          if candidate.get('compile_performed') is not False:
+              raise SystemExit('BLOCKED: candidate contract unexpectedly claims compile')
+          if candidate.get('updates_found') is not True:
+              raise SystemExit('BLOCKED: candidate contract contains no upstream update')
+          if set(candidate.get('lineages', {})) != set(expected):
+              raise SystemExit('BLOCKED: candidate lineage set changed')
+          for kernel in expected:
+              if candidate['lineages'][kernel].get('status') != 'PASS':
+                  raise SystemExit('BLOCKED: source preflight not PASS: ' + kernel)
+
+          if current.get('status') != 'compile-package-static-validated':
+              raise SystemExit('BLOCKED: CURRENT_BUILD no longer validated')
+          if current.get('device_pass_inferred') is not False:
+              raise SystemExit('BLOCKED: CURRENT_BUILD inferred device PASS')
+
+          components = candidate.get('components', {})
+          if set(components) != {'resukisu','susfs','nomount'}:
+              raise SystemExit('BLOCKED: candidate component set invalid')
+          if components['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: candidate ReSukiSU is not UAPI5')
+
+          def digest(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          for name, row in components.items():
+              if row.get('component_gate') is not True:
+                  raise SystemExit('BLOCKED: candidate component gate failed: ' + name)
+              if row.get('fast_forward_from_current') is not True:
+                  raise SystemExit('BLOCKED: candidate is not fast-forward: ' + name)
+              if row.get('snapshot_complete') is not True:
+                  raise SystemExit('BLOCKED: candidate snapshot incomplete: ' + name)
+
+              meta_path = Path('common/upstream') / name / 'candidate.json'
+              if not meta_path.is_file():
+                  raise SystemExit('BLOCKED: component candidate metadata missing: ' + name)
+              meta = json.loads(meta_path.read_text())
+              if meta.get('commit') != row.get('commit'):
+                  raise SystemExit('BLOCKED: component metadata commit mismatch: ' + name)
+
+              root = Path('third_party/candidate') / name
+              sums_path = root / 'SHA256SUMS.json'
+              marker_path = root / '_VEUX_CANDIDATE.json'
+              if not sums_path.is_file() or not marker_path.is_file():
+                  raise SystemExit('BLOCKED: candidate snapshot evidence missing: ' + name)
+
+              sums = json.loads(sums_path.read_text())
+              for rel, expected_hash in sums.items():
+                  p = root / rel
+                  if expected_hash.startswith('link:'):
+                      if not p.is_symlink():
+                          raise SystemExit('BLOCKED: expected candidate symlink: ' + str(p))
+                      actual = 'link:' + hashlib.sha256(os.readlink(p).encode()).hexdigest()
+                  else:
+                      if not p.is_file() or p.is_symlink():
+                          raise SystemExit('BLOCKED: expected candidate file: ' + str(p))
+                      actual = digest(p)
+                  if actual != expected_hash:
+                      raise SystemExit('BLOCKED: candidate snapshot hash mismatch: ' + str(p))
+
+          print('CANDIDATE_CONTRACT=PASS')
+          print('CANDIDATE_BUILD_READY=YES')
+          print('KERNELS=6')
+          print('REPOSITORY_PROMOTION=NO')
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Reconstruct exact candidate bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" - "$RUNNER_TEMP/veux-targets" <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          ROOT = Path.cwd()
+          bundle = Path(sys.argv[1])
+          expected_lineages = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+          allowed = {
+              'commit','base','url','ref','ahead','version',
+              'local_version','tag','uapi','version_kind'
+          }
+
+          sys.path.insert(0, str(ROOT / 'common/scripts'))
+          import veux_update_engine as e
+          import veux_current_components as current_resolver
+
+          candidate_path = ROOT / 'common/contracts/UPSTREAM_CANDIDATE.json'
+          candidate = json.loads(candidate_path.read_text())
+
+          bundle.mkdir(parents=True, exist_ok=False)
+
+          components = {}
+          for name in e.COMPONENTS:
+              row = candidate['components'][name]
+              donor = bundle / name
+              e.checkout(row['url'], row['commit'], donor, full=True)
+
+              if e.git(donor, 'rev-parse', 'HEAD') != row['commit']:
+                  raise SystemExit('BLOCKED: donor identity mismatch: ' + name)
+              if e.git(donor, 'status', '--porcelain'):
+                  raise SystemExit('BLOCKED: donor checkout dirty: ' + name)
+
+              snapshot = ROOT / 'third_party/candidate' / name
+              for p in snapshot.rglob('*'):
+                  if not (p.is_file() or p.is_symlink()):
+                      continue
+                  rel = p.relative_to(snapshot)
+                  if rel.as_posix() in ('SHA256SUMS.json', '_VEUX_CANDIDATE.json'):
+                      continue
+                  source = donor / rel
+                  if p.is_symlink():
+                      if not source.is_symlink() or os.readlink(source) != os.readlink(p):
+                          raise SystemExit('BLOCKED: donor/snapshot symlink mismatch: ' + str(rel))
+                  else:
+                      if not source.is_file() or source.is_symlink():
+                          raise SystemExit('BLOCKED: donor/snapshot file missing: ' + str(rel))
+                      if hashlib.sha256(source.read_bytes()).hexdigest() != hashlib.sha256(p.read_bytes()).hexdigest():
+                          raise SystemExit('BLOCKED: donor/snapshot file mismatch: ' + str(rel))
+
+              if name == 'resukisu':
+                  if current_resolver.checked_uapi(donor) != 5:
+                      raise SystemExit('BLOCKED: reconstructed ReSukiSU is not reviewed UAPI5')
+
+              components[name] = {
+                  key: value for key, value in row.items()
+                  if key in allowed and value is not None
+              }
+
+          targets = {
+              'schema': 1,
+              'repository_sha': e.git(ROOT, 'rev-parse', 'HEAD'),
+              'golden_sha256': e.digest(ROOT / e.config()['golden_contract']),
+              'lineages': expected_lineages,
+              'components': components,
+              'candidate_contract_sha256': e.digest(candidate_path),
+              'candidate_manual_build': True,
+              'device_pass_inferred': False,
+          }
+          e.write_json(bundle / 'targets.json', targets)
+
+          print('CANDIDATE_BUNDLE=PASS')
+          print('RESUKISU=' + components['resukisu']['version'] + '/UAPI' + str(components['resukisu']['uapi']))
+          print('SUSFS=' + components['susfs']['version'])
+          print('NOMOUNT=' + components['nomount']['version'])
+          PY
+
+      - name: Build and validate 5.4.274
+        id: kernel_5_4_274
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.274 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_274.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.274/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Build and validate 5.4.292
+        id: kernel_5_4_292
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.292 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.292" \
+            --public "$RUNNER_TEMP/veux-public/5.4.292" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.292 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_292.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.292/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Build and validate 5.4.293
+        id: kernel_5_4_293
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.293 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.293" \
+            --public "$RUNNER_TEMP/veux-public/5.4.293" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.293 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_293.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.293/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Build and validate 5.4.300
+        id: kernel_5_4_300
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.300 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.300" \
+            --public "$RUNNER_TEMP/veux-public/5.4.300" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.300 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_300.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.300/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Build and validate 5.4.301
+        id: kernel_5_4_301
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.301 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.301" \
+            --public "$RUNNER_TEMP/veux-public/5.4.301" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.301 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_301.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.301/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Build and validate 5.4.302
+        id: kernel_5_4_302
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.302 --bundle "$RUNNER_TEMP/veux-targets" \
+            --work "$RUNNER_TEMP/veux-builds/5.4.302" \
+            --public "$RUNNER_TEMP/veux-public/5.4.302" \
+            --overlays "$RUNNER_TEMP/veux-overlays" --jobs "$(nproc)"
+
+      - name: Upload 5.4.302 candidate artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.kernel_5_4_302.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-public/5.4.302/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Require complete candidate build - 6 of 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+
+          "$PY" - "$RUNNER_TEMP/veux-targets" "$RUNNER_TEMP/veux-public" <<'PY'
+          import json
+          from pathlib import Path
+          from types import SimpleNamespace
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / 'common/scripts'))
+          import veux_release_device as release
+
+          bundle = Path(sys.argv[1])
+          artifacts = Path(sys.argv[2])
+          release.verify_results(SimpleNamespace(bundle=bundle, artifacts=artifacts))
+
+          targets = json.loads((bundle / 'targets.json').read_text())
+          expected = ['5.4.274','5.4.292','5.4.293','5.4.300','5.4.301','5.4.302']
+
+          if targets['lineages'] != expected:
+              raise SystemExit('BLOCKED: candidate lineage set/order changed')
+          if targets['components']['resukisu'].get('uapi') != 5:
+              raise SystemExit('BLOCKED: built candidate ReSukiSU is not UAPI5')
+
+          for kernel in expected:
+              row = json.loads((artifacts / kernel / 'RESULT.json').read_text())
+              if not all(row.get(k) is True for k in ('compile','package','static_boot')):
+                  raise SystemExit('BLOCKED: incomplete candidate build: ' + kernel)
+              if row.get('device') is not False:
+                  raise SystemExit('BLOCKED: CI inferred device PASS: ' + kernel)
+              if row.get('targets') != targets['components']:
+                  raise SystemExit('BLOCKED: component set differs: ' + kernel)
+
+          print('CANDIDATE_MANUAL_BUILD=PASS')
+          print('LINEAGES=6/6')
+          print('COMPILE_PACKAGE_STATIC=6/6')
+          print('REPOSITORY_PROMOTION=NO')
+          print('DEVICE_PASS_INFERRED=NO')
+          PY
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Candidate-Build-Diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-builds/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
