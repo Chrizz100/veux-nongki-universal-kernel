@@ -19,12 +19,14 @@ import veux_config_compat as compat
 import veux_source_transport as transport
 import veux_rpm_fixes as rpm
 import veux_wakeup_fixes as wakeup
+import veux_rmnet as rmnet
 
 
 def preserve_device_diagnostics(work, public, diag):
     """Retain compact build evidence before deleting temporary source trees."""
     e.preserve_diagnostics(work, public, diag)
     paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json', work / 'RPM-FIXES.json', work / 'WAKEUP-FIXES.json']
+    paths.append(work / 'RMNET.json')
     # ConfigDiag10 writes the raw evidence below this directory. The legacy
     # preservation function only knows its own top-level JSON files.
     reports = work / 'config-reports'
@@ -56,6 +58,8 @@ def worker(args):
     label, bundle, work, public = args.kernel, args.bundle, args.work, args.public
     cfg, _ = e.check_repo()
     targets = json.loads((bundle / 'targets.json').read_text())
+    if rmnet.requested(targets, label):
+        e.run([sys.executable, e.REPO / 'common/scripts/test_veux_rmnet.py'])
     e.require(targets['repository_sha'] == e.git(e.REPO, 'rev-parse', 'HEAD'),
               'resolver/worker commit mismatch')
     e.require(e.digest(e.REPO / cfg['golden_contract']) == targets['golden_sha256'],
@@ -89,9 +93,15 @@ def worker(args):
         wakeup.verify_source(src, label, wakeup_proof)
         result['wakeup_fixes'] = wakeup_proof
         result['wakeup_linked_symbols'] = wakeup.verify_build(label, work)
+        if rmnet.requested(targets, label):
+            rmnet.build_modules(state, work, image, result, args.jobs)
         e.package_kernel(image, targets, result, work, public)
+        if rmnet.requested(targets, label):
+            rmnet.augment_package(result, work, public)
         e.static_boot(image, result, work)
         r.publish_files(result, work, public, targets)
+        if rmnet.requested(targets, label):
+            result['artifact_name'] += '_RMNET'
         result.update(integration_overlay_sha256=overlay_hash,
                       repository_sha=targets['repository_sha'], targets=targets['components'],
                       target_manifest_sha256=e.digest(bundle / 'targets.json'), device=False)
@@ -120,6 +130,8 @@ def verify_results(args):
                   'missing or outdated device fixes: ' + label)
         rpm.verify_result(label, row)
         wakeup.verify_result(label, row)
+        if rmnet.requested(targets, label) or 'rmnet' in row:
+            rmnet.verify_package(row, args.artifacts / label)
 
 
 def promote(args):
