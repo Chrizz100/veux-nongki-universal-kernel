@@ -1,0 +1,257 @@
+name: VEUX Fix - ReSukiSU BakaSU Image Identity R4
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  EXPECTED_ENGINE_BLOB: 3a086bea430c46ef5bf5c75b94becbd9010ab93d
+
+# Intentionally share the Daily Candidate R4 concurrency group.
+# This prevents both workflows from mutating main at the same time.
+concurrency:
+  group: veux-v4-daily-upstream-candidate-main
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    name: Replace stale fixed ReSukiSU image marker
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout latest main after concurrency lock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Exact preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git branch --show-current)" = "main"
+
+          BASE_SHA="$(git rev-parse HEAD)"
+          test -n "$BASE_SHA"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+          test -f common/scripts/veux_update_engine.py
+          test "$(git hash-object common/scripts/veux_update_engine.py)" = "$EXPECTED_ENGINE_BLOB"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("common/scripts/veux_update_engine.py")
+          text = path.read_text()
+
+          old = (
+              '    data = image.read_bytes()\n'
+              '    for marker in (b"@ReSukiSU", '
+              'targets["components"]["resukisu"]["commit"][:8].encode(), '
+              'b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f"BLOCKED: expected stale identity block exactly once; "
+                  f"count={text.count(old)}"
+              )
+
+          if 'identity = f' in text and 'resukisu["tag"]' in text:
+              raise SystemExit("BLOCKED: dynamic identity fix already appears present")
+
+          print("OLD_IDENTITY_BLOCK=EXACTLY_ONE")
+          print("ENGINE_PREFLIGHT=PASS")
+          PY
+
+      - name: Apply minimal identity fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("common/scripts/veux_update_engine.py")
+          text = path.read_text()
+
+          old = (
+              '    data = image.read_bytes()\n'
+              '    for marker in (b"@ReSukiSU", '
+              'targets["components"]["resukisu"]["commit"][:8].encode(), '
+              'b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          new = (
+              '    data = image.read_bytes()\n'
+              '    resukisu = targets["components"]["resukisu"]\n'
+              '    identity = '
+              'f\'{resukisu["tag"]}-{resukisu["commit"][:8]}\'.encode()\n'
+              '    for marker in (identity, '
+              'resukisu["commit"][:8].encode(), b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f"BLOCKED: replacement source count={text.count(old)}"
+              )
+
+          updated = text.replace(old, new, 1)
+
+          if updated.count('b"@ReSukiSU"') != 0:
+              raise SystemExit("BLOCKED: stale fixed project-name marker remains")
+          if updated.count('identity = f') != 1:
+              raise SystemExit("BLOCKED: dynamic identity assignment count invalid")
+          if updated.count('resukisu["tag"]') != 1:
+              raise SystemExit("BLOCKED: ReSukiSU tag identity count invalid")
+
+          path.write_text(updated)
+
+          print("MINIMAL_ENGINE_PATCH=PASS")
+          print("PATCHED_FILES_EXPECTED=1")
+          PY
+
+      - name: Python syntax and complete control-plane host tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m py_compile common/scripts/veux_update_engine.py
+
+          python3 common/scripts/test_veux_update_engine.py
+          python3 common/scripts/test_veux_release.py
+          python3 common/scripts/test_veux_current_components.py
+          python3 common/scripts/test_veux_device_fixes.py
+          python3 common/scripts/test_veux_rpm_fixes.py
+          python3 common/scripts/test_veux_config_compat.py
+          python3 common/scripts/test_veux_source_transport.py
+
+          echo "CONTROL_PLANE_HOST_TESTS=PASS"
+
+      - name: Validate current candidate identity semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          candidate = json.loads(
+              Path("common/contracts/UPSTREAM_CANDIDATE.json").read_text()
+          )
+
+          if candidate.get("status") not in {
+              "build-preflight-pass",
+              "review-required",
+              "build-preflight-blocked",
+          }:
+              raise SystemExit(
+                  "BLOCKED: unexpected candidate status: "
+                  + str(candidate.get("status"))
+              )
+
+          rs = candidate["components"]["resukisu"]
+          tag = str(rs.get("tag", ""))
+          commit = str(rs.get("commit", ""))
+
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tag):
+              raise SystemExit("BLOCKED: unsafe or missing ReSukiSU tag")
+          if not re.fullmatch(r"[0-9a-f]{40}", commit):
+              raise SystemExit("BLOCKED: invalid ReSukiSU commit")
+
+          identity = f"{tag}-{commit[:8]}"
+          if not re.fullmatch(
+              r"[A-Za-z0-9][A-Za-z0-9._-]*-[0-9a-f]{8}",
+              identity,
+          ):
+              raise SystemExit("BLOCKED: invalid dynamic image identity")
+
+          print("CANDIDATE_STATUS=" + str(candidate.get("status")))
+          print("RESUKISU_IDENTITY=" + identity)
+          print("DYNAMIC_IDENTITY_SEMANTICS=PASS")
+          PY
+
+      - name: Exact diff and stale-marker gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --check
+
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 1
+          test "$changed" = "common/scripts/veux_update_engine.py"
+
+          ! grep -Fq 'b"@ReSukiSU"' common/scripts/veux_update_engine.py
+          grep -Fq 'identity = f' common/scripts/veux_update_engine.py
+          grep -Fq 'resukisu["tag"]' common/scripts/veux_update_engine.py
+
+          echo "PATCH_SCOPE=ONE_FILE"
+          echo "STALE_FIXED_NAME_MARKER=ABSENT"
+          echo "DIFF_GATE=PASS"
+
+      - name: Commit validated fix to main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test -n "${BASE_SHA:-}"
+
+          remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$remote_head"
+
+          if [ "$remote_head" != "$BASE_SHA" ]; then
+            echo "::error::main moved after validation; refusing write"
+            echo "BASE_SHA=$BASE_SHA"
+            echo "REMOTE_HEAD=$remote_head"
+            exit 1
+          fi
+
+          git add -- common/scripts/veux_update_engine.py
+
+          staged="$(git diff --cached --name-only)"
+          test "$staged" = "common/scripts/veux_update_engine.py"
+          git diff --cached --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit \
+            -m "Fix ReSukiSU BakaSU image identity validation [skip ci]"
+
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+
+          git push origin HEAD:refs/heads/main
+
+          new_head="$(git rev-parse HEAD)"
+          test -n "$new_head"
+          echo "FIX_COMMIT=$new_head"
+          echo "REPOSITORY_FIX=PASS"
