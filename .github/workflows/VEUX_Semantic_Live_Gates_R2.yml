@@ -1,0 +1,419 @@
+# Manual migration only. No kernel build; no automatic candidate promotion.
+name: VEUX - Semantic Live Gates R2
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: write
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+concurrency:
+  group: veux-v4-daily-upstream-candidate-main
+  cancel-in-progress: false
+jobs:
+  migrate:
+    name: Migrate the two live files and run regression tests
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - name: Checkout latest main after concurrency lock
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: main
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Prepare isolated Python environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v python3
+        command -v git
+        command -v gcc
+        command -v make
+        VENV="$RUNNER_TEMP/veux-semantic-r2-python"
+        if ! python3 -m venv "$VENV"; then
+          timeout --kill-after=10s 120s sudo -n apt-get \
+            -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 update
+          timeout --kill-after=10s 120s sudo -n apt-get \
+            -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            install -y --no-install-recommends python3-venv
+          python3 -m venv "$VENV"
+        fi
+        PY="$VENV/bin/python"
+        "$PY" -m pip install --disable-pip-version-check --no-input \
+          --only-binary=:all: --timeout 30 --retries 2 \
+          ruamel.yaml==0.19.1 PyYAML==6.0.3
+        "$PY" -m pip check
+        "$PY" -c 'from ruamel.yaml import YAML; import yaml; print("PYTHON_IMPORTS=PASS")'
+        echo "PY=$PY" >> "$GITHUB_ENV"
+      timeout-minutes: 8
+    - name: Create AST migrator and validate the current inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "Chrizz100/veux-nongki-universal-kernel"
+        test "$(git branch --show-current)" = "main"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        BASE_SHA="$(git rev-parse HEAD)"
+        REPORTS="$RUNNER_TEMP/veux-semantic-r2-reports"
+        MIGRATOR="$RUNNER_TEMP/veux-semantic-r2-migrate.py"
+        mkdir -p "$REPORTS"
+        echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+        echo "REPORTS=$REPORTS" >> "$GITHUB_ENV"
+        echo "MIGRATOR=$MIGRATOR" >> "$GITHUB_ENV"
+        cat > "$MIGRATOR" <<'MIGRATION_PY'
+        HELPER_SOURCE = 'def resukisu_image_identity(entry):\n    """Return the target\'s tag/commit marker, independent of project branding.\n\n    The normalized build writes these values from the same target metadata.\n    No historical version, engine digest, or project name is prescribed here.\n    """\n    require(isinstance(entry, dict), "invalid KernelSU target metadata")\n    tag = entry.get("tag")\n    commit = entry.get("commit")\n    require(isinstance(tag, str) and\n            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tag),\n            "missing or unsafe KernelSU target tag")\n    require(isinstance(commit, str) and\n            re.fullmatch(r"[0-9a-f]{40}", commit),\n            "invalid KernelSU target commit")\n    return f"{tag}-{commit[:8]}".encode("ascii")\n'
+        TEST_SOURCE = 'class SemanticLiveIdentityTests(unittest.TestCase):\n    """Target-based identity regression tests; no kernel compilation is performed."""\n\n    @staticmethod\n    def target(seed=b"semantic-live-fixture"):\n        return {"tag": "v-test.1", "commit": hashlib.sha1(seed).hexdigest()}\n\n    def test_identity_uses_each_target_not_a_historical_version(self):\n        for seed, tag in ((b"a", "v-test.1"), (b"b", "v-next.8-rc2"),\n                          (b"c", "custom_edition")):\n            entry = self.target(seed)\n            entry["tag"] = tag\n            with self.subTest(tag=tag):\n                self.assertEqual(e.resukisu_image_identity(entry),\n                                 (tag + "-" + entry["commit"][:8]).encode())\n\n    def test_invalid_target_metadata_is_rejected(self):\n        good = self.target()\n        cases = [None, {}, [], dict(good, tag=None), dict(good, tag=""),\n                 dict(good, tag="bad\\nname"), dict(good, tag="../escape"),\n                 dict(good, tag="tag$(command)"), dict(good, tag="x" * 129),\n                 dict(good, commit=None), dict(good, commit="short"),\n                 dict(good, commit="g" * 40), dict(good, commit="0" * 39),\n                 dict(good, commit="0" * 41)]\n        for entry in cases:\n            with self.subTest(entry=entry), self.assertRaises(e.Blocked):\n                e.resukisu_image_identity(entry)\n\n    def compile_probe(self, payload, entry=None, missing_object=None,\n                      compiler_error=False, dtb_error=False):\n        """Exercise the real compile_kernel validator with simulated compiler output."""\n        entry = self.target() if entry is None else entry\n        label = "5.4.274"\n        with tempfile.TemporaryDirectory() as directory:\n            work = Path(directory)\n            source = work / "source"\n            original_out = source / "original-out"\n            original_out.mkdir(parents=True)\n            (original_out / ".config").write_text("CONFIG_KSU=y\\n")\n            output = work / "build"\n            policy = {"lineages": {label: {"warning_limit": 0,\n                      "dtb": {"path": "arch/arm64/boot/dts/fixture.dtb"}}}}\n            state = {"source": str(source), "variables": ["O=original-out"],\n                     "env": {"PATH": os.environ.get("PATH", "")},\n                     "dtb_reference": {"fixture": True}}\n            targets = {"components": {"resukisu": entry}}\n            objects = ("fs/nomount/nomount.o", "fs/susfs.o",\n                       "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a")\n\n            def fake_command(argv, **kwargs):\n                args = [str(value) for value in argv]\n                log = kwargs.get("log")\n                if log is not None:\n                    Path(log).write_text("")\n                if args[-1] == "kernelversion":\n                    return label\n                if args[-1] == "kernelrelease":\n                    return label + "-semantic-test"\n                if "Image" in args and "dtbs" in args:\n                    image = output / "arch/arm64/boot/Image"\n                    image.parent.mkdir(parents=True, exist_ok=True)\n                    image.write_bytes(payload + b"\\0" * (1024 * 1024 + 1))\n                    dtb = output / policy["lineages"][label]["dtb"]["path"]\n                    dtb.parent.mkdir(parents=True, exist_ok=True)\n                    dtb.write_bytes(b"simulated-dtb")\n                    for name in objects:\n                        if name != missing_object:\n                            p = output / name\n                            p.parent.mkdir(parents=True, exist_ok=True)\n                            p.write_bytes(b"simulated-object")\n                    if compiler_error:\n                        Path(log).write_text("error: simulated compiler failure\\n")\n                return ""\n\n            with mock.patch.object(e, "config", return_value=policy), \\\n                 mock.patch.object(e, "run", side_effect=fake_command), \\\n                 mock.patch.object(e, "validate_build_config"), \\\n                 mock.patch.object(e, "verify_dtb",\n                                   side_effect=e.Blocked("simulated DTB mismatch")\n                                   if dtb_error else None):\n                try:\n                    _, result = e.compile_kernel(label, state, targets, work, 1)\n                except e.Blocked:\n                    self.assertFalse((work / "build-result.json").exists())\n                    raise\n            self.assertFalse(result["device"])\n            return result\n\n    def test_image_accepts_both_names_and_no_name(self):\n        marker = e.resukisu_image_identity(self.target())\n        for suffix in (b"@ReSukiSU", b"@BakaSU", b"@FutureSU", b""):\n            with self.subTest(suffix=suffix):\n                result = self.compile_probe(marker + suffix + b"\\0susfs:\\0NoMount:\\0")\n                self.assertTrue(result["compile"])  # simulated compiler output only\n\n    def test_image_rejects_wrong_tag_commit_and_separate_legacy_markers(self):\n        target = self.target()\n        good = e.resukisu_image_identity(target)\n        wrong = e.resukisu_image_identity(self.target(b"different-target"))\n        for payload in (wrong, b"wrong-tag-" + target["commit"][:8].encode(),\n                        b"@BakaSU\\0" + target["commit"][:8].encode(),\n                        good.replace(b"v-test.1", b"v-wrong.2")):\n            with self.subTest(payload=payload), self.assertRaises(e.Blocked):\n                self.compile_probe(payload + b"\\0susfs:\\0NoMount:\\0")\n\n    def test_susfs_nomount_and_compiled_objects_remain_required(self):\n        marker = e.resukisu_image_identity(self.target())\n        for payload in (marker + b"\\0susfs:\\0", marker + b"\\0NoMount:\\0"):\n            with self.subTest(payload=payload), self.assertRaises(e.Blocked):\n                self.compile_probe(payload)\n        for name in ("fs/nomount/nomount.o", "fs/susfs.o",\n                     "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a"):\n            with self.subTest(object=name), self.assertRaises(e.Blocked):\n                self.compile_probe(marker + b"\\0susfs:\\0NoMount:\\0", missing_object=name)\n\n    def test_other_validation_failures_are_not_turned_into_success(self):\n        payload = e.resukisu_image_identity(self.target()) + b"\\0susfs:\\0NoMount:\\0"\n        for kwargs in ({"compiler_error": True}, {"dtb_error": True}):\n            with self.subTest(kwargs=kwargs), self.assertRaises(e.Blocked):\n                self.compile_probe(payload, **kwargs)\n'
+
+        import argparse
+        import ast
+        import difflib
+        import json
+        from pathlib import Path
+
+        # HELPER_SOURCE and TEST_SOURCE are embedded from separately parsed Python files.
+        ENGINE = "common/scripts/veux_update_engine.py"
+        TESTS = "common/scripts/test_veux_device_fixes.py"
+        MUTABLE_PATHS = {ENGINE, "common/scripts/veux_release.py"}
+
+
+        def ensure(ok, message):
+            if not ok:
+                raise ValueError(message)
+
+
+        def same(a, b):
+            return ast.dump(a, include_attributes=False) == ast.dump(b, include_attributes=False)
+
+
+        def parse(source):
+            return ast.parse(source.decode("utf-8"))
+
+
+        def bounds(source, node):
+            lines = source.splitlines(keepends=True)
+            return (sum(map(len, lines[:node.lineno - 1])) + node.col_offset,
+                    sum(map(len, lines[:node.end_lineno - 1])) + node.end_col_offset)
+
+
+        def changes(source, edits):
+            last = len(source) + 1
+            for start, end, payload in sorted(edits, reverse=True):
+                ensure(0 <= start <= end <= last, "overlapping migration edits")
+                source = source[:start] + payload + source[end:]
+                last = start
+            return source
+
+
+        def functions(tree, name):
+            return [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
+
+
+        def patched_engine(source):
+            tree = parse(source)
+            candidates = functions(tree, "compile_kernel")
+            ensure(len(candidates) == 1, "compile_kernel must exist once at module scope")
+            compiler = candidates[0]
+            expected_loop = ast.parse('''for marker in (b"@ReSukiSU", targets["components"]["resukisu"]["commit"][:8].encode(), b"susfs:", b"NoMount:"):
+            require(marker in data, f"Image identity missing: {marker!r}")
+        ''').body[0]
+            new_call = ast.parse('resukisu_image_identity(targets["components"]["resukisu"])', mode="eval").body
+            edited_loop = ast.parse(ast.unparse(expected_loop)).body[0]
+            edited_loop.iter.elts[0] = new_call
+            old_nodes = [n for n in compiler.body if same(n, expected_loop)]
+            new_nodes = [n for n in compiler.body if same(n, edited_loop)]
+            ensure(len(old_nodes) + len(new_nodes) == 1,
+                   "expected one supported identity-check loop; no writes performed")
+            helpers = functions(tree, "resukisu_image_identity")
+            ensure(len(helpers) <= 1, "duplicate identity helper")
+            helper_node = ast.parse(HELPER_SOURCE).body[0]
+            edits = []
+            if helpers:
+                ensure(same(helpers[0], helper_node),
+                       "existing identity helper differs; refusing to overwrite custom code")
+            else:
+                start, _ = bounds(source, compiler)
+                edits.append((start, start, HELPER_SOURCE.rstrip().encode() + b"\n\n\n"))
+            if old_nodes:
+                start, end = bounds(source, old_nodes[0].iter.elts[0])
+                edits.append((start, end, ast.unparse(new_call).encode()))
+            updated = changes(source, edits)
+            compiled = parse(updated)
+            actual_compiler = functions(compiled, "compile_kernel")[0]
+            ensure(any(same(n, edited_loop) for n in actual_compiler.body), "new identity loop missing")
+            # Prove the complete old compiler differs in exactly the marker expression.
+            before_ast = ast.parse(ast.unparse(compiler)).body[0]
+            for index, node in enumerate(before_ast.body):
+                if same(node, expected_loop):
+                    before_ast.body[index] = edited_loop
+            ensure(same(before_ast, actual_compiler), "unexpected compiler change")
+            return updated
+
+
+        def live_hash_pin(node):
+            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+                return None
+            call = node.value
+            if not (isinstance(call.func, ast.Attribute) and call.func.attr == "assertEqual"
+                    and isinstance(call.func.value, ast.Name) and call.func.value.id == "self"
+                    and len(call.args) == 2 and not call.keywords):
+                return None
+            for index in (0, 1):
+                digest_call, expected = call.args[index], call.args[1-index]
+                if not (isinstance(digest_call, ast.Call) and len(digest_call.args) == 1
+                        and same(digest_call.func, ast.parse("e.digest", mode="eval").body)
+                        and isinstance(expected, ast.Constant) and isinstance(expected.value, str)):
+                    continue
+                p = digest_call.args[0]
+                if (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Div)
+                        and same(p.left, ast.parse("e.REPO", mode="eval").body)
+                        and isinstance(p.right, ast.Constant) and p.right.value in MUTABLE_PATHS):
+                    # The old expected hash can change. It is deliberately NOT hard-coded.
+                    ensure(len(expected.value) == 64 and all(c in "0123456789abcdef" for c in expected.value),
+                           "unexpected form of mutable-file assertion")
+                    return p.right.value
+            return None
+
+
+        def patched_tests(source):
+            tree = parse(source)
+            classes = [c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "DeviceTests"]
+            ensure(len(classes) == 1, "DeviceTests class must exist exactly once")
+            cls = classes[0]
+            removals = []
+            paths = []
+            for method in cls.body:
+                if isinstance(method, ast.FunctionDef):
+                    for statement in method.body:
+                        path = live_hash_pin(statement)
+                        if path:
+                            ensure(len(method.body) > 2, "refusing to leave an empty test method")
+                            start, end = bounds(source, statement)
+                            # Replace the whole physical statement, including indentation/newline.
+                            start -= statement.col_offset
+                            if source[end:end+2] == b"\r\n":
+                                end += 2
+                            elif source[end:end+1] == b"\n":
+                                end += 1
+                            removals.append((start, end, b""))
+                            paths.append(path)
+            suites = [c for c in tree.body if isinstance(c, ast.ClassDef)
+                      and c.name == "SemanticLiveIdentityTests"]
+            ensure(len(suites) <= 1, "duplicate semantic test suite")
+            ensure((len(paths) == 2 and set(paths) == MUTABLE_PATHS) or (not paths and len(suites) == 1),
+                   "mutable-file assertions are missing/duplicated; refusing partial migration")
+            expected_suite = ast.parse(TEST_SOURCE).body[0]
+            if suites:
+                ensure(same(suites[0], expected_suite), "existing semantic tests differ; no overwrite")
+            else:
+                guards = [n for n in tree.body if isinstance(n, ast.If)
+                          and same(n.test, ast.parse("__name__ == '__main__'", mode="eval").body)]
+                ensure(len(guards) == 1, "unittest main guard must be unique")
+                start, _ = bounds(source, guards[0])
+                removals.append((start, start, TEST_SOURCE.rstrip().encode() + b"\n\n\n"))
+            updated = changes(source, removals)
+            after = parse(updated)
+            ensure(not any(live_hash_pin(n) for n in ast.walk(after)), "live-file hash assertion remains")
+            # Compare all pre-existing AST nodes: only the two assertions may disappear.
+            before_copy = ast.parse(ast.unparse(tree))
+            for node in ast.walk(before_copy):
+                if isinstance(node, ast.FunctionDef):
+                    node.body = [n for n in node.body if not live_hash_pin(n)]
+            before_copy.body = [n for n in before_copy.body if not
+                                (isinstance(n, ast.ClassDef) and n.name == "SemanticLiveIdentityTests")]
+            after.body = [n for n in after.body if not
+                          (isinstance(n, ast.ClassDef) and n.name == "SemanticLiveIdentityTests")]
+            ensure(same(before_copy, after), "an unrelated test was altered")
+            return updated
+
+
+        def plan(root):
+            root = Path(root).resolve()
+            original, updated = {}, {}
+            for name, transform in ((ENGINE, patched_engine), (TESTS, patched_tests)):
+                p = root / name
+                ensure(p.is_file() and not p.is_symlink(), "missing or linked migration input: " + name)
+                ensure(p.resolve().is_relative_to(root), "migration path escapes checkout")
+                for parent in p.relative_to(root).parents:
+                    ensure(not (root / parent).is_symlink(), "linked parent path")
+                original[name] = p.read_bytes()
+                updated[name] = transform(original[name])
+                compile(updated[name], name, "exec")
+            return original, updated
+
+
+        def main():
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--root", type=Path, required=True)
+            parser.add_argument("--report", type=Path, required=True)
+            parser.add_argument("--apply", action="store_true")
+            args = parser.parse_args()
+            before, after = plan(args.root)
+            changed = [name for name in before if before[name] != after[name]]
+            if args.apply:
+                for name in before:
+                    ensure((args.root / name).read_bytes() == before[name], "input changed during migration")
+                written = []
+                try:
+                    for name in changed:
+                        (args.root / name).write_bytes(after[name])
+                        written.append(name)
+                except Exception:
+                    for name in written:
+                        (args.root / name).write_bytes(before[name])
+                    raise
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(json.dumps({"status": "applied" if args.apply else "checked",
+                "changed_files": changed, "source_selection": "Python AST, not exact text",
+                "kernel_compile_performed": False, "repository_push_performed": False}, indent=2) + "\n")
+            diff = "".join("".join(difflib.unified_diff(before[name].decode().splitlines(True),
+                after[name].decode().splitlines(True), "a/" + name, "b/" + name)) for name in changed)
+            args.report.with_suffix(".diff").write_text(diff)
+            print("MIGRATION_PLAN=PASS; FILES=" + str(len(changed)))
+
+
+        if __name__ == "__main__":
+            main()
+        MIGRATION_PY
+        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/preflight.json"
+    - name: Run the seven existing suites before changing files
+      shell: bash
+      run: |
+        set -euo pipefail
+        for pass_id in 1; do
+          folder="$REPORTS/before-$pass_id"
+          mkdir -p "$folder"
+          while IFS= read -r test_file; do
+            log="$folder/$(basename "$test_file").log"
+            echo "Testing $test_file ($pass_id)"
+            if ! "$PY" "$test_file" > "$log" 2>&1; then
+              cat "$log"
+              echo "::error::Host test failed: $test_file"
+              exit 1
+            fi
+            tail -5 "$log"
+          done <<'SUITES'
+        common/scripts/test_veux_update_engine.py
+        common/scripts/test_veux_release.py
+        common/scripts/test_veux_current_components.py
+        common/scripts/test_veux_device_fixes.py
+        common/scripts/test_veux_rpm_fixes.py
+        common/scripts/test_veux_config_compat.py
+        common/scripts/test_veux_source_transport.py
+        SUITES
+          printf 'HOST_TEST_before=before; PASS=%s; SUITES=7/7
+        ' "$pass_id"
+        done
+    - name: Apply both coordinated changes
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -z "$(git status --porcelain --untracked-files=all)"
+        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/applied.json" --apply
+        git diff --check
+        git diff --stat
+    - name: Run all seven suites twice including the new identity tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        for pass_id in 1 2; do
+          folder="$REPORTS/after-$pass_id"
+          mkdir -p "$folder"
+          while IFS= read -r test_file; do
+            log="$folder/$(basename "$test_file").log"
+            echo "Testing $test_file ($pass_id)"
+            if ! "$PY" "$test_file" > "$log" 2>&1; then
+              cat "$log"
+              echo "::error::Host test failed: $test_file"
+              exit 1
+            fi
+            tail -5 "$log"
+          done <<'SUITES'
+        common/scripts/test_veux_update_engine.py
+        common/scripts/test_veux_release.py
+        common/scripts/test_veux_current_components.py
+        common/scripts/test_veux_device_fixes.py
+        common/scripts/test_veux_rpm_fixes.py
+        common/scripts/test_veux_config_compat.py
+        common/scripts/test_veux_source_transport.py
+        SUITES
+          printf 'HOST_TEST_after=after; PASS=%s; SUITES=7/7
+        ' "$pass_id"
+        done
+    - name: Verify repeat application and exact change scope
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/repeat.json" --apply
+        "$PY" - <<'PY_SCOPE'
+        import json, os, subprocess
+        from pathlib import Path
+        allowed = {"common/scripts/veux_update_engine.py", "common/scripts/test_veux_device_fixes.py"}
+        repeat = json.loads((Path(os.environ["REPORTS"]) / "repeat.json").read_text())
+        if repeat["changed_files"]:
+            raise SystemExit("Migration was not idempotent")
+        def names(*args):
+            raw = subprocess.check_output(["git", *args, "-z"])
+            return {x.decode() for x in raw.split(b"\0") if x}
+        if not names("diff", "--name-only") <= allowed:
+            raise SystemExit("Unexpected modified file")
+        if names("diff", "--cached", "--name-only"):
+            raise SystemExit("Unexpected staged changes")
+        if names("ls-files", "--others", "--exclude-standard"):
+            raise SystemExit("Unexpected new repository files")
+        print("IDEMPOTENCY=PASS; CHANGE_SCOPE=PASS; KERNEL_BUILD=NOT_RUN")
+        PY_SCOPE
+        git diff --check
+    - name: Commit only tested changes without force-push
+      shell: bash
+      run: |
+        set -euo pipefail
+        if git diff --quiet; then
+          echo "SEMANTIC_LIVE_GATES=ALREADY_INSTALLED"
+          printf 'Die Aenderung ist bereits installiert; alle Hosttests bestanden.\n' >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+        if [ "$remote_head" != "$BASE_SHA" ]; then
+          echo "::error::main changed during testing; no repository update performed."
+          exit 1
+        fi
+        git add -- common/scripts/veux_update_engine.py common/scripts/test_veux_device_fixes.py
+        "$PY" - <<'PY_STAGED'
+        import subprocess
+        allowed = {b"common/scripts/veux_update_engine.py", b"common/scripts/test_veux_device_fixes.py"}
+        actual = {x for x in subprocess.check_output(["git", "diff", "--cached", "--name-only", "-z"]).split(b"\0") if x}
+        if not actual or not actual <= allowed:
+            raise SystemExit("Unexpected staged scope")
+        PY_STAGED
+        git diff --cached --check
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git commit -m "Use target-based image identity and semantic live tests [skip ci]"
+        AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+        echo "::add-mask::$AUTH_HEADER"
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+        git push origin HEAD:refs/heads/main
+        new_head="$(git rev-parse HEAD)"
+        remote_after="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+        if [ "$remote_after" != "$new_head" ]; then
+          echo "::error::Push succeeded, but remote main changed afterwards. Recheck before building."
+          exit 1
+        fi
+        printf '%s\n' "$new_head" > "$REPORTS/installed-commit.txt"
+        echo "SEMANTIC_LIVE_GATES=INSTALLED; REMOTE_COMMIT_VERIFIED=PASS"
+        printf 'Semantische Live-Pruefungen installiert: `%s`\n\nSieben Host-Testreihen vor der Aenderung und zweimal danach bestanden. Kein Kernel gebaut, kein Device-PASS abgeleitet.\n' "$new_head" >> "$GITHUB_STEP_SUMMARY"
+      env:
+        GH_TOKEN: ${{ github.token }}
+    - name: Upload test logs and exact migration diff
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-Semantic-R2-Reports-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/veux-semantic-r2-reports/
+        if-no-files-found: warn
+        retention-days: 14
