@@ -737,6 +737,24 @@ def preserve_diagnostics(stage, public, diag):
             shutil.copy2(public / name, diag / name)
 
 
+def resukisu_image_identity(entry):
+    """Return the target's tag/commit marker, independent of project branding.
+
+    The normalized build writes these values from the same target metadata.
+    No historical version, engine digest, or project name is prescribed here.
+    """
+    require(isinstance(entry, dict), "invalid KernelSU target metadata")
+    tag = entry.get("tag")
+    commit = entry.get("commit")
+    require(isinstance(tag, str) and
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tag),
+            "missing or unsafe KernelSU target tag")
+    require(isinstance(commit, str) and
+            re.fullmatch(r"[0-9a-f]{40}", commit),
+            "invalid KernelSU target commit")
+    return f"{tag}-{commit[:8]}".encode("ascii")
+
+
 def compile_kernel(label, state, targets, work, jobs):
     src = Path(state["source"])
     values = dict(v.split("=", 1) for v in state["variables"])
@@ -786,7 +804,7 @@ def compile_kernel(label, state, targets, work, jobs):
                 "drivers/kernelsu/built-in.a"):
         require((out / obj).is_file(), f"required compiled object missing: {obj}")
     data = image.read_bytes()
-    for marker in (b"@ReSukiSU", targets["components"]["resukisu"]["commit"][:8].encode(), b"susfs:", b"NoMount:"):
+    for marker in (resukisu_image_identity(targets['components']['resukisu']), targets["components"]["resukisu"]["commit"][:8].encode(), b"susfs:", b"NoMount:"):
         require(marker in data, f"Image identity missing: {marker!r}")
     release = run([*base, "-s", "kernelrelease"], env=env).splitlines()[-1]
     require(release.startswith(label + "-"), "kernelrelease identity changed")

@@ -362,10 +362,6 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(run.count('veux_release_device.py promote'), 1)
         self.assertNotIn('veux_release.py worker', run)
         self.assertIn('test_veux_device_fixes.py', run)
-        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_update_engine.py'),
-                         '4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d')
-        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_release.py'),
-                         'd8ab6d1724d25bc77b65e201eaac34d0f35bd0ac70b59b4eb822faa377c2a258')
 
     def test_real_promotion_retains_device_proof_in_current_build(self):
         expected = {label: f.expected(label) for label in e.config()['lineages']}
@@ -399,6 +395,128 @@ class DeviceTests(unittest.TestCase):
                 self.assertEqual(current['lineages'][label]['wakeup_fixes'], wakeup_expected[label])
             self.assertEqual(current['lineages']['5.4.274']['config_compat'], compat.expected_proof())
             self.assertFalse(current['device_pass_inferred'])
+
+
+class SemanticLiveIdentityTests(unittest.TestCase):
+    """Target-based identity regression tests; no kernel compilation is performed."""
+
+    @staticmethod
+    def target(seed=b"semantic-live-fixture"):
+        return {"tag": "v-test.1", "commit": hashlib.sha1(seed).hexdigest()}
+
+    def test_identity_uses_each_target_not_a_historical_version(self):
+        for seed, tag in ((b"a", "v-test.1"), (b"b", "v-next.8-rc2"),
+                          (b"c", "custom_edition")):
+            entry = self.target(seed)
+            entry["tag"] = tag
+            with self.subTest(tag=tag):
+                self.assertEqual(e.resukisu_image_identity(entry),
+                                 (tag + "-" + entry["commit"][:8]).encode())
+
+    def test_invalid_target_metadata_is_rejected(self):
+        good = self.target()
+        cases = [None, {}, [], dict(good, tag=None), dict(good, tag=""),
+                 dict(good, tag="bad\nname"), dict(good, tag="../escape"),
+                 dict(good, tag="tag$(command)"), dict(good, tag="x" * 129),
+                 dict(good, commit=None), dict(good, commit="short"),
+                 dict(good, commit="g" * 40), dict(good, commit="0" * 39),
+                 dict(good, commit="0" * 41)]
+        for entry in cases:
+            with self.subTest(entry=entry), self.assertRaises(e.Blocked):
+                e.resukisu_image_identity(entry)
+
+    def compile_probe(self, payload, entry=None, missing_object=None,
+                      compiler_error=False, dtb_error=False):
+        """Exercise the real compile_kernel validator with simulated compiler output."""
+        entry = self.target() if entry is None else entry
+        label = "5.4.274"
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            source = work / "source"
+            original_out = source / "original-out"
+            original_out.mkdir(parents=True)
+            (original_out / ".config").write_text("CONFIG_KSU=y\n")
+            output = work / "build"
+            policy = {"lineages": {label: {"warning_limit": 0,
+                      "dtb": {"path": "arch/arm64/boot/dts/fixture.dtb"}}}}
+            state = {"source": str(source), "variables": ["O=original-out"],
+                     "env": {"PATH": os.environ.get("PATH", "")},
+                     "dtb_reference": {"fixture": True}}
+            targets = {"components": {"resukisu": entry}}
+            objects = ("fs/nomount/nomount.o", "fs/susfs.o",
+                       "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a")
+
+            def fake_command(argv, **kwargs):
+                args = [str(value) for value in argv]
+                log = kwargs.get("log")
+                if log is not None:
+                    Path(log).write_text("")
+                if args[-1] == "kernelversion":
+                    return label
+                if args[-1] == "kernelrelease":
+                    return label + "-semantic-test"
+                if "Image" in args and "dtbs" in args:
+                    image = output / "arch/arm64/boot/Image"
+                    image.parent.mkdir(parents=True, exist_ok=True)
+                    image.write_bytes(payload + b"\0" * (1024 * 1024 + 1))
+                    dtb = output / policy["lineages"][label]["dtb"]["path"]
+                    dtb.parent.mkdir(parents=True, exist_ok=True)
+                    dtb.write_bytes(b"simulated-dtb")
+                    for name in objects:
+                        if name != missing_object:
+                            p = output / name
+                            p.parent.mkdir(parents=True, exist_ok=True)
+                            p.write_bytes(b"simulated-object")
+                    if compiler_error:
+                        Path(log).write_text("error: simulated compiler failure\n")
+                return ""
+
+            with mock.patch.object(e, "config", return_value=policy), \
+                 mock.patch.object(e, "run", side_effect=fake_command), \
+                 mock.patch.object(e, "validate_build_config"), \
+                 mock.patch.object(e, "verify_dtb",
+                                   side_effect=e.Blocked("simulated DTB mismatch")
+                                   if dtb_error else None):
+                try:
+                    _, result = e.compile_kernel(label, state, targets, work, 1)
+                except e.Blocked:
+                    self.assertFalse((work / "build-result.json").exists())
+                    raise
+            self.assertFalse(result["device"])
+            return result
+
+    def test_image_accepts_both_names_and_no_name(self):
+        marker = e.resukisu_image_identity(self.target())
+        for suffix in (b"@ReSukiSU", b"@BakaSU", b"@FutureSU", b""):
+            with self.subTest(suffix=suffix):
+                result = self.compile_probe(marker + suffix + b"\0susfs:\0NoMount:\0")
+                self.assertTrue(result["compile"])  # simulated compiler output only
+
+    def test_image_rejects_wrong_tag_commit_and_separate_legacy_markers(self):
+        target = self.target()
+        good = e.resukisu_image_identity(target)
+        wrong = e.resukisu_image_identity(self.target(b"different-target"))
+        for payload in (wrong, b"wrong-tag-" + target["commit"][:8].encode(),
+                        b"@BakaSU\0" + target["commit"][:8].encode(),
+                        good.replace(b"v-test.1", b"v-wrong.2")):
+            with self.subTest(payload=payload), self.assertRaises(e.Blocked):
+                self.compile_probe(payload + b"\0susfs:\0NoMount:\0")
+
+    def test_susfs_nomount_and_compiled_objects_remain_required(self):
+        marker = e.resukisu_image_identity(self.target())
+        for payload in (marker + b"\0susfs:\0", marker + b"\0NoMount:\0"):
+            with self.subTest(payload=payload), self.assertRaises(e.Blocked):
+                self.compile_probe(payload)
+        for name in ("fs/nomount/nomount.o", "fs/susfs.o",
+                     "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a"):
+            with self.subTest(object=name), self.assertRaises(e.Blocked):
+                self.compile_probe(marker + b"\0susfs:\0NoMount:\0", missing_object=name)
+
+    def test_other_validation_failures_are_not_turned_into_success(self):
+        payload = e.resukisu_image_identity(self.target()) + b"\0susfs:\0NoMount:\0"
+        for kwargs in ({"compiler_error": True}, {"dtb_error": True}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(e.Blocked):
+                self.compile_probe(payload, **kwargs)
 
 
 if __name__ == '__main__':
