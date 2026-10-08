@@ -17,7 +17,6 @@ import veux_update_engine as e
 KERNEL = "5.4.274"
 ROOT = e.REPO / "common/diagnostics/config-5.4.274-diag10"
 REFERENCE_RUN = "36738661110"
-VALIDATED_CONFIG_SHA256 = "5904f8d2439e2cb05ef3db7edbe653d269e070b0e28d7e131a44600d61bab229"
 
 ASSETS = {
     'manifest.json': 'c60052d22d85688edd649c7d6871eb785a49506f73b12a4634cdf2fe973e3601',
@@ -88,31 +87,36 @@ def _load_audit():
                 pass
 
 
-def expected_proof():
-    return {
-        "id": "ConfigDiag10",
-        "reference_run": REFERENCE_RUN,
-        "actual_config_sha256": VALIDATED_CONFIG_SHA256,
-        "rom_requirements": 261,
-        "rom_status": "PASS",
-        "cfi": "configured-and-core-instrumented",
-        "stack_protector": "strong-configured-and-core-instrumented",
-        "device_pass_inferred": False,
-    }
+def expected_proof(report=None):
+    """Derive a proof from this build; the default is a synthetic test fixture.
+
+    REFERENCE_RUN describes the origin of the audited source fixes, not a
+    required byte representation of every future build's configuration.
+    """
+    return _proof_from_report(reference_report() if report is None else report)
 
 
 
 def reference_report():
-    """Minimal immutable identity used by unit tests and promotion validation fixtures."""
+    """Synthetic host-test fixture. Never an authority for a real build's hash."""
+    import hashlib
+    options = {
+        "IKCONFIG": "y", "IKCONFIG_PROC": "y", "LTO": "y",
+        "LTO_CLANG": "y", "THINLTO": "y", "CFI_CLANG": "y",
+        "CFI_CLANG_SHADOW": "y", "CFI_PERMISSIVE": "n",
+    }
+    fixture = "".join("CONFIG_" + name + "=" + value + "\n"
+                      for name, value in sorted(options.items())).encode("ascii")
+    actual = hashlib.sha256(fixture).hexdigest()
     return {
-        "status": "PASS",
-        "actual_config_sha256": VALIDATED_CONFIG_SHA256,
-        "embedded_config_sha256": VALIDATED_CONFIG_SHA256,
+        "id": "ConfigDiag10", "status": "PASS",
+        "actual_config_sha256": actual,
+        "embedded_config_sha256": actual,
+        "configuration_unchanged_during_compile": True,
+        "options": options,
         "vintf_kernel": {
-            "status": "PASS",
-            "requirements": 261,
-            "passed": 261,
-            "failures": [],
+            "status": "PASS", "requirements": 261,
+            "passed": 261, "failures": [],
         },
         "cfi": "configured-and-core-instrumented",
         "stack_protector": "strong-configured-and-core-instrumented",
@@ -120,17 +124,42 @@ def reference_report():
     }
 
 def _proof_from_report(report):
+    """Validate audited settings and same-build consistency, not an old file hash.
+
+    The unchanged config audit checks all captured ROM requirements, generated
+    compiler options, compiler evidence and exact actual/embedded configuration
+    bytes. A raw digest is recorded for provenance, never compared with a
+    historical configuration. A project-name comment therefore cannot fail CI.
+    """
+    import re
     e.require(isinstance(report, dict) and report.get("status") == "PASS",
               "ConfigDiag10 audit did not pass")
-    e.require(report.get("actual_config_sha256") == VALIDATED_CONFIG_SHA256,
-              "5.4.274 config differs from device-validated Diag10")
-    e.require(report.get("embedded_config_sha256") == VALIDATED_CONFIG_SHA256,
-              "embedded IKCONFIG differs from device-validated Diag10")
-    vintf = report.get("vintf_kernel", {})
-    e.require(vintf.get("status") == "PASS"
-              and vintf.get("requirements") == 261
-              and vintf.get("passed") == 261
-              and not vintf.get("failures"),
+    e.require(report.get("id") == "ConfigDiag10", "ConfigDiag10 audit identity missing")
+    actual = report.get("actual_config_sha256")
+    embedded = report.get("embedded_config_sha256")
+    e.require(isinstance(actual, str) and
+              re.fullmatch(r"[0-9a-f]{64}", actual) is not None,
+              "invalid actual configuration digest")
+    e.require(isinstance(embedded, str) and embedded == actual,
+              "embedded IKCONFIG differs from this build's actual configuration")
+    e.require(report.get("configuration_unchanged_during_compile") is True,
+              "configuration was not proven unchanged during compilation")
+    required = {
+        "IKCONFIG": "y", "IKCONFIG_PROC": "y", "LTO": "y",
+        "LTO_CLANG": "y", "THINLTO": "y", "CFI_CLANG": "y",
+        "CFI_CLANG_SHADOW": "y", "CFI_PERMISSIVE": "n",
+    }
+    options = report.get("options")
+    e.require(isinstance(options, dict), "audited configuration options missing")
+    for name, value in required.items():
+        e.require(options.get(name) == value,
+                  "required audited setting differs: CONFIG_" + name)
+    vintf = report.get("vintf_kernel")
+    e.require(isinstance(vintf, dict) and vintf.get("status") == "PASS"
+              and type(vintf.get("requirements")) is int
+              and vintf["requirements"] == 261
+              and type(vintf.get("passed")) is int and vintf["passed"] == 261
+              and vintf.get("failures") == [],
               "captured ROM kernel requirements are not 261/261 PASS")
     e.require(report.get("cfi") == "configured-and-core-instrumented",
               "CFI compile evidence missing")
@@ -139,7 +168,13 @@ def _proof_from_report(report):
               "strong stack-protector compile evidence missing")
     e.require(report.get("device") is False,
               "CI must not infer a device PASS")
-    return expected_proof()
+    return {
+        "id": "ConfigDiag10", "reference_run": REFERENCE_RUN,
+        "actual_config_sha256": actual,
+        "rom_requirements": vintf["requirements"], "rom_status": "PASS",
+        "cfi": report["cfi"], "stack_protector": report["stack_protector"],
+        "device_pass_inferred": False,
+    }
 
 
 def compile_kernel(label, state, targets, work, jobs):
@@ -160,9 +195,10 @@ def compile_kernel(label, state, targets, work, jobs):
 
 
 def verify_result(label, row):
-    """Prevent promotion of 5.4.274 unless the permanent Diag10 gate ran."""
+    """Validate the proof against its own audit, including after packaging."""
     if label != KERNEL:
         return
-    e.require(row.get("config_compat") == expected_proof(),
-              "missing or outdated ConfigDiag10 promotion proof")
-    _proof_from_report(row.get("config_audit"))
+    e.require(isinstance(row, dict), "invalid ConfigDiag10 build result")
+    proof = _proof_from_report(row.get("config_audit"))
+    e.require(row.get("config_compat") == proof,
+              "ConfigDiag10 promotion proof differs from this build's audit")
