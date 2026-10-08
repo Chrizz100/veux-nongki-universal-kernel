@@ -1,0 +1,324 @@
+name: VEUX - BakaSU Engine Baseline Migration R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  EXPECTED_ENGINE_BLOB: 3a086bea430c46ef5bf5c75b94becbd9010ab93d
+  EXPECTED_DEVICE_TEST_BLOB: fb9468c57d75f37c0f9b0d35ced63c4367d65a29
+  OLD_ENGINE_SHA256: 4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d
+  NEW_ENGINE_SHA256: 4929c31b5eb891066b8c85410bd0488ef47a11e650e179a95c7bbb5b85b10d66
+
+concurrency:
+  group: veux-v4-daily-upstream-candidate-main
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Approve new engine baseline
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout latest main after concurrency lock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare proven Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VENV="$RUNNER_TEMP/veux-python"
+          rm -rf "$VENV"
+
+          if ! python3 -m venv "$VENV"; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3-venv
+            python3 -m venv "$VENV"
+          fi
+
+          PY="$VENV/bin/python"
+          "$PY" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+          "$PY" - <<'PY'
+          import ruamel.yaml
+          import yaml
+          print("RUAMEL_IMPORT=PASS")
+          print("PYYAML_IMPORT=PASS")
+          PY
+
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          echo "PYTHON_ENV=PASS"
+
+      - name: Exact two-file preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git branch --show-current)" = "main"
+
+          BASE_SHA="$(git rev-parse HEAD)"
+          test -n "$BASE_SHA"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+          test "$(git hash-object common/scripts/veux_update_engine.py)" = \
+            "$EXPECTED_ENGINE_BLOB"
+          test "$(git hash-object common/scripts/test_veux_device_fixes.py)" = \
+            "$EXPECTED_DEVICE_TEST_BLOB"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+
+          engine = Path("common/scripts/veux_update_engine.py").read_text()
+          tests = Path("common/scripts/test_veux_device_fixes.py").read_text()
+
+          stale = (
+              '    data = image.read_bytes()\n'
+              '    for marker in (b"@ReSukiSU", '
+              'targets["components"]["resukisu"]["commit"][:8].encode(), '
+              'b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          old_pin = (
+              "4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d"
+          )
+
+          if engine.count(stale) != 1:
+              raise SystemExit(
+                  f"BLOCKED: stale engine identity block count={engine.count(stale)}"
+              )
+          if tests.count(old_pin) != 1:
+              raise SystemExit(
+                  f"BLOCKED: old engine baseline pin count={tests.count(old_pin)}"
+              )
+
+          print("STALE_ENGINE_BLOCK=1")
+          print("OLD_BASELINE_PIN=1")
+          print("TWO_FILE_PREFLIGHT=PASS")
+          PY
+
+      - name: Apply coordinated engine and baseline-pin update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          engine_path = Path("common/scripts/veux_update_engine.py")
+          test_path = Path("common/scripts/test_veux_device_fixes.py")
+
+          engine = engine_path.read_text()
+          tests = test_path.read_text()
+
+          old = (
+              '    data = image.read_bytes()\n'
+              '    for marker in (b"@ReSukiSU", '
+              'targets["components"]["resukisu"]["commit"][:8].encode(), '
+              'b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          new = (
+              '    data = image.read_bytes()\n'
+              '    resukisu = targets["components"]["resukisu"]\n'
+              '    identity = '
+              'f\'{resukisu["tag"]}-{resukisu["commit"][:8]}\'.encode()\n'
+              '    for marker in (identity, '
+              'resukisu["commit"][:8].encode(), b"susfs:", b"NoMount:"):\n'
+              '        require(marker in data, '
+              'f"Image identity missing: {marker!r}")\n'
+          )
+
+          old_pin = (
+              "4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d"
+          )
+          new_pin = (
+              "4929c31b5eb891066b8c85410bd0488ef47a11e650e179a95c7bbb5b85b10d66"
+          )
+
+          if engine.count(old) != 1:
+              raise SystemExit(
+                  f"BLOCKED: engine replacement source count={engine.count(old)}"
+              )
+          if tests.count(old_pin) != 1:
+              raise SystemExit(
+                  f"BLOCKED: baseline replacement source count={tests.count(old_pin)}"
+              )
+
+          engine = engine.replace(old, new, 1)
+          tests = tests.replace(old_pin, new_pin, 1)
+
+          actual = hashlib.sha256(engine.encode()).hexdigest()
+          if actual != new_pin:
+              raise SystemExit(
+                  f"BLOCKED: patched engine SHA256 mismatch: {actual} != {new_pin}"
+              )
+
+          if engine.count('b"@ReSukiSU"') != 0:
+              raise SystemExit("BLOCKED: stale fixed ReSukiSU marker remains")
+          if engine.count('identity = f') != 1:
+              raise SystemExit("BLOCKED: dynamic identity block count changed")
+          if tests.count(new_pin) != 1 or tests.count(old_pin) != 0:
+              raise SystemExit("BLOCKED: baseline pin update is not exact")
+
+          engine_path.write_text(engine)
+          test_path.write_text(tests)
+
+          print("ENGINE_SHA256=" + actual)
+          print("ENGINE_BASELINE_UPDATE=PASS")
+          print("DEVICE_TEST_PIN_UPDATE=PASS")
+          PY
+
+      - name: Validate new baseline identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(sha256sum common/scripts/veux_update_engine.py | awk '{print $1}')" = \
+            "$NEW_ENGINE_SHA256"
+
+          "$PY" -m py_compile \
+            common/scripts/veux_update_engine.py \
+            common/scripts/test_veux_device_fixes.py
+
+          "$PY" - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path("common/scripts").resolve()))
+          import veux_update_engine as e
+
+          actual = e.digest(e.REPO / "common/scripts/veux_update_engine.py")
+          expected = "4929c31b5eb891066b8c85410bd0488ef47a11e650e179a95c7bbb5b85b10d66"
+          assert actual == expected, (actual, expected)
+
+          tests = Path("common/scripts/test_veux_device_fixes.py").read_text()
+          assert tests.count(expected) == 1
+          assert "4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d" not in tests
+
+          print("ENGINE_DIGEST_RUNTIME_CHECK=PASS")
+          print("DEVICE_TEST_BASELINE_PIN=PASS")
+          PY
+
+      - name: Run proven control-plane host tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+
+          echo "PROVEN_CONTROL_PLANE_TESTS=PASS"
+
+      - name: Run additional non-kernel regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" common/scripts/test_veux_diagnostic_retention.py
+          "$PY" common/scripts/test_veux_frozen_components.py
+          "$PY" common/scripts/test_veux_charger_diagnostic.py
+          "$PY" common/scripts/test_veux_zip_install.py
+
+          echo "ADDITIONAL_REGRESSION_TESTS=PASS"
+
+      - name: Prove exact two-file diff
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --check
+
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 2
+          printf '%s\n' "$changed" \
+            | grep -Fxq 'common/scripts/veux_update_engine.py'
+          printf '%s\n' "$changed" \
+            | grep -Fxq 'common/scripts/test_veux_device_fixes.py'
+
+          test "$(git diff --numstat | wc -l)" -eq 2
+
+          ! grep -Fq 'b"@ReSukiSU"' \
+            common/scripts/veux_update_engine.py
+          grep -Fq "$NEW_ENGINE_SHA256" \
+            common/scripts/test_veux_device_fixes.py
+
+          echo "PATCH_SCOPE=TWO_FILES"
+          echo "DIFF_GATE=PASS"
+
+      - name: Commit approved engine baseline to main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          test -n "${BASE_SHA:-}"
+
+          remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$remote_head"
+
+          if [ "$remote_head" != "$BASE_SHA" ]; then
+            echo "::error::main moved after validation; refusing write"
+            echo "BASE_SHA=$BASE_SHA"
+            echo "REMOTE_HEAD=$remote_head"
+            exit 1
+          fi
+
+          git add -- \
+            common/scripts/veux_update_engine.py \
+            common/scripts/test_veux_device_fixes.py
+
+          staged="$(git diff --cached --name-only)"
+          test "$(printf '%s\n' "$staged" | sed '/^$/d' | wc -l)" -eq 2
+          printf '%s\n' "$staged" \
+            | grep -Fxq 'common/scripts/veux_update_engine.py'
+          printf '%s\n' "$staged" \
+            | grep -Fxq 'common/scripts/test_veux_device_fixes.py'
+
+          git diff --cached --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit \
+            -m "Approve BakaSU-compatible engine baseline [skip ci]"
+
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+
+          git push origin HEAD:refs/heads/main
+
+          new_head="$(git rev-parse HEAD)"
+          echo "BASELINE_COMMIT=$new_head"
+          echo "ENGINE_SHA256=$NEW_ENGINE_SHA256"
+          echo "BASELINE_MIGRATION=PASS"
