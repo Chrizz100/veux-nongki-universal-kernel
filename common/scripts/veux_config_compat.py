@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 
 import veux_update_engine as e
+import veux_perf_compat as perf
 
 KERNEL = "5.4.274"
 ROOT = e.REPO / "common/diagnostics/config-5.4.274-diag10"
@@ -183,8 +184,11 @@ def compile_kernel(label, state, targets, work, jobs):
         return e.compile_kernel(label, state, targets, work, jobs)
 
     audit = _load_audit()
-    with audit.compiler_audit(work / "config-reports"):
-        image, result = e.compile_kernel(label, state, targets, work, jobs)
+    with perf.compiler_scope(audit, state, targets, work) as pending:
+        with audit.compiler_audit(work / "config-reports"):
+            image, result = e.compile_kernel(label, state, targets, work, jobs)
+    if pending is not None:
+        perf.verify_build(state, work, image, result, pending)
 
     proof = _proof_from_report(result.get("config_audit"))
     result["config_compat"] = proof

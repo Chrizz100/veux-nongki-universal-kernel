@@ -20,6 +20,7 @@ import veux_source_transport as transport
 import veux_rpm_fixes as rpm
 import veux_wakeup_fixes as wakeup
 import veux_rmnet as rmnet
+import veux_perf_compat as perf
 
 
 def preserve_device_diagnostics(work, public, diag):
@@ -132,6 +133,8 @@ def verify_results(args):
         wakeup.verify_result(label, row)
         if rmnet.requested(targets, label) or 'rmnet' in row:
             rmnet.verify_package(row, args.artifacts / label)
+        if perf.requested(targets, label) or 'performance_compat' in row:
+            perf.verify_result(row)
 
 
 def promote(args):
