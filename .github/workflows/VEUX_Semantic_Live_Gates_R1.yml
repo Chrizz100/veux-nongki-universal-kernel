@@ -1,0 +1,491 @@
+name: VEUX - Semantic Live Gates R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+concurrency:
+  group: veux-v4-daily-upstream-candidate-main
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Replace mutable-file pins with semantic gates
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/veux-python"
+          rm -rf "$VENV"
+
+          if ! python3 -m venv "$VENV"; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3-venv
+            python3 -m venv "$VENV"
+          fi
+
+          PY="$VENV/bin/python"
+          "$PY" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+          "$PY" - <<'PY'
+          import ruamel.yaml
+          import yaml
+          print("PYTHON_ENV=PASS")
+          PY
+
+          echo "PY=$PY" >> "$GITHUB_ENV"
+
+      - name: Semantic migration preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git branch --show-current)" = "main"
+
+          BASE_SHA="$(git rev-parse HEAD)"
+          test -n "$BASE_SHA"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+
+          engine = Path("common/scripts/veux_update_engine.py").read_text()
+          tests = Path("common/scripts/test_veux_device_fixes.py").read_text()
+
+          old_image_gate = "".join([
+              '    data = image.read_bytes()\n',
+              '    for marker in (b"@ReSukiSU", ',
+              'targets["components"]["resukisu"]["commit"][:8].encode(), ',
+              'b"susfs:", b"NoMount:"):\n',
+              '        require(marker in data, ',
+              'f"Image identity missing: {marker!r}")\n',
+          ])
+
+          old_test = "".join([
+              "    def test_v4_uses_required_worker_and_promotion_and_preserves_legacy_scripts(self):\n",
+              "        workflow = e.yaml_read(e.REPO / '.github/workflows/veux-all-in-one-updater-v4.yml')\n",
+              "        steps = workflow['jobs']['update']['steps']\n",
+              "        run = '\\\\n'.join(s.get('run', '') for s in steps)\n",
+              "        self.assertEqual(run.count('veux_release_device.py worker'), 6)\n",
+              "        self.assertEqual(run.count('veux_release_device.py promote'), 1)\n",
+              "        self.assertNotIn('veux_release.py worker', run)\n",
+              "        self.assertIn('test_veux_device_fixes.py', run)\n",
+              "        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_update_engine.py'),\n",
+              "                         '4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d')\n",
+              "        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_release.py'),\n",
+              "                         'd8ab6d1724d25bc77b65e201eaac34d0f35bd0ac70b59b4eb822faa377c2a258')\n",
+              "\n",
+          ])
+
+          if engine.count(old_image_gate) != 1:
+              raise SystemExit(
+                  f"BLOCKED: old image gate count={engine.count(old_image_gate)}"
+              )
+          if engine.count("\ndef compile_kernel(") != 1:
+              raise SystemExit("BLOCKED: compile_kernel anchor not unique")
+          if "def resukisu_image_identity(" in engine:
+              raise SystemExit("BLOCKED: semantic helper already present")
+          if tests.count(old_test) != 1:
+              raise SystemExit(
+                  f"BLOCKED: old live-file pin test count={tests.count(old_test)}"
+              )
+
+          print("SEMANTIC_PREFLIGHT=PASS")
+          PY
+
+      - name: Patch engine to semantic KernelSU-family identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+
+          path = Path("common/scripts/veux_update_engine.py")
+          text = path.read_text()
+
+          helper = "\n".join([
+              "def resukisu_image_identity(kbuild_text, conf, entry):",
+              "    # Derive identity from normalized Kbuild and actual .config.",
+              "    require(isinstance(entry, dict), 'invalid ReSukiSU target identity')",
+              "    commit = entry.get('commit')",
+              "    require(isinstance(commit, str) and SHA.fullmatch(commit),",
+              "            'invalid ReSukiSU target commit')",
+              "    expected = {",
+              "        'KSU_TAG_NAME': str(entry.get('tag', '')),",
+              "        'KSU_COMMIT_SHA': commit[:8],",
+              "        'KSU_VERSION': str(entry.get('version', '')),",
+              "        'KSU_BRANCH_NAME': str(entry.get('ref', '')).removeprefix('refs/heads/'),",
+              "    }",
+              "    require(all(expected.values()), 'incomplete ReSukiSU target identity')",
+              "",
+              "    def assignment(name):",
+              "        matches = re.findall(",
+              "            rf'^{re.escape(name)}\\s*:=\\s*(.+?)\\s*$',",
+              "            kbuild_text, flags=re.MULTILINE)",
+              "        require(len(matches) == 1,",
+              "                f'ambiguous ReSukiSU Kbuild identity: {name}')",
+              "        return matches[0].strip()",
+              "",
+              "    for name, wanted in expected.items():",
+              "        actual = assignment(name)",
+              "        require(actual == wanted,",
+              "                f'ReSukiSU Kbuild identity mismatch: {name}={actual!r}')",
+              "",
+              "    repo_name = assignment('REPO_NAME')",
+              "    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', repo_name),",
+              "            'unsafe KernelSU-family repository name')",
+              "",
+              "    formats = [line.split('=', 1)[1] for line in conf",
+              "               if line.startswith('CONFIG_KSU_FULL_NAME_FORMAT=')]",
+              "    require(len(formats) == 1,",
+              "            'CONFIG_KSU_FULL_NAME_FORMAT missing or ambiguous')",
+              "    try:",
+              "        full_format = json.loads(formats[0])",
+              "    except json.JSONDecodeError as exc:",
+              "        raise Blocked('invalid CONFIG_KSU_FULL_NAME_FORMAT') from exc",
+              "    require(isinstance(full_format, str) and full_format,",
+              "            'empty CONFIG_KSU_FULL_NAME_FORMAT')",
+              "",
+              "    values = {",
+              "        '%TAG_NAME%': expected['KSU_TAG_NAME'],",
+              "        '%COMMIT_SHA%': expected['KSU_COMMIT_SHA'],",
+              "        '%REPO_NAME%': repo_name,",
+              "        '%BRANCH_NAME%': expected['KSU_BRANCH_NAME'],",
+              "        '%KSU_VERSION%': expected['KSU_VERSION'],",
+              "    }",
+              "    full_identity = full_format",
+              "    for token, value in values.items():",
+              "        full_identity = full_identity.replace(token, value)",
+              "    require(re.search(r'%[A-Z0-9_]+%', full_identity) is None,",
+              "            'unknown KernelSU full-name token')",
+              "    require(0 < len(full_identity) <= 160",
+              "            and '\\x00' not in full_identity",
+              "            and '\\n' not in full_identity,",
+              "            'unsafe KernelSU full-name identity')",
+              "",
+              "    stable_identity = (",
+              "        f\"{expected['KSU_TAG_NAME']}-{expected['KSU_COMMIT_SHA']}\")",
+              "    return (full_identity.encode(), stable_identity.encode(),",
+              "            expected['KSU_COMMIT_SHA'].encode())",
+              "",
+              "",
+          ])
+
+          anchor = "\ndef compile_kernel("
+          if text.count(anchor) != 1:
+              raise SystemExit("BLOCKED: compile_kernel anchor changed")
+          text = text.replace(anchor, "\n" + helper + "def compile_kernel(", 1)
+
+          old = "".join([
+              '    data = image.read_bytes()\n',
+              '    for marker in (b"@ReSukiSU", ',
+              'targets["components"]["resukisu"]["commit"][:8].encode(), ',
+              'b"susfs:", b"NoMount:"):\n',
+              '        require(marker in data, ',
+              'f"Image identity missing: {marker!r}")\n',
+          ])
+
+          new = "".join([
+              '    data = image.read_bytes()\n',
+              '    resukisu = targets["components"]["resukisu"]\n',
+              '    vendor, _ = topology(src)\n',
+              '    full_identity, stable_identity, commit_marker = ',
+              'resukisu_image_identity(\n',
+              '        (vendor / "kernel/Kbuild").read_text(), conf, resukisu)\n',
+              '    require(commit_marker in data, ',
+              'f"Image identity missing commit: {commit_marker!r}")\n',
+              '    if full_identity in data:\n',
+              '        identity_mode = "FULL_FORMAT"\n',
+              '    elif stable_identity in data:\n',
+              '        identity_mode = "TAG_COMMIT_FALLBACK"\n',
+              '    else:\n',
+              '        raise Blocked(\n',
+              '            "Image identity missing semantic KernelSU-family identity: "\n',
+              '            + repr(full_identity))\n',
+              '    for marker in (b"susfs:", b"NoMount:"):\n',
+              '        require(marker in data, ',
+              'f"Image identity missing: {marker!r}")\n',
+              '    print(f"IMAGE_IDENTITY_MODE={identity_mode}; "\n',
+              '          f"IDENTITY={full_identity.decode(errors=\'replace\')}", ',
+              'flush=True)\n',
+          ])
+
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f"BLOCKED: old image gate count={text.count(old)}"
+              )
+          text = text.replace(old, new, 1)
+
+          if 'b"@ReSukiSU"' in text:
+              raise SystemExit("BLOCKED: fixed project-name marker remains")
+          if text.count("def resukisu_image_identity(") != 1:
+              raise SystemExit("BLOCKED: semantic helper count invalid")
+
+          path.write_text(text)
+          print("SEMANTIC_IMAGE_IDENTITY=PASS")
+          PY
+
+      - name: Replace live-file hash tests with semantic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" - <<'PY'
+          from pathlib import Path
+
+          path = Path("common/scripts/test_veux_device_fixes.py")
+          text = path.read_text()
+
+          old = "".join([
+              "    def test_v4_uses_required_worker_and_promotion_and_preserves_legacy_scripts(self):\n",
+              "        workflow = e.yaml_read(e.REPO / '.github/workflows/veux-all-in-one-updater-v4.yml')\n",
+              "        steps = workflow['jobs']['update']['steps']\n",
+              "        run = '\\\\n'.join(s.get('run', '') for s in steps)\n",
+              "        self.assertEqual(run.count('veux_release_device.py worker'), 6)\n",
+              "        self.assertEqual(run.count('veux_release_device.py promote'), 1)\n",
+              "        self.assertNotIn('veux_release.py worker', run)\n",
+              "        self.assertIn('test_veux_device_fixes.py', run)\n",
+              "        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_update_engine.py'),\n",
+              "                         '4f9ed7edfd19c802850039c654a5331f653d6fe07460c4680735534808b58b8d')\n",
+              "        self.assertEqual(e.digest(e.REPO / 'common/scripts/veux_release.py'),\n",
+              "                         'd8ab6d1724d25bc77b65e201eaac34d0f35bd0ac70b59b4eb822faa377c2a258')\n",
+              "\n",
+          ])
+
+          new = "".join([
+              "    def test_v4_uses_required_worker_promotion_and_semantic_identity(self):\n",
+              "        workflow = e.yaml_read(e.REPO / '.github/workflows/veux-all-in-one-updater-v4.yml')\n",
+              "        steps = workflow['jobs']['update']['steps']\n",
+              "        run = '\\\\n'.join(s.get('run', '') for s in steps)\n",
+              "        self.assertEqual(run.count('veux_release_device.py worker'), 6)\n",
+              "        self.assertEqual(run.count('veux_release_device.py promote'), 1)\n",
+              "        self.assertNotIn('veux_release.py worker', run)\n",
+              "        self.assertIn('test_veux_device_fixes.py', run)\n",
+              "\n",
+              "        entry = {\n",
+              "            'tag': 'v4.2.0-rc3',\n",
+              "            'commit': 'c9246641b9eee8b9986050e8bf1832f88da880c2',\n",
+              "            'version': '35217',\n",
+              "            'ref': 'refs/heads/main',\n",
+              "        }\n",
+              "        kbuild = (\n",
+              "            'REPO_NAME := BakaSU\\\\n'\n",
+              "            'KSU_VERSION := 35217\\\\n'\n",
+              "            'KSU_TAG_NAME := v4.2.0-rc3\\\\n'\n",
+              "            'KSU_COMMIT_SHA := c9246641\\\\n'\n",
+              "            'KSU_BRANCH_NAME := main\\\\n')\n",
+              "        conf = [\n",
+              "            'CONFIG_KSU_FULL_NAME_FORMAT=\"%TAG_NAME%-%COMMIT_SHA%@%REPO_NAME%\"']\n",
+              "\n",
+              "        full, stable, commit = e.resukisu_image_identity(kbuild, conf, entry)\n",
+              "        self.assertEqual(full, b'v4.2.0-rc3-c9246641@BakaSU')\n",
+              "        self.assertEqual(stable, b'v4.2.0-rc3-c9246641')\n",
+              "        self.assertEqual(commit, b'c9246641')\n",
+              "\n",
+              "        renamed = kbuild.replace('REPO_NAME := BakaSU',\n",
+              "                                 'REPO_NAME := FutureSU')\n",
+              "        future, _, _ = e.resukisu_image_identity(renamed, conf, entry)\n",
+              "        self.assertEqual(future, b'v4.2.0-rc3-c9246641@FutureSU')\n",
+              "\n",
+              "        compact, _, _ = e.resukisu_image_identity(\n",
+              "            renamed,\n",
+              "            ['CONFIG_KSU_FULL_NAME_FORMAT=\"%TAG_NAME%-%COMMIT_SHA%\"'],\n",
+              "            entry)\n",
+              "        self.assertEqual(compact, stable)\n",
+              "\n",
+              "        with self.assertRaises(e.Blocked):\n",
+              "            e.resukisu_image_identity(\n",
+              "                renamed,\n",
+              "                ['CONFIG_KSU_FULL_NAME_FORMAT=\"%UNKNOWN_TOKEN%\"'],\n",
+              "                entry)\n",
+              "        with self.assertRaises(e.Blocked):\n",
+              "            e.resukisu_image_identity(\n",
+              "                renamed, conf, dict(entry, commit='0' * 40))\n",
+              "\n",
+              "        self.assertTrue(callable(r.identity))\n",
+              "        self.assertTrue(callable(r.promote))\n",
+              "        self.assertEqual(r.CURRENT, 'common/contracts/CURRENT_BUILD.json')\n",
+              "        self.assertEqual(r.SOURCES, 'third_party/current')\n",
+              "        self.assertEqual(r.OVERLAYS, 'common/update/current')\n",
+              "\n",
+          ])
+
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f"BLOCKED: old live-file pin test count={text.count(old)}"
+              )
+          text = text.replace(old, new, 1)
+
+          for marker in (
+              "e.digest(e.REPO / 'common/scripts/veux_update_engine.py')",
+              "e.digest(e.REPO / 'common/scripts/veux_release.py')",
+          ):
+              if marker in text:
+                  raise SystemExit(
+                      "BLOCKED: mutable live-file hash pin remains: " + marker
+                  )
+
+          path.write_text(text)
+          print("SEMANTIC_DEVICE_TEST=PASS")
+          PY
+
+      - name: Syntax and semantic smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" -m py_compile \
+            common/scripts/veux_update_engine.py \
+            common/scripts/test_veux_device_fixes.py
+
+          "$PY" - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path("common/scripts").resolve()))
+          import veux_update_engine as e
+
+          entry = {
+              "tag": "v4.2.0-rc3",
+              "commit": "c9246641b9eee8b9986050e8bf1832f88da880c2",
+              "version": "35217",
+              "ref": "refs/heads/main",
+          }
+          conf = [
+              'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@%REPO_NAME%"'
+          ]
+
+          for name in ("BakaSU", "ReSukiSU", "FutureSU"):
+              kbuild = (
+                  f"REPO_NAME := {name}\n"
+                  "KSU_VERSION := 35217\n"
+                  "KSU_TAG_NAME := v4.2.0-rc3\n"
+                  "KSU_COMMIT_SHA := c9246641\n"
+                  "KSU_BRANCH_NAME := main\n"
+              )
+              full, stable, commit = e.resukisu_image_identity(
+                  kbuild, conf, entry)
+              assert full == f"v4.2.0-rc3-c9246641@{name}".encode()
+              assert stable == b"v4.2.0-rc3-c9246641"
+              assert commit == b"c9246641"
+
+          print("THREE_REPOSITORY_NAMES=PASS")
+          print("NO_FIXED_PROJECT_NAME_REQUIRED=YES")
+          PY
+
+      - name: Run active control-plane tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+
+          echo "ACTIVE_CONTROL_PLANE_TESTS=PASS"
+
+      - name: Verify mutable live-file pins are gone
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ! grep -Fq 'b"@ReSukiSU"' \
+            common/scripts/veux_update_engine.py
+          ! grep -Fq \
+            "e.digest(e.REPO / 'common/scripts/veux_update_engine.py')" \
+            common/scripts/test_veux_device_fixes.py
+          ! grep -Fq \
+            "e.digest(e.REPO / 'common/scripts/veux_release.py')" \
+            common/scripts/test_veux_device_fixes.py
+
+          grep -Fq 'def resukisu_image_identity(' \
+            common/scripts/veux_update_engine.py
+          grep -Fq 'FutureSU' \
+            common/scripts/test_veux_device_fixes.py
+
+          echo "MUTABLE_LIVE_FILE_PINS=ABSENT"
+          echo "SEMANTIC_GATES=PASS"
+
+      - name: Prove exact two-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+
+          test "$(printf '%s\n' "$changed" | sed '/^$/d' | wc -l)" -eq 2
+          printf '%s\n' "$changed" \
+            | grep -Fxq 'common/scripts/veux_update_engine.py'
+          printf '%s\n' "$changed" \
+            | grep -Fxq 'common/scripts/test_veux_device_fixes.py'
+
+          echo "PATCH_SCOPE=TWO_FILES"
+          echo "DIFF_GATE=PASS"
+
+      - name: Commit semantic live gates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "${BASE_SHA:-}"
+
+          remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test -n "$remote_head"
+
+          if [ "$remote_head" != "$BASE_SHA" ]; then
+            echo "::error::main moved after validation; refusing write"
+            exit 1
+          fi
+
+          git add -- \
+            common/scripts/veux_update_engine.py \
+            common/scripts/test_veux_device_fixes.py
+
+          staged="$(git diff --cached --name-only)"
+          test "$(printf '%s\n' "$staged" | sed '/^$/d' | wc -l)" -eq 2
+          git diff --cached --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit \
+            -m "Replace mutable live-file pins with semantic gates [skip ci]"
+
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+
+          git push origin HEAD:refs/heads/main
+          echo "SEMANTIC_LIVE_GATES=PASS"
