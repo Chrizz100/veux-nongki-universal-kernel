@@ -1,9 +1,15 @@
-# Manual migration only. No kernel build; no automatic candidate promotion.
-name: VEUX - Semantic Live Gates R2
-'on':
-  workflow_dispatch: {}
+name: VEUX - Semantic Live Gates - Config Preflight
+on:
+  workflow_dispatch:
+    inputs:
+      diagnostics_run:
+        description: Existing candidate compile diagnostics to check without recompiling
+        required: true
+        default: '37734017874'
+        type: string
 permissions:
   contents: write
+  actions: read
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 concurrency:
@@ -11,409 +17,638 @@ concurrency:
   cancel-in-progress: false
 jobs:
   migrate:
-    name: Migrate the two live files and run regression tests
+    name: Config fix, repeated host tests, package/static replay
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-    - name: Checkout latest main after concurrency lock
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        ref: main
-        fetch-depth: 1
-        persist-credentials: false
-    - name: Prepare isolated Python environment
-      shell: bash
-      run: |
-        set -euo pipefail
-        command -v python3
-        command -v git
-        command -v gcc
-        command -v make
-        VENV="$RUNNER_TEMP/veux-semantic-r2-python"
-        if ! python3 -m venv "$VENV"; then
-          timeout --kill-after=10s 120s sudo -n apt-get \
-            -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
-            -o Acquire::https::Timeout=20 update
-          timeout --kill-after=10s 120s sudo -n apt-get \
-            -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
-            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
-            install -y --no-install-recommends python3-venv
-          python3 -m venv "$VENV"
-        fi
-        PY="$VENV/bin/python"
-        "$PY" -m pip install --disable-pip-version-check --no-input \
-          --only-binary=:all: --timeout 30 --retries 2 \
-          ruamel.yaml==0.19.1 PyYAML==6.0.3
-        "$PY" -m pip check
-        "$PY" -c 'from ruamel.yaml import YAML; import yaml; print("PYTHON_IMPORTS=PASS")'
-        echo "PY=$PY" >> "$GITHUB_ENV"
-      timeout-minutes: 8
-    - name: Create AST migrator and validate the current inputs
-      shell: bash
-      run: |
-        set -euo pipefail
-        test "$GITHUB_REPOSITORY" = "Chrizz100/veux-nongki-universal-kernel"
-        test "$(git branch --show-current)" = "main"
-        test -z "$(git status --porcelain --untracked-files=all)"
-        BASE_SHA="$(git rev-parse HEAD)"
-        REPORTS="$RUNNER_TEMP/veux-semantic-r2-reports"
-        MIGRATOR="$RUNNER_TEMP/veux-semantic-r2-migrate.py"
-        mkdir -p "$REPORTS"
-        echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
-        echo "REPORTS=$REPORTS" >> "$GITHUB_ENV"
-        echo "MIGRATOR=$MIGRATOR" >> "$GITHUB_ENV"
-        cat > "$MIGRATOR" <<'MIGRATION_PY'
-        HELPER_SOURCE = 'def resukisu_image_identity(entry):\n    """Return the target\'s tag/commit marker, independent of project branding.\n\n    The normalized build writes these values from the same target metadata.\n    No historical version, engine digest, or project name is prescribed here.\n    """\n    require(isinstance(entry, dict), "invalid KernelSU target metadata")\n    tag = entry.get("tag")\n    commit = entry.get("commit")\n    require(isinstance(tag, str) and\n            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tag),\n            "missing or unsafe KernelSU target tag")\n    require(isinstance(commit, str) and\n            re.fullmatch(r"[0-9a-f]{40}", commit),\n            "invalid KernelSU target commit")\n    return f"{tag}-{commit[:8]}".encode("ascii")\n'
-        TEST_SOURCE = 'class SemanticLiveIdentityTests(unittest.TestCase):\n    """Target-based identity regression tests; no kernel compilation is performed."""\n\n    @staticmethod\n    def target(seed=b"semantic-live-fixture"):\n        return {"tag": "v-test.1", "commit": hashlib.sha1(seed).hexdigest()}\n\n    def test_identity_uses_each_target_not_a_historical_version(self):\n        for seed, tag in ((b"a", "v-test.1"), (b"b", "v-next.8-rc2"),\n                          (b"c", "custom_edition")):\n            entry = self.target(seed)\n            entry["tag"] = tag\n            with self.subTest(tag=tag):\n                self.assertEqual(e.resukisu_image_identity(entry),\n                                 (tag + "-" + entry["commit"][:8]).encode())\n\n    def test_invalid_target_metadata_is_rejected(self):\n        good = self.target()\n        cases = [None, {}, [], dict(good, tag=None), dict(good, tag=""),\n                 dict(good, tag="bad\\nname"), dict(good, tag="../escape"),\n                 dict(good, tag="tag$(command)"), dict(good, tag="x" * 129),\n                 dict(good, commit=None), dict(good, commit="short"),\n                 dict(good, commit="g" * 40), dict(good, commit="0" * 39),\n                 dict(good, commit="0" * 41)]\n        for entry in cases:\n            with self.subTest(entry=entry), self.assertRaises(e.Blocked):\n                e.resukisu_image_identity(entry)\n\n    def compile_probe(self, payload, entry=None, missing_object=None,\n                      compiler_error=False, dtb_error=False):\n        """Exercise the real compile_kernel validator with simulated compiler output."""\n        entry = self.target() if entry is None else entry\n        label = "5.4.274"\n        with tempfile.TemporaryDirectory() as directory:\n            work = Path(directory)\n            source = work / "source"\n            original_out = source / "original-out"\n            original_out.mkdir(parents=True)\n            (original_out / ".config").write_text("CONFIG_KSU=y\\n")\n            output = work / "build"\n            policy = {"lineages": {label: {"warning_limit": 0,\n                      "dtb": {"path": "arch/arm64/boot/dts/fixture.dtb"}}}}\n            state = {"source": str(source), "variables": ["O=original-out"],\n                     "env": {"PATH": os.environ.get("PATH", "")},\n                     "dtb_reference": {"fixture": True}}\n            targets = {"components": {"resukisu": entry}}\n            objects = ("fs/nomount/nomount.o", "fs/susfs.o",\n                       "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a")\n\n            def fake_command(argv, **kwargs):\n                args = [str(value) for value in argv]\n                log = kwargs.get("log")\n                if log is not None:\n                    Path(log).write_text("")\n                if args[-1] == "kernelversion":\n                    return label\n                if args[-1] == "kernelrelease":\n                    return label + "-semantic-test"\n                if "Image" in args and "dtbs" in args:\n                    image = output / "arch/arm64/boot/Image"\n                    image.parent.mkdir(parents=True, exist_ok=True)\n                    image.write_bytes(payload + b"\\0" * (1024 * 1024 + 1))\n                    dtb = output / policy["lineages"][label]["dtb"]["path"]\n                    dtb.parent.mkdir(parents=True, exist_ok=True)\n                    dtb.write_bytes(b"simulated-dtb")\n                    for name in objects:\n                        if name != missing_object:\n                            p = output / name\n                            p.parent.mkdir(parents=True, exist_ok=True)\n                            p.write_bytes(b"simulated-object")\n                    if compiler_error:\n                        Path(log).write_text("error: simulated compiler failure\\n")\n                return ""\n\n            with mock.patch.object(e, "config", return_value=policy), \\\n                 mock.patch.object(e, "run", side_effect=fake_command), \\\n                 mock.patch.object(e, "validate_build_config"), \\\n                 mock.patch.object(e, "verify_dtb",\n                                   side_effect=e.Blocked("simulated DTB mismatch")\n                                   if dtb_error else None):\n                try:\n                    _, result = e.compile_kernel(label, state, targets, work, 1)\n                except e.Blocked:\n                    self.assertFalse((work / "build-result.json").exists())\n                    raise\n            self.assertFalse(result["device"])\n            return result\n\n    def test_image_accepts_both_names_and_no_name(self):\n        marker = e.resukisu_image_identity(self.target())\n        for suffix in (b"@ReSukiSU", b"@BakaSU", b"@FutureSU", b""):\n            with self.subTest(suffix=suffix):\n                result = self.compile_probe(marker + suffix + b"\\0susfs:\\0NoMount:\\0")\n                self.assertTrue(result["compile"])  # simulated compiler output only\n\n    def test_image_rejects_wrong_tag_commit_and_separate_legacy_markers(self):\n        target = self.target()\n        good = e.resukisu_image_identity(target)\n        wrong = e.resukisu_image_identity(self.target(b"different-target"))\n        for payload in (wrong, b"wrong-tag-" + target["commit"][:8].encode(),\n                        b"@BakaSU\\0" + target["commit"][:8].encode(),\n                        good.replace(b"v-test.1", b"v-wrong.2")):\n            with self.subTest(payload=payload), self.assertRaises(e.Blocked):\n                self.compile_probe(payload + b"\\0susfs:\\0NoMount:\\0")\n\n    def test_susfs_nomount_and_compiled_objects_remain_required(self):\n        marker = e.resukisu_image_identity(self.target())\n        for payload in (marker + b"\\0susfs:\\0", marker + b"\\0NoMount:\\0"):\n            with self.subTest(payload=payload), self.assertRaises(e.Blocked):\n                self.compile_probe(payload)\n        for name in ("fs/nomount/nomount.o", "fs/susfs.o",\n                     "drivers/kernelsu/core/init.o", "drivers/kernelsu/built-in.a"):\n            with self.subTest(object=name), self.assertRaises(e.Blocked):\n                self.compile_probe(marker + b"\\0susfs:\\0NoMount:\\0", missing_object=name)\n\n    def test_other_validation_failures_are_not_turned_into_success(self):\n        payload = e.resukisu_image_identity(self.target()) + b"\\0susfs:\\0NoMount:\\0"\n        for kwargs in ({"compiler_error": True}, {"dtb_error": True}):\n            with self.subTest(kwargs=kwargs), self.assertRaises(e.Blocked):\n                self.compile_probe(payload, **kwargs)\n'
+      - name: Checkout latest main after concurrency lock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Prepare isolated Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v python3
+          command -v git
+          command -v gcc
+          command -v make
+          command -v curl
+          command -v openssl
+          VENV="$RUNNER_TEMP/veux-config-python"
+          if ! python3 -m venv "$VENV"; then
+            timeout --kill-after=10s 120s sudo -n apt-get \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+              -o Acquire::https::Timeout=20 update
+            timeout --kill-after=10s 120s sudo -n apt-get \
+              -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+              -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+              install -y --no-install-recommends python3-venv
+            python3 -m venv "$VENV"
+          fi
+          PY="$VENV/bin/python"
+          "$PY" -m pip install --disable-pip-version-check --no-input \
+            --only-binary=:all: --timeout 30 --retries 2 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          "$PY" -m pip check
+          "$PY" -c 'from ruamel.yaml import YAML; import yaml; print("PYTHON_IMPORTS=PASS")'
+          echo "PY=$PY" >> "$GITHUB_ENV"
+        timeout-minutes: 6
+      - name: Create structural migration and preflight tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Chrizz100/veux-nongki-universal-kernel"
+          test "$(git branch --show-current)" = "main"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          BASE_SHA="$(git rev-parse HEAD)"
+          REPORTS="$RUNNER_TEMP/veux-config-reports"
+          MIGRATOR="$RUNNER_TEMP/veux-config-migrate.py"
+          PREFLIGHT="$RUNNER_TEMP/veux-config-preflight.py"
+          mkdir -p "$REPORTS"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          echo "REPORTS=$REPORTS" >> "$GITHUB_ENV"
+          echo "MIGRATOR=$MIGRATOR" >> "$GITHUB_ENV"
+          echo "PREFLIGHT=$PREFLIGHT" >> "$GITHUB_ENV"
+          cat > "$MIGRATOR" <<'MIGRATION_PY'
+          OLD_FUNCTIONS = {'expected_proof': 'def expected_proof():\n    return {\n        "id": "ConfigDiag10",\n        "reference_run": REFERENCE_RUN,\n        "actual_config_sha256": VALIDATED_CONFIG_SHA256,\n        "rom_requirements": 261,\n        "rom_status": "PASS",\n        "cfi": "configured-and-core-instrumented",\n        "stack_protector": "strong-configured-and-core-instrumented",\n        "device_pass_inferred": False,\n    }\n', 'reference_report': 'def reference_report():\n    """Minimal immutable identity used by unit tests and promotion validation fixtures."""\n    return {\n        "status": "PASS",\n        "actual_config_sha256": VALIDATED_CONFIG_SHA256,\n        "embedded_config_sha256": VALIDATED_CONFIG_SHA256,\n        "vintf_kernel": {\n            "status": "PASS",\n            "requirements": 261,\n            "passed": 261,\n            "failures": [],\n        },\n        "cfi": "configured-and-core-instrumented",\n        "stack_protector": "strong-configured-and-core-instrumented",\n        "device": False,\n    }\n', '_proof_from_report': 'def _proof_from_report(report):\n    e.require(isinstance(report, dict) and report.get("status") == "PASS",\n              "ConfigDiag10 audit did not pass")\n    e.require(report.get("actual_config_sha256") == VALIDATED_CONFIG_SHA256,\n              "5.4.274 config differs from device-validated Diag10")\n    e.require(report.get("embedded_config_sha256") == VALIDATED_CONFIG_SHA256,\n              "embedded IKCONFIG differs from device-validated Diag10")\n    vintf = report.get("vintf_kernel", {})\n    e.require(vintf.get("status") == "PASS"\n              and vintf.get("requirements") == 261\n              and vintf.get("passed") == 261\n              and not vintf.get("failures"),\n              "captured ROM kernel requirements are not 261/261 PASS")\n    e.require(report.get("cfi") == "configured-and-core-instrumented",\n              "CFI compile evidence missing")\n    e.require(report.get("stack_protector") ==\n              "strong-configured-and-core-instrumented",\n              "strong stack-protector compile evidence missing")\n    e.require(report.get("device") is False,\n              "CI must not infer a device PASS")\n    return expected_proof()\n', 'verify_result': 'def verify_result(label, row):\n    """Prevent promotion of 5.4.274 unless the permanent Diag10 gate ran."""\n    if label != KERNEL:\n        return\n    e.require(row.get("config_compat") == expected_proof(),\n              "missing or outdated ConfigDiag10 promotion proof")\n    _proof_from_report(row.get("config_audit"))\n'}
+          NEW_FUNCTIONS = {'expected_proof': 'def expected_proof(report=None):\n    """Derive a proof from this build; the default is a synthetic test fixture.\n\n    REFERENCE_RUN describes the origin of the audited source fixes, not a\n    required byte representation of every future build\'s configuration.\n    """\n    return _proof_from_report(reference_report() if report is None else report)\n', 'reference_report': 'def reference_report():\n    """Synthetic host-test fixture. Never an authority for a real build\'s hash."""\n    import hashlib\n    options = {\n        "IKCONFIG": "y", "IKCONFIG_PROC": "y", "LTO": "y",\n        "LTO_CLANG": "y", "THINLTO": "y", "CFI_CLANG": "y",\n        "CFI_CLANG_SHADOW": "y", "CFI_PERMISSIVE": "n",\n    }\n    fixture = "".join("CONFIG_" + name + "=" + value + "\\n"\n                      for name, value in sorted(options.items())).encode("ascii")\n    actual = hashlib.sha256(fixture).hexdigest()\n    return {\n        "id": "ConfigDiag10", "status": "PASS",\n        "actual_config_sha256": actual,\n        "embedded_config_sha256": actual,\n        "configuration_unchanged_during_compile": True,\n        "options": options,\n        "vintf_kernel": {\n            "status": "PASS", "requirements": 261,\n            "passed": 261, "failures": [],\n        },\n        "cfi": "configured-and-core-instrumented",\n        "stack_protector": "strong-configured-and-core-instrumented",\n        "device": False,\n    }\n', '_proof_from_report': 'def _proof_from_report(report):\n    """Validate audited settings and same-build consistency, not an old file hash.\n\n    The unchanged config audit checks all captured ROM requirements, generated\n    compiler options, compiler evidence and exact actual/embedded configuration\n    bytes. A raw digest is recorded for provenance, never compared with a\n    historical configuration. A project-name comment therefore cannot fail CI.\n    """\n    import re\n    e.require(isinstance(report, dict) and report.get("status") == "PASS",\n              "ConfigDiag10 audit did not pass")\n    e.require(report.get("id") == "ConfigDiag10", "ConfigDiag10 audit identity missing")\n    actual = report.get("actual_config_sha256")\n    embedded = report.get("embedded_config_sha256")\n    e.require(isinstance(actual, str) and\n              re.fullmatch(r"[0-9a-f]{64}", actual) is not None,\n              "invalid actual configuration digest")\n    e.require(isinstance(embedded, str) and embedded == actual,\n              "embedded IKCONFIG differs from this build\'s actual configuration")\n    e.require(report.get("configuration_unchanged_during_compile") is True,\n              "configuration was not proven unchanged during compilation")\n    required = {\n        "IKCONFIG": "y", "IKCONFIG_PROC": "y", "LTO": "y",\n        "LTO_CLANG": "y", "THINLTO": "y", "CFI_CLANG": "y",\n        "CFI_CLANG_SHADOW": "y", "CFI_PERMISSIVE": "n",\n    }\n    options = report.get("options")\n    e.require(isinstance(options, dict), "audited configuration options missing")\n    for name, value in required.items():\n        e.require(options.get(name) == value,\n                  "required audited setting differs: CONFIG_" + name)\n    vintf = report.get("vintf_kernel")\n    e.require(isinstance(vintf, dict) and vintf.get("status") == "PASS"\n              and type(vintf.get("requirements")) is int\n              and vintf["requirements"] == 261\n              and type(vintf.get("passed")) is int and vintf["passed"] == 261\n              and vintf.get("failures") == [],\n              "captured ROM kernel requirements are not 261/261 PASS")\n    e.require(report.get("cfi") == "configured-and-core-instrumented",\n              "CFI compile evidence missing")\n    e.require(report.get("stack_protector") ==\n              "strong-configured-and-core-instrumented",\n              "strong stack-protector compile evidence missing")\n    e.require(report.get("device") is False,\n              "CI must not infer a device PASS")\n    return {\n        "id": "ConfigDiag10", "reference_run": REFERENCE_RUN,\n        "actual_config_sha256": actual,\n        "rom_requirements": vintf["requirements"], "rom_status": "PASS",\n        "cfi": report["cfi"], "stack_protector": report["stack_protector"],\n        "device_pass_inferred": False,\n    }\n', 'verify_result': 'def verify_result(label, row):\n    """Validate the proof against its own audit, including after packaging."""\n    if label != KERNEL:\n        return\n    e.require(isinstance(row, dict), "invalid ConfigDiag10 build result")\n    proof = _proof_from_report(row.get("config_audit"))\n    e.require(row.get("config_compat") == proof,\n              "ConfigDiag10 promotion proof differs from this build\'s audit")\n'}
+          NEW_TESTS = 'class SemanticConfigProofTests(unittest.TestCase):\n    """Exercise the live proof and release boundary without kernel compilation."""\n\n    @staticmethod\n    def report(text="# host fixture\\n"):\n        import hashlib\n        report = c.reference_report()\n        digest = hashlib.sha256(text.encode()).hexdigest()\n        report.update(actual_config_sha256=digest, embedded_config_sha256=digest)\n        return report\n\n    @staticmethod\n    def row(report):\n        return {"config_audit": report, "config_compat": c.expected_proof(report)}\n\n    def test_comments_and_new_build_digests_are_not_a_historical_lock(self):\n        for text in ("# ReSukiSU\\nCONFIG_IKCONFIG=y\\n",\n                     "# BakaSU\\nCONFIG_IKCONFIG=y\\n",\n                     "# next build\\nCONFIG_IKCONFIG=y\\n"):\n            with self.subTest(text=text):\n                report = self.report(text)\n                row = self.row(report)\n                self.assertEqual(row["config_compat"]["actual_config_sha256"],\n                                 report["actual_config_sha256"])\n                c.verify_result("5.4.274", row)\n\n    def test_semantic_gate_does_not_modify_or_share_input_objects(self):\n        import copy\n        report = self.report()\n        before = copy.deepcopy(report)\n        proof = c.expected_proof(report)\n        self.assertEqual(report, before)\n        proof["actual_config_sha256"] = "0" * 64\n        self.assertEqual(report, before)\n        self.assertEqual(c.expected_proof(), c.expected_proof(c.reference_report()))\n\n    def test_invalid_or_mismatched_current_build_digests_are_rejected(self):\n        for value in (None, "", "x" * 64, "0" * 63, "0" * 65, 0, [], {}):\n            report = self.report()\n            report.update(actual_config_sha256=value, embedded_config_sha256=value)\n            with self.subTest(digest=value), self.assertRaises(e.Blocked):\n                c.expected_proof(report)\n        report = self.report()\n        report["embedded_config_sha256"] = "0" * 64\n        with self.assertRaises(e.Blocked):\n            c.expected_proof(report)\n\n    def test_required_configuration_settings_are_still_enforced(self):\n        for name, wanted in c.reference_report()["options"].items():\n            for wrong in (None, "n" if wanted == "y" else "y", "m"):\n                report = self.report()\n                if wrong is None:\n                    del report["options"][name]\n                else:\n                    report["options"][name] = wrong\n                with self.subTest(option=name, value=wrong), self.assertRaises(e.Blocked):\n                    c.expected_proof(report)\n\n    def test_rom_and_security_failures_are_not_converted_into_success(self):\n        for key, values in {\n            "status": ["FAIL", None], "id": ["other", None],\n            "configuration_unchanged_during_compile": [False, None, 1],\n            "cfi": ["disabled", None], "stack_protector": ["disabled", None],\n            "device": [True, None, 0], "options": [None, []],\n        }.items():\n            for value in values:\n                report = self.report()\n                report[key] = value\n                with self.subTest(field=key, value=value), self.assertRaises(e.Blocked):\n                    c.expected_proof(report)\n        for key, value in (("status", "FAIL"), ("requirements", 260),\n                           ("passed", 260), ("passed", "261"),\n                           ("failures", ["missing requirement"]), ("failures", None)):\n            report = self.report()\n            report["vintf_kernel"][key] = value\n            with self.subTest(rom_field=key), self.assertRaises(e.Blocked):\n                c.expected_proof(report)\n        for report in (None, [], {}, {"status": "PASS"}):\n            with self.subTest(report=report), self.assertRaises(e.Blocked):\n                c.expected_proof(report) if report is not None else c._proof_from_report(report)\n\n    def test_release_proof_cannot_be_reused_for_a_different_config(self):\n        import copy\n        row = self.row(self.report("one"))\n        for key in ("config_audit", "config_compat"):\n            bad = copy.deepcopy(row)\n            del bad[key]\n            with self.subTest(missing=key), self.assertRaises(e.Blocked):\n                c.verify_result("5.4.274", bad)\n        bad = copy.deepcopy(row)\n        bad["config_audit"] = self.report("two")\n        with self.assertRaises(e.Blocked):\n            c.verify_result("5.4.274", bad)\n        for key, value in (("actual_config_sha256", "0" * 64),\n                           ("device_pass_inferred", True), ("rom_requirements", 260)):\n            bad = copy.deepcopy(row)\n            bad["config_compat"][key] = value\n            with self.subTest(proof_field=key), self.assertRaises(e.Blocked):\n                c.verify_result("5.4.274", bad)\n\n    def test_compile_wrapper_and_final_verifier_share_the_same_dynamic_proof(self):\n        from contextlib import nullcontext\n        from types import SimpleNamespace\n        report = self.report("# dynamically generated config\\n")\n        result = {"kernel": "5.4.274", "config_audit": report, "device": False}\n        auditor = SimpleNamespace(compiler_audit=lambda path: nullcontext())\n        with tempfile.TemporaryDirectory() as folder:\n            work = Path(folder)\n            with mock.patch.object(c, "_load_audit", return_value=auditor), \\\n                 mock.patch.object(e, "compile_kernel", return_value=("image", result)):\n                image, actual = c.compile_kernel("5.4.274", {}, {}, work, 1)\n            self.assertEqual(image, "image")\n            self.assertEqual(actual["config_compat"], c.expected_proof(report))\n            self.assertTrue((work / "build-result.json").is_file())\n            c.verify_result("5.4.274", actual)\n\n    def test_other_five_lineages_do_not_acquire_a_274_config_lock(self):\n        for label in ("5.4.292", "5.4.293", "5.4.300", "5.4.301", "5.4.302"):\n            with self.subTest(label=label), mock.patch.object(e, "compile_kernel",\n                     return_value=("image", {"kernel": label})) as engine:\n                self.assertEqual(c.compile_kernel(label, {}, {}, Path("/unused"), 1),\n                                 ("image", {"kernel": label}))\n                engine.assert_called_once_with(label, {}, {}, Path("/unused"), 1)\n                c.verify_result(label, {})\n'
+          import argparse
+          import ast
+          import copy
+          import difflib
+          import json
+          from pathlib import Path
 
-        import argparse
-        import ast
-        import difflib
-        import json
-        from pathlib import Path
+          MODULE = 'common/scripts/veux_config_compat.py'
+          TEST = 'common/scripts/test_veux_config_compat.py'
 
-        # HELPER_SOURCE and TEST_SOURCE are embedded from separately parsed Python files.
-        ENGINE = "common/scripts/veux_update_engine.py"
-        TESTS = "common/scripts/test_veux_device_fixes.py"
-        MUTABLE_PATHS = {ENGINE, "common/scripts/veux_release.py"}
+          def ensure(ok, message):
+              if not ok:
+                  raise ValueError(message)
 
+          def same(a, b):
+              return ast.dump(a, include_attributes=False) == ast.dump(b, include_attributes=False)
 
-        def ensure(ok, message):
-            if not ok:
-                raise ValueError(message)
+          def span(source, node):
+              lines = source.splitlines(keepends=True)
+              return (sum(map(len, lines[:node.lineno-1])) + node.col_offset,
+                      sum(map(len, lines[:node.end_lineno-1])) + node.end_col_offset)
 
+          def edit(source, operations):
+              previous = len(source)+1
+              for start, end, payload in sorted(operations, reverse=True):
+                  ensure(0 <= start <= end <= previous, 'overlapping edits')
+                  source = source[:start] + payload + source[end:]
+                  previous = start
+              compile(source, '<migrated>', 'exec')
+              return source
 
-        def same(a, b):
-            return ast.dump(a, include_attributes=False) == ast.dump(b, include_attributes=False)
+          def module_plan(source):
+              tree = ast.parse(source)
+              operations=[]
+              for name, new_text in NEW_FUNCTIONS.items():
+                  nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name]
+                  ensure(len(nodes)==1, 'expected one function: '+name)
+                  node=nodes[0]
+                  new_node=ast.parse(new_text).body[0]
+                  old_node=ast.parse(OLD_FUNCTIONS[name]).body[0]
+                  if not same(node,new_node):
+                      ensure(same(node,old_node), 'unreviewed function structure: '+name)
+                      a,b=span(source,node)
+                      operations.append((a,b,new_text.rstrip().encode()))
+              constants=[n for n in tree.body if isinstance(n,ast.Assign) and any(
+                  isinstance(t,ast.Name) and t.id=='VALIDATED_CONFIG_SHA256' for t in n.targets)]
+              ensure(len(constants)<=1,'duplicate historical configuration constant')
+              for node in constants:
+                  a,b=span(source,node)
+                  if source[b:b+2]==b'\r\n': b+=2
+                  elif source[b:b+1]==b'\n': b+=1
+                  operations.append((a,b,b''))
+              updated=edit(source,operations)
+              after=ast.parse(updated)
+              ensure(not any(isinstance(n,ast.Name) and n.id=='VALIDATED_CONFIG_SHA256'
+                             for n in ast.walk(after)), 'historical config-lock reference remains')
+              def rest(t):
+                  return ast.Module(body=[n for n in t.body if not (
+                      isinstance(n,ast.FunctionDef) and n.name in NEW_FUNCTIONS) and not (
+                      isinstance(n,ast.Assign) and any(isinstance(x,ast.Name) and
+                      x.id=='VALIDATED_CONFIG_SHA256' for x in n.targets))],type_ignores=[])
+              ensure(same(rest(tree),rest(after)), 'unrelated module code changed')
+              return updated
 
+          def test_plan(source):
+              tree=ast.parse(source)
+              classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='CompatTests']
+              ensure(len(classes)==1,'CompatTests class missing or duplicated')
+              methods=[n for n in classes[0].body if isinstance(n,ast.FunctionDef) and
+                       n.name=='test_assets_are_exact_successful_diag10_payloads']
+              ensure(len(methods)==1,'asset regression test missing or duplicated')
+              target=ast.parse('c.expected_proof()["actual_config_sha256"]',mode='eval').body
+              replacement=ast.parse('c.reference_report()["actual_config_sha256"]',mode='eval').body
+              assertions=[]
+              for stmt in methods[0].body:
+                  if isinstance(stmt,ast.Expr) and isinstance(stmt.value,ast.Call):
+                      call=stmt.value
+                      if isinstance(call.func,ast.Attribute) and call.func.attr=='assertEqual' and len(call.args)==2 and same(call.args[0],target):
+                          assertions.append(call)
+              ensure(len(assertions)==1,'expected one fixture consistency assertion')
+              rhs=assertions[0].args[1]
+              operations=[]
+              if not same(rhs,replacement):
+                  ensure(isinstance(rhs,ast.Constant) and isinstance(rhs.value,str) and
+                         len(rhs.value)==64 and all(x in '0123456789abcdef' for x in rhs.value),
+                         'unreviewed fixture assertion')
+                  a,b=span(source,rhs)
+                  operations.append((a,b,ast.unparse(replacement).encode()))
+              new_class=ast.parse(NEW_TESTS).body[0]
+              found=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==new_class.name]
+              ensure(len(found)<=1,'duplicate semantic config test class')
+              if found:
+                  ensure(same(found[0],new_class),'existing semantic tests differ')
+              else:
+                  guard=ast.parse("__name__ == '__main__'",mode='eval').body
+                  guards=[n for n in tree.body if isinstance(n,ast.If) and same(n.test,guard)]
+                  ensure(len(guards)==1,'unittest main guard not unique')
+                  a,_=span(source,guards[0])
+                  operations.append((a,a,NEW_TESTS.rstrip().encode()+b'\n\n\n'))
+              updated=edit(source,operations)
+              expected=copy.deepcopy(tree)
+              for n in ast.walk(expected):
+                  if isinstance(n,ast.Call) and len(n.args)==2 and same(n.args[0],target):
+                      n.args[1]=replacement
+              def strip(t):
+                  t.body=[n for n in t.body if not (isinstance(n,ast.ClassDef) and n.name==new_class.name)]
+                  return t
+              ensure(same(strip(expected),strip(ast.parse(updated))),'unrelated regression test changed')
+              return updated
 
-        def parse(source):
-            return ast.parse(source.decode("utf-8"))
+          def plan(root):
+              root=Path(root).resolve()
+              before={};after={}
+              for name, transform in ((MODULE,module_plan),(TEST,test_plan)):
+                  p=root/name
+                  ensure(p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(root),
+                         'missing or linked migration input: '+name)
+                  for parent in p.relative_to(root).parents:
+                      ensure(not (root/parent).is_symlink(),'linked parent')
+                  before[name]=p.read_bytes()
+                  after[name]=transform(before[name])
+              return before,after
 
+          def main():
+              parser=argparse.ArgumentParser()
+              parser.add_argument('--root',type=Path,required=True)
+              parser.add_argument('--report',type=Path,required=True)
+              parser.add_argument('--apply',action='store_true')
+              args=parser.parse_args()
+              before,after=plan(args.root)
+              changed=[n for n in before if before[n]!=after[n]]
+              if args.apply:
+                  for n in before:
+                      ensure((args.root/n).read_bytes()==before[n],'input changed during planning')
+                  written=[]
+                  try:
+                      for n in changed:
+                          (args.root/n).write_bytes(after[n]);written.append(n)
+                  except Exception:
+                      for n in written: (args.root/n).write_bytes(before[n])
+                      raise
+              args.report.parent.mkdir(parents=True,exist_ok=True)
+              args.report.write_text(json.dumps({'status':'applied' if args.apply else 'checked',
+                   'changed_files':changed,'kernel_compile_performed':False,
+                   'source_selection':'Python AST','historical_config_hash_lock':False},indent=2)+'\n')
+              args.report.with_suffix('.diff').write_text(''.join(''.join(difflib.unified_diff(
+                  before[n].decode().splitlines(True),after[n].decode().splitlines(True),'a/'+n,'b/'+n)) for n in changed))
+              print('CONFIG_MIGRATION_PLAN=PASS; FILES='+str(len(changed)))
 
-        def bounds(source, node):
-            lines = source.splitlines(keepends=True)
-            return (sum(map(len, lines[:node.lineno - 1])) + node.col_offset,
-                    sum(map(len, lines[:node.end_lineno - 1])) + node.end_col_offset)
+          if __name__=='__main__':
+              main()
+          MIGRATION_PY
+          cat > "$PREFLIGHT" <<'PREFLIGHT_PY'
+          """Validate saved compile evidence and replay packaging/static checks without a compile.
 
-
-        def changes(source, edits):
-            last = len(source) + 1
-            for start, end, payload in sorted(edits, reverse=True):
-                ensure(0 <= start <= end <= last, "overlapping migration edits")
-                source = source[:start] + payload + source[end:]
-                last = start
-            return source
-
-
-        def functions(tree, name):
-            return [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
-
-
-        def patched_engine(source):
-            tree = parse(source)
-            candidates = functions(tree, "compile_kernel")
-            ensure(len(candidates) == 1, "compile_kernel must exist once at module scope")
-            compiler = candidates[0]
-            expected_loop = ast.parse('''for marker in (b"@ReSukiSU", targets["components"]["resukisu"]["commit"][:8].encode(), b"susfs:", b"NoMount:"):
-            require(marker in data, f"Image identity missing: {marker!r}")
-        ''').body[0]
-            new_call = ast.parse('resukisu_image_identity(targets["components"]["resukisu"])', mode="eval").body
-            edited_loop = ast.parse(ast.unparse(expected_loop)).body[0]
-            edited_loop.iter.elts[0] = new_call
-            old_nodes = [n for n in compiler.body if same(n, expected_loop)]
-            new_nodes = [n for n in compiler.body if same(n, edited_loop)]
-            ensure(len(old_nodes) + len(new_nodes) == 1,
-                   "expected one supported identity-check loop; no writes performed")
-            helpers = functions(tree, "resukisu_image_identity")
-            ensure(len(helpers) <= 1, "duplicate identity helper")
-            helper_node = ast.parse(HELPER_SOURCE).body[0]
-            edits = []
-            if helpers:
-                ensure(same(helpers[0], helper_node),
-                       "existing identity helper differs; refusing to overwrite custom code")
-            else:
-                start, _ = bounds(source, compiler)
-                edits.append((start, start, HELPER_SOURCE.rstrip().encode() + b"\n\n\n"))
-            if old_nodes:
-                start, end = bounds(source, old_nodes[0].iter.elts[0])
-                edits.append((start, end, ast.unparse(new_call).encode()))
-            updated = changes(source, edits)
-            compiled = parse(updated)
-            actual_compiler = functions(compiled, "compile_kernel")[0]
-            ensure(any(same(n, edited_loop) for n in actual_compiler.body), "new identity loop missing")
-            # Prove the complete old compiler differs in exactly the marker expression.
-            before_ast = ast.parse(ast.unparse(compiler)).body[0]
-            for index, node in enumerate(before_ast.body):
-                if same(node, expected_loop):
-                    before_ast.body[index] = edited_loop
-            ensure(same(before_ast, actual_compiler), "unexpected compiler change")
-            return updated
-
-
-        def live_hash_pin(node):
-            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
-                return None
-            call = node.value
-            if not (isinstance(call.func, ast.Attribute) and call.func.attr == "assertEqual"
-                    and isinstance(call.func.value, ast.Name) and call.func.value.id == "self"
-                    and len(call.args) == 2 and not call.keywords):
-                return None
-            for index in (0, 1):
-                digest_call, expected = call.args[index], call.args[1-index]
-                if not (isinstance(digest_call, ast.Call) and len(digest_call.args) == 1
-                        and same(digest_call.func, ast.parse("e.digest", mode="eval").body)
-                        and isinstance(expected, ast.Constant) and isinstance(expected.value, str)):
-                    continue
-                p = digest_call.args[0]
-                if (isinstance(p, ast.BinOp) and isinstance(p.op, ast.Div)
-                        and same(p.left, ast.parse("e.REPO", mode="eval").body)
-                        and isinstance(p.right, ast.Constant) and p.right.value in MUTABLE_PATHS):
-                    # The old expected hash can change. It is deliberately NOT hard-coded.
-                    ensure(len(expected.value) == 64 and all(c in "0123456789abcdef" for c in expected.value),
-                           "unexpected form of mutable-file assertion")
-                    return p.right.value
-            return None
-
-
-        def patched_tests(source):
-            tree = parse(source)
-            classes = [c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "DeviceTests"]
-            ensure(len(classes) == 1, "DeviceTests class must exist exactly once")
-            cls = classes[0]
-            removals = []
-            paths = []
-            for method in cls.body:
-                if isinstance(method, ast.FunctionDef):
-                    for statement in method.body:
-                        path = live_hash_pin(statement)
-                        if path:
-                            ensure(len(method.body) > 2, "refusing to leave an empty test method")
-                            start, end = bounds(source, statement)
-                            # Replace the whole physical statement, including indentation/newline.
-                            start -= statement.col_offset
-                            if source[end:end+2] == b"\r\n":
-                                end += 2
-                            elif source[end:end+1] == b"\n":
-                                end += 1
-                            removals.append((start, end, b""))
-                            paths.append(path)
-            suites = [c for c in tree.body if isinstance(c, ast.ClassDef)
-                      and c.name == "SemanticLiveIdentityTests"]
-            ensure(len(suites) <= 1, "duplicate semantic test suite")
-            ensure((len(paths) == 2 and set(paths) == MUTABLE_PATHS) or (not paths and len(suites) == 1),
-                   "mutable-file assertions are missing/duplicated; refusing partial migration")
-            expected_suite = ast.parse(TEST_SOURCE).body[0]
-            if suites:
-                ensure(same(suites[0], expected_suite), "existing semantic tests differ; no overwrite")
-            else:
-                guards = [n for n in tree.body if isinstance(n, ast.If)
-                          and same(n.test, ast.parse("__name__ == '__main__'", mode="eval").body)]
-                ensure(len(guards) == 1, "unittest main guard must be unique")
-                start, _ = bounds(source, guards[0])
-                removals.append((start, start, TEST_SOURCE.rstrip().encode() + b"\n\n\n"))
-            updated = changes(source, removals)
-            after = parse(updated)
-            ensure(not any(live_hash_pin(n) for n in ast.walk(after)), "live-file hash assertion remains")
-            # Compare all pre-existing AST nodes: only the two assertions may disappear.
-            before_copy = ast.parse(ast.unparse(tree))
-            for node in ast.walk(before_copy):
-                if isinstance(node, ast.FunctionDef):
-                    node.body = [n for n in node.body if not live_hash_pin(n)]
-            before_copy.body = [n for n in before_copy.body if not
-                                (isinstance(n, ast.ClassDef) and n.name == "SemanticLiveIdentityTests")]
-            after.body = [n for n in after.body if not
-                          (isinstance(n, ast.ClassDef) and n.name == "SemanticLiveIdentityTests")]
-            ensure(same(before_copy, after), "an unrelated test was altered")
-            return updated
-
-
-        def plan(root):
-            root = Path(root).resolve()
-            original, updated = {}, {}
-            for name, transform in ((ENGINE, patched_engine), (TESTS, patched_tests)):
-                p = root / name
-                ensure(p.is_file() and not p.is_symlink(), "missing or linked migration input: " + name)
-                ensure(p.resolve().is_relative_to(root), "migration path escapes checkout")
-                for parent in p.relative_to(root).parents:
-                    ensure(not (root / parent).is_symlink(), "linked parent path")
-                original[name] = p.read_bytes()
-                updated[name] = transform(original[name])
-                compile(updated[name], name, "exec")
-            return original, updated
-
-
-        def main():
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--root", type=Path, required=True)
-            parser.add_argument("--report", type=Path, required=True)
-            parser.add_argument("--apply", action="store_true")
-            args = parser.parse_args()
-            before, after = plan(args.root)
-            changed = [name for name in before if before[name] != after[name]]
-            if args.apply:
-                for name in before:
-                    ensure((args.root / name).read_bytes() == before[name], "input changed during migration")
-                written = []
-                try:
-                    for name in changed:
-                        (args.root / name).write_bytes(after[name])
-                        written.append(name)
-                except Exception:
-                    for name in written:
-                        (args.root / name).write_bytes(before[name])
-                    raise
-            args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(json.dumps({"status": "applied" if args.apply else "checked",
-                "changed_files": changed, "source_selection": "Python AST, not exact text",
-                "kernel_compile_performed": False, "repository_push_performed": False}, indent=2) + "\n")
-            diff = "".join("".join(difflib.unified_diff(before[name].decode().splitlines(True),
-                after[name].decode().splitlines(True), "a/" + name, "b/" + name)) for name in changed)
-            args.report.with_suffix(".diff").write_text(diff)
-            print("MIGRATION_PLAN=PASS; FILES=" + str(len(changed)))
+          This is a temporary maintenance tool. It never starts a kernel worker, promotes
+          sources, or uploads a flashable image. Production validation functions are used.
+          """
+          import argparse
+          import copy
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import shutil
+          import stat
+          import sys
+          from types import SimpleNamespace
+          import urllib.request
+          import urllib.error
+          import urllib.parse
+          import zipfile
 
 
-        if __name__ == "__main__":
-            main()
-        MIGRATION_PY
-        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/preflight.json"
-    - name: Run the seven existing suites before changing files
-      shell: bash
-      run: |
-        set -euo pipefail
-        for pass_id in 1; do
-          folder="$REPORTS/before-$pass_id"
-          mkdir -p "$folder"
-          while IFS= read -r test_file; do
-            log="$folder/$(basename "$test_file").log"
-            echo "Testing $test_file ($pass_id)"
-            if ! "$PY" "$test_file" > "$log" 2>&1; then
-              cat "$log"
-              echo "::error::Host test failed: $test_file"
-              exit 1
-            fi
-            tail -5 "$log"
-          done <<'SUITES'
-        common/scripts/test_veux_update_engine.py
-        common/scripts/test_veux_release.py
-        common/scripts/test_veux_current_components.py
-        common/scripts/test_veux_device_fixes.py
-        common/scripts/test_veux_rpm_fixes.py
-        common/scripts/test_veux_config_compat.py
-        common/scripts/test_veux_source_transport.py
-        SUITES
-          printf 'HOST_TEST_before=before; PASS=%s; SUITES=7/7
-        ' "$pass_id"
-        done
-    - name: Apply both coordinated changes
-      shell: bash
-      run: |
-        set -euo pipefail
-        test -z "$(git status --porcelain --untracked-files=all)"
-        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/applied.json" --apply
-        git diff --check
-        git diff --stat
-    - name: Run all seven suites twice including the new identity tests
-      shell: bash
-      run: |
-        set -euo pipefail
-        for pass_id in 1 2; do
-          folder="$REPORTS/after-$pass_id"
-          mkdir -p "$folder"
-          while IFS= read -r test_file; do
-            log="$folder/$(basename "$test_file").log"
-            echo "Testing $test_file ($pass_id)"
-            if ! "$PY" "$test_file" > "$log" 2>&1; then
-              cat "$log"
-              echo "::error::Host test failed: $test_file"
-              exit 1
-            fi
-            tail -5 "$log"
-          done <<'SUITES'
-        common/scripts/test_veux_update_engine.py
-        common/scripts/test_veux_release.py
-        common/scripts/test_veux_current_components.py
-        common/scripts/test_veux_device_fixes.py
-        common/scripts/test_veux_rpm_fixes.py
-        common/scripts/test_veux_config_compat.py
-        common/scripts/test_veux_source_transport.py
-        SUITES
-          printf 'HOST_TEST_after=after; PASS=%s; SUITES=7/7
-        ' "$pass_id"
-        done
-    - name: Verify repeat application and exact change scope
-      shell: bash
-      run: |
-        set -euo pipefail
-        "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/repeat.json" --apply
-        "$PY" - <<'PY_SCOPE'
-        import json, os, subprocess
-        from pathlib import Path
-        allowed = {"common/scripts/veux_update_engine.py", "common/scripts/test_veux_device_fixes.py"}
-        repeat = json.loads((Path(os.environ["REPORTS"]) / "repeat.json").read_text())
-        if repeat["changed_files"]:
-            raise SystemExit("Migration was not idempotent")
-        def names(*args):
-            raw = subprocess.check_output(["git", *args, "-z"])
-            return {x.decode() for x in raw.split(b"\0") if x}
-        if not names("diff", "--name-only") <= allowed:
-            raise SystemExit("Unexpected modified file")
-        if names("diff", "--cached", "--name-only"):
-            raise SystemExit("Unexpected staged changes")
-        if names("ls-files", "--others", "--exclude-standard"):
-            raise SystemExit("Unexpected new repository files")
-        print("IDEMPOTENCY=PASS; CHANGE_SCOPE=PASS; KERNEL_BUILD=NOT_RUN")
-        PY_SCOPE
-        git diff --check
-    - name: Commit only tested changes without force-push
-      shell: bash
-      run: |
-        set -euo pipefail
-        if git diff --quiet; then
-          echo "SEMANTIC_LIVE_GATES=ALREADY_INSTALLED"
-          printf 'Die Aenderung ist bereits installiert; alle Hosttests bestanden.\n' >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-        fi
-        remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-        if [ "$remote_head" != "$BASE_SHA" ]; then
-          echo "::error::main changed during testing; no repository update performed."
-          exit 1
-        fi
-        git add -- common/scripts/veux_update_engine.py common/scripts/test_veux_device_fixes.py
-        "$PY" - <<'PY_STAGED'
-        import subprocess
-        allowed = {b"common/scripts/veux_update_engine.py", b"common/scripts/test_veux_device_fixes.py"}
-        actual = {x for x in subprocess.check_output(["git", "diff", "--cached", "--name-only", "-z"]).split(b"\0") if x}
-        if not actual or not actual <= allowed:
-            raise SystemExit("Unexpected staged scope")
-        PY_STAGED
-        git diff --cached --check
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git commit -m "Use target-based image identity and semantic live tests [skip ci]"
-        AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-        echo "::add-mask::$AUTH_HEADER"
-        export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-        export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
-        git push origin HEAD:refs/heads/main
-        new_head="$(git rev-parse HEAD)"
-        remote_after="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-        if [ "$remote_after" != "$new_head" ]; then
-          echo "::error::Push succeeded, but remote main changed afterwards. Recheck before building."
-          exit 1
-        fi
-        printf '%s\n' "$new_head" > "$REPORTS/installed-commit.txt"
-        echo "SEMANTIC_LIVE_GATES=INSTALLED; REMOTE_COMMIT_VERIFIED=PASS"
-        printf 'Semantische Live-Pruefungen installiert: `%s`\n\nSieben Host-Testreihen vor der Aenderung und zweimal danach bestanden. Kein Kernel gebaut, kein Device-PASS abgeleitet.\n' "$new_head" >> "$GITHUB_STEP_SUMMARY"
-      env:
-        GH_TOKEN: ${{ github.token }}
-    - name: Upload test logs and exact migration diff
-      if: ${{ always() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: VEUX-Semantic-R2-Reports-${{ github.run_id }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/veux-semantic-r2-reports/
-        if-no-files-found: warn
-        retention-days: 14
+          def ensure(ok, message):
+              if not ok:
+                  raise RuntimeError(message)
+
+
+          def sha(path):
+              with Path(path).open('rb') as f:
+                  return hashlib.file_digest(f, 'sha256').hexdigest()
+
+
+          def read_json(path):
+              return json.loads(Path(path).read_text())
+
+
+          def api_json(url, token):
+              ensure(url.startswith('https://api.github.com/'), 'invalid GitHub API URL')
+              request = urllib.request.Request(url, headers={
+                  'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'veux-config-preflight', 'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+
+          def download_artifact(repo, run_id, destination, token):
+              ensure(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'invalid repository')
+              ensure(str(run_id).isdigit(), 'invalid diagnostics run ID')
+              base = 'https://api.github.com/repos/' + repo
+              artifacts = []
+              page = 1
+              while True:
+                  data = api_json(f'{base}/actions/runs/{run_id}/artifacts?per_page=100&page={page}', token)
+                  entries = data.get('artifacts', [])
+                  artifacts.extend(entries)
+                  if len(entries) < 100:
+                      break
+                  page += 1
+                  ensure(page <= 20, 'too many artifact pages')
+              name = 'VEUX-Candidate-Build-Diagnostics-' + str(run_id)
+              matches = [row for row in artifacts if row.get('name') == name and not row.get('expired')]
+              ensure(len(matches) == 1, 'expected one unexpired diagnostics artifact: ' + name)
+              metadata = matches[0]
+              ensure(0 < metadata.get('size_in_bytes', 0) < 512 * 1024 * 1024, 'unexpected artifact size')
+              url = metadata['archive_download_url']
+              ensure(re.fullmatch(re.escape(base) + r'/actions/artifacts/[0-9]+/zip', url),
+                     'unexpected artifact download endpoint')
+              request = urllib.request.Request(url, headers={
+                  'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'veux-config-preflight'})
+              # Never forward the GitHub token to the signed storage URL.
+              opener = urllib.request.build_opener(NoRedirect())
+              try:
+                  response = opener.open(request, timeout=60)
+              except urllib.error.HTTPError as exc:
+                  ensure(exc.code in (301, 302, 303, 307, 308), 'artifact API did not redirect')
+                  location = exc.headers.get('Location', '')
+                  ensure(urllib.parse.urlsplit(location).scheme == 'https', 'non-HTTPS artifact location')
+                  response = urllib.request.urlopen(location, timeout=60)
+              size = 0
+              with response, destination.open('wb') as target:
+                  while block := response.read(1024 * 1024):
+                      size += len(block)
+                      ensure(size <= 512 * 1024 * 1024, 'artifact exceeded size limit')
+                      target.write(block)
+              expected = metadata.get('digest')
+              ensure(isinstance(expected, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', expected),
+                     'GitHub artifact checksum metadata missing')
+              ensure(sha(destination) == expected.split(':', 1)[1], 'downloaded artifact checksum mismatch')
+              return {'id': metadata['id'], 'run_id': str(run_id), 'name': name,
+                      'sha256': sha(destination), 'bytes': size,
+                      'source_compile_repository_sha': metadata.get('workflow_run', {}).get('head_sha')}
+
+
+          def extract_safe(archive, destination):
+              destination.mkdir(parents=True, exist_ok=False)
+              with zipfile.ZipFile(archive) as z:
+                  names = z.namelist()
+                  ensure(len(names) == len(set(names)), 'duplicate archive members')
+                  ensure(sum(info.file_size for info in z.infolist()) <= 1024 * 1024 * 1024,
+                         'archive contents exceed limit')
+                  for info in z.infolist():
+                      rel = PurePosixPath(info.filename)
+                      ensure(not rel.is_absolute() and '..' not in rel.parts and
+                             '\\' not in info.filename and rel.parts and rel.parts[0] == '5.4.274',
+                             'invalid evidence archive member')
+                      ensure(rel.as_posix() == info.filename.rstrip('/'), 'non-canonical archive member')
+                      ensure(not stat.S_ISLNK(info.external_attr >> 16), 'linked archive member')
+                      target = destination.joinpath(*rel.parts)
+                      ensure(target.resolve().is_relative_to(destination.resolve()), 'archive path escapes')
+                      if info.is_dir():
+                          target.mkdir(parents=True, exist_ok=True)
+                      else:
+                          target.parent.mkdir(parents=True, exist_ok=True)
+                          with z.open(info) as src, target.open('wb') as dst:
+                              shutil.copyfileobj(src, dst)
+              return destination / '5.4.274'
+
+
+          def validate_saved_evidence(work, candidate, e, compat, fixes, rpm, wakeup):
+              result = read_json(work / 'build-result.json')
+              recorded = read_json(work / 'config-reports/CONFIG-AUDIT.json')
+              integration = read_json(work / 'integration.json')
+              ensure(result.get('kernel') == '5.4.274' and result.get('compile') is True
+                     and result.get('device') is False, 'not a valid saved 5.4.274 compile result')
+              ensure(result.get('config_audit') == recorded, 'saved audit reports disagree')
+              ensure(integration.get('integration') == 'PASS' and integration.get('device_pass') is False,
+                     'saved integration did not pass')
+              ensure(set(integration.get('targets', {})) == set(e.COMPONENTS), 'saved component set differs')
+              for name, entry in integration['targets'].items():
+                  expected = candidate['components'].get(name, {})
+                  ensure(all(expected.get(key) == value for key, value in entry.items()),
+                         'saved evidence belongs to a different candidate: ' + name)
+              image = work / 'build/arch/arm64/boot/Image'
+              ensure(image.is_file() and sha(image) == result['image_sha256'] == recorded['image_sha256'],
+                     'saved Image identity/hash mismatch')
+              data = image.read_bytes()
+              ensure(e.resukisu_image_identity(integration['targets']['resukisu']) in data
+                     and b'susfs:' in data and b'NoMount:' in data, 'saved Image component identity missing')
+              audit = compat._load_audit()
+              actual = (work / 'config-reports/actual-build.config').read_bytes()
+              ensure(audit.extract(data) == actual, 'saved Image does not embed its actual config')
+              for name in ('embedded.config', 'final-build.config'):
+                  ensure((work / 'config-reports' / name).read_bytes() == actual,
+                         'same-build config mismatch: ' + name)
+              ensure(hashlib.sha256(actual).hexdigest() == recorded['actual_config_sha256']
+                     == recorded['embedded_config_sha256'], 'saved config hashes disagree')
+              values = audit.options(actual)
+              ensure(recorded['options'] == {key: values.get('CONFIG_' + key, 'n') for key in audit.KEYS},
+                     'audited option record differs from actual config')
+              auto = audit.options((work / 'config-reports/auto.conf').read_bytes())
+              ensure(all(values.get('CONFIG_' + key, 'n') == auto.get('CONFIG_' + key, 'n')
+                         for key in audit.KEYS), 'generated build options differ')
+              rom = audit.vintf.require_compatible(actual, (compat.ROOT / 'diag09-actual.config').read_bytes())
+              ensure(rom == recorded['vintf_kernel'], 'recomputed ROM audit differs from saved report')
+              for path, evidence in recorded['core_compile_commands'].items():
+                  filename = Path(path).name.lstrip('.')
+                  cmd = work / 'config-reports' / filename
+                  ensure(sha(cmd) == evidence['sha256'], 'compiler evidence hash mismatch: ' + path)
+                  text = cmd.read_text()
+                  cfi = bool(re.search(r'-fsanitize=[^\s;]*\bcfi\b', text))
+                  lto = bool(re.search(r'(?<!\S)-flto(?:=\S+)?(?:\s|$)', text))
+                  ensure(cfi == evidence['cfi_flag'] and lto == evidence['lto_flag'],
+                         'compiler evidence flags differ: ' + path)
+              audit.vintf.compiler_evidence((work / 'config-reports/fork.o.cmd').read_text(),
+                                            (work / 'build/System.map').read_text())
+              dtb = read_json(work / 'DTB-CHECK.json')
+              ensure(dtb.get('match') is True and dtb['actual_sha256'] == dtb['expected_sha256']
+                     == result['dtb_sha256'], 'saved DTB check failed')
+              # Recheck each current device-proof contract without rerunning the compiler.
+              result['device_fixes'] = read_json(work / 'DEVICE-FIXES.json')
+              ensure(result['device_fixes'] == fixes.expected('5.4.274'), 'device fix proof changed')
+              result['rpm_fixes'] = read_json(work / 'RPM-FIXES.json')
+              rpm.verify_result('5.4.274', result)
+              result['wakeup_fixes'] = read_json(work / 'WAKEUP-FIXES.json')
+              result['wakeup_linked_symbols'] = wakeup.verify_build('5.4.274', work)
+              wakeup.verify_result('5.4.274', result)
+              result['config_compat'] = compat.expected_proof(recorded)
+              compat.verify_result('5.4.274', result)
+              return image, result, integration['targets'], len(values)
+
+
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument('--root', type=Path, required=True)
+              parser.add_argument('--work', type=Path, required=True)
+              parser.add_argument('--reports', type=Path, required=True)
+              parser.add_argument('--diagnostics-run', required=True)
+              args = parser.parse_args()
+              root = args.root.resolve()
+              args.work.mkdir(parents=True, exist_ok=False)
+              args.reports.mkdir(parents=True, exist_ok=True)
+              sys.path.insert(0, str(root / 'common/scripts'))
+              import veux_update_engine as e
+              import veux_config_compat as compat
+              import veux_release as release
+              import veux_release_device as device_release
+              import veux_device_fixes as fixes
+              import veux_rpm_fixes as rpm
+              import veux_wakeup_fixes as wakeup
+              ensure(e.REPO == root, 'wrong repository imports')
+              def refuse_compile(*_args, **_kwargs):
+                  raise RuntimeError('Preflight must not start a kernel compilation')
+              e.compile_kernel = refuse_compile
+              device_release.worker = refuse_compile
+              cfg, _ = e.check_repo()
+              candidate = read_json(root / 'common/contracts/UPSTREAM_CANDIDATE.json')
+              ensure(candidate.get('status') == 'build-preflight-pass' and candidate.get('build_ready') is True,
+                     'candidate is not approved for a manual build')
+              current = read_json(root / release.CURRENT)
+              ensure(current.get('status') == 'compile-package-static-validated', 'current build not validated')
+              ensure(set(current['lineages']) == set(cfg['lineages']) == set(candidate['lineages']),
+                     'fleet/recipe/candidate lineage mismatch')
+              current_bundle = args.work / 'current-bundle'
+              current_artifacts = args.work / 'current-results'
+              e.write_json(current_bundle / 'targets.json', {'lineages': list(current['lineages']),
+                                                           'components': current['targets']})
+              for label, row in current['lineages'].items():
+                  e.write_json(current_artifacts / label / 'RESULT.json', row)
+              device_release.verify_results(SimpleNamespace(bundle=current_bundle, artifacts=current_artifacts))
+              print('CURRENT_SIX_RESULT_GATES=PASS (existing results, no new compile)', flush=True)
+              archive = args.work / 'diagnostics.zip'
+              metadata = download_artifact(os.environ['GITHUB_REPOSITORY'], args.diagnostics_run,
+                                           archive, os.environ['GH_TOKEN'])
+              e.write_json(args.reports / 'artifact-provenance.json', metadata)
+              work = extract_safe(archive, args.work / 'evidence')
+              image, result, components, option_count = validate_saved_evidence(work, candidate, e,
+                                                             compat, fixes, rpm, wakeup)
+              print('SAVED_CONFIG_ROM_SECURITY_AND_RESULT_GATES=PASS', flush=True)
+              targets = {'components': components}
+              public = args.work / 'private-package-check'
+              public.mkdir()
+              # Production functions: actual ZIP creation, AVB checks, MagiskBoot unpack,
+              # final file copying and final result verification. No worker/compile call.
+              e.package_kernel(image, targets, result, work, public)
+              e.static_boot(image, result, work)
+              release.publish_files(result, work, public, targets)
+              release.verify_boot(result, public)
+              bundle = args.work / 'candidate-bundle'
+              targets.update(schema=1, repository_sha=e.git(root, 'rev-parse', 'HEAD'),
+                             golden_sha256=e.digest(root / cfg['golden_contract']), lineages=['5.4.274'])
+              e.write_json(bundle / 'targets.json', targets)
+              result.update(targets=components, target_manifest_sha256=e.digest(bundle/'targets.json'),
+                            device=False, repository_sha=targets['repository_sha'])
+              artifacts = args.work / 'candidate-results'
+              e.write_json(artifacts / '5.4.274/RESULT.json', result)
+              device_release.verify_results(SimpleNamespace(bundle=bundle, artifacts=artifacts))
+              with zipfile.ZipFile(public/result['package_file']) as z:
+                  ensure(z.testzip() is None and z.read('Image') == image.read_bytes(),
+                         'final package integrity differs')
+              # Only non-flashable evidence is uploaded. A real six-kernel run remains manual.
+              for name in ('AVB-VERIFY.txt', 'unpack-raw.log', 'unpack-decoded.log'):
+                  shutil.copy2(work/'static'/name, args.reports/name)
+              e.write_json(args.reports/'POSTCOMPILE_PREFLIGHT.json', {
+                  'status':'PASS', 'source_compile_run':args.diagnostics_run,
+                  'kernel_compile_performed':False, 'kernel':'5.4.274', 'option_count':option_count,
+                  'source_compile_repository_sha':metadata['source_compile_repository_sha'],
+                  'existing_six_result_gates':'PASS', 'config_rom_security':'PASS',
+                  'package_replay':'PASS', 'static_boot_replay':'PASS', 'final_result_gate':'PASS',
+                  'promotion_performed':False, 'device_pass_inferred':False,
+                  'image_sha256':result['image_sha256'], 'config_proof':result['config_compat']})
+              print('POSTCOMPILE_PREFLIGHT=PASS; NEW_KERNEL_COMPILE=NO; PROMOTION=NO', flush=True)
+
+          if __name__ == '__main__':
+              main()
+          PREFLIGHT_PY
+          "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/preflight.json"
+      - name: Run seven existing suites before changing files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pass_id in 1; do
+            folder="$REPORTS/before-$pass_id"
+            mkdir -p "$folder"
+            while IFS= read -r test_file; do
+              log="$folder/$(basename "$test_file").log"
+              echo "Testing $test_file ($pass_id)"
+              if ! "$PY" "$test_file" > "$log" 2>&1; then
+                cat "$log"
+                echo "::error::Host test failed: $test_file"
+                exit 1
+              fi
+              tail -5 "$log"
+            done <<'SUITES'
+          common/scripts/test_veux_update_engine.py
+          common/scripts/test_veux_release.py
+          common/scripts/test_veux_current_components.py
+          common/scripts/test_veux_device_fixes.py
+          common/scripts/test_veux_rpm_fixes.py
+          common/scripts/test_veux_config_compat.py
+          common/scripts/test_veux_source_transport.py
+          SUITES
+            echo "HOST_SUITES_before=PASS; RUN=$pass_id; SUITES=7/7"
+          done
+      - name: Apply only the two configuration-gate changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain --untracked-files=all)"
+          "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/applied.json" --apply
+          git diff --check
+          git diff --stat
+      - name: Run all seven suites twice including new config tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pass_id in 1 2; do
+            folder="$REPORTS/after-$pass_id"
+            mkdir -p "$folder"
+            while IFS= read -r test_file; do
+              log="$folder/$(basename "$test_file").log"
+              echo "Testing $test_file ($pass_id)"
+              if ! "$PY" "$test_file" > "$log" 2>&1; then
+                cat "$log"
+                echo "::error::Host test failed: $test_file"
+                exit 1
+              fi
+              tail -5 "$log"
+            done <<'SUITES'
+          common/scripts/test_veux_update_engine.py
+          common/scripts/test_veux_release.py
+          common/scripts/test_veux_current_components.py
+          common/scripts/test_veux_device_fixes.py
+          common/scripts/test_veux_rpm_fixes.py
+          common/scripts/test_veux_config_compat.py
+          common/scripts/test_veux_source_transport.py
+          SUITES
+            echo "HOST_SUITES_after=PASS; RUN=$pass_id; SUITES=7/7"
+          done
+      - name: Replay real candidate package and static checks without compiling
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" "$PREFLIGHT" --root "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-config-replay" --reports "$REPORTS/postcompile" \
+            --diagnostics-run "$DIAGNOSTICS_RUN" \
+            2>&1 | tee "$REPORTS/postcompile.log"
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIAGNOSTICS_RUN: ${{ inputs.diagnostics_run }}
+      - name: Verify repeat application and exact two-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" "$MIGRATOR" --root "$GITHUB_WORKSPACE" --report "$REPORTS/repeat.json" --apply
+          "$PY" - <<'PY_SCOPE'
+          import json, os, subprocess
+          from pathlib import Path
+          allowed = {"common/scripts/veux_config_compat.py", "common/scripts/test_veux_config_compat.py"}
+          report = json.loads((Path(os.environ['REPORTS']) / 'repeat.json').read_text())
+          if report['changed_files']:
+              raise SystemExit('Migration is not idempotent')
+          def paths(*args):
+              return {x.decode() for x in subprocess.check_output(['git', *args, '-z']).split(b'\0') if x}
+          if not paths('diff', '--name-only') <= allowed:
+              raise SystemExit('Unrelated modified file')
+          if paths('diff', '--cached', '--name-only') or paths('ls-files', '--others', '--exclude-standard'):
+              raise SystemExit('Unexpected staged or untracked files')
+          post = json.loads((Path(os.environ['REPORTS']) / 'postcompile/POSTCOMPILE_PREFLIGHT.json').read_text())
+          if post.get('status') != 'PASS' or post.get('kernel_compile_performed') is not False:
+              raise SystemExit('Post-compile replay did not finish correctly')
+          print('IDEMPOTENCY=PASS; CHANGE_SCOPE=PASS; NEW_KERNEL_BUILD=NOT_RUN')
+          PY_SCOPE
+          git diff --check
+      - name: Commit only after every preflight passed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "CONFIG_SEMANTIC_GATE=ALREADY_INSTALLED"
+            printf '%s\n' 'Bereits installiert. Hosttests und Nachbau der Paket-/Static-Boot-Pruefung bestanden; kein neuer Kernel kompiliert.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          remote_head="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [ "$remote_head" != "$BASE_SHA" ]; then
+            echo "::error::main changed during testing; no repository update performed."
+            exit 1
+          fi
+          git add -- common/scripts/veux_config_compat.py common/scripts/test_veux_config_compat.py
+          "$PY" - <<'PY_STAGED'
+          import subprocess
+          allowed = {b'common/scripts/veux_config_compat.py', b'common/scripts/test_veux_config_compat.py'}
+          actual = {x for x in subprocess.check_output(['git','diff','--cached','--name-only','-z']).split(b'\0') if x}
+          if not actual or not actual <= allowed:
+              raise SystemExit('Unexpected staged scope')
+          PY_STAGED
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Use per-build semantic config proof without historical config hash lock [skip ci]"
+          AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$AUTH_HEADER"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER"
+          git push origin HEAD:refs/heads/main
+          new_head="$(git rev-parse HEAD)"
+          remote_after="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [ "$remote_after" != "$new_head" ]; then
+            echo "::error::Push succeeded but main moved afterwards; recheck before building."
+            exit 1
+          fi
+          printf '%s\n' "$new_head" > "$REPORTS/installed-commit.txt"
+          echo "CONFIG_SEMANTIC_GATE=INSTALLED; REMOTE_COMMIT_VERIFIED=PASS"
+          printf 'Konfigurationspruefung installiert: `%s`\n\nSieben Host-Testreihen vor der Aenderung und zweimal danach bestanden. Vorhandenes Candidate-Image erneut auf Konfiguration, Paketierung, Static-Boot und Ergebnisvertrag geprueft. Kein neuer Kernel kompiliert. Keine Promotion, kein Geraete-PASS.\n' "$new_head" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Upload reports only - no flashable files
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Config-Preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-config-reports/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
