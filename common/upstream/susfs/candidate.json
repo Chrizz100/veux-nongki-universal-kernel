@@ -9,6 +9,8 @@
   "fast_forward_from_current": true,
   "historical_base_is_ancestor": true,
   "ref": "refs/heads/gki-android13-5.10",
+  "review_reasons": [],
+  "review_required": false,
   "reviewed_interface": true,
   "snapshot_complete": true,
   "snapshot_missing": [],

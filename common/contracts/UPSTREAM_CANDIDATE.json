@@ -1,5 +1,5 @@
 {
-  "build_ready": true,
+  "build_ready": false,
   "compile_performed": false,
   "component_gate": true,
   "components": {
@@ -15,6 +15,10 @@
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
       "ref": "refs/heads/master",
+      "review_reasons": [
+        "NoMount declared version changed: 20 -> 21"
+      ],
+      "review_required": true,
       "reviewed_interface": true,
       "snapshot_complete": true,
       "snapshot_missing": [],
@@ -23,24 +27,26 @@
       "version_kind": "base-version-dynamic-commit-count"
     },
     "resukisu": {
-      "ahead": 47,
+      "ahead": 51,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
       "changed": true,
-      "commit": "c9246641b9eee8b9986050e8bf1832f88da880c2",
+      "commit": "969de3d0ce65d2d75e5a2f6c548d9e14817ef459",
       "compatibility_errors": [],
       "component_gate": true,
       "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
-      "local_version": 4517,
+      "local_version": 4521,
       "ref": "refs/heads/main",
+      "review_reasons": [],
+      "review_required": false,
       "reviewed_interface": true,
       "snapshot_complete": true,
       "snapshot_missing": [],
       "tag": "v4.2.0-rc3",
       "uapi": 5,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35217"
+      "version": "35221"
     },
     "susfs": {
       "ahead": 5,
@@ -53,6 +59,8 @@
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
       "ref": "refs/heads/gki-android13-5.10",
+      "review_reasons": [],
+      "review_required": false,
       "reviewed_interface": true,
       "snapshot_complete": true,
       "snapshot_missing": [],
@@ -154,12 +162,16 @@
       "wakeup_source_gate": true
     }
   },
-  "note": "PASS means source/integration gates accept the candidate. It does NOT prove that the kernel compiles; only a manually started compile can prove that.",
+  "note": "PASS means source/integration gates accept the candidate. REVIEW_REQUIRED means a declared interface/version generation changed and must be explicitly reviewed before a manual build is allowed. No status proves that the kernel compiles; only a manually started compile can prove that.",
   "package_performed": false,
-  "repository_sha": "5ca745a9ae5cad072e6adb03e8562986da73982c",
+  "repository_sha": "5533ce0d12ac13f11f2b45e61adee8a3002a5f8e",
+  "review_reasons": [
+    "nomount: NoMount declared version changed: 20 -> 21"
+  ],
+  "review_required": true,
   "schema": 1,
   "snapshot_complete": true,
   "static_boot_performed": false,
-  "status": "build-preflight-pass",
+  "status": "review-required",
   "updates_found": true
 }

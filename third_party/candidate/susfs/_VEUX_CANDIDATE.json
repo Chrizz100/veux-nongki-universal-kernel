@@ -18,6 +18,8 @@
   "historical_base_is_ancestor": true,
   "missing_paths": [],
   "ref": "refs/heads/gki-android13-5.10",
+  "review_reasons": [],
+  "review_required": false,
   "reviewed_interface": true,
   "schema": 1,
   "snapshot_kind": "unbuilt-upstream-candidate",
