@@ -15,6 +15,7 @@ import veux_device_fixes as f
 import veux_config_compat as compat
 import veux_release_device as d
 import veux_rpm_fixes as rpm
+import veux_rpm24 as rpm24
 import veux_wakeup_fixes as wakeup
 import veux_release as r
 import veux_update_engine as e
@@ -266,13 +267,16 @@ class DeviceTests(unittest.TestCase):
                         if fail_fix == 'rpm':
                             raise e.Blocked('injected RPM drift')
                         return rpm.expected('5.4.274')
+                    def apply_rpm24(*unused):
+                        events.append('rpm24')
+                        return [{'id': rpm24.ID, 'kernel': rpm24.KERNEL, 'source': rpm24.SOURCE, 'max_buffered': 24, 'host_tested': True, 'device': False, 'source_sha256': '1' * 64, 'post_rpm_sleep_sha256': rpm24.PREVIOUS_SHA256}]
                     def apply_wakeup(*unused):
                         events.append('wakeup')
                         if fail_fix == 'wakeup':
                             raise e.Blocked('injected wakeup drift')
                         return wakeup.expected('5.4.274')
                     def compile(label, state, targets, work, jobs):
-                        self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified', 'wakeup', 'wakeup_verified'])
+                        self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified', 'rpm24', 'rpm24_verified', 'wakeup', 'wakeup_verified'])
                         events.append('compile')
                         image = work / 'Image'
                         image.write_bytes(b'kernel')
@@ -297,6 +301,9 @@ class DeviceTests(unittest.TestCase):
                             (f, 'verify_source', dict(side_effect=lambda *a: events.append('verified'))),
                             (rpm, 'apply', dict(side_effect=apply_rpm)),
                             (rpm, 'verify_source', dict(side_effect=lambda *a: events.append('rpm_verified'))),
+                            (rpm24, 'apply', dict(side_effect=apply_rpm24)),
+                            (rpm24, 'verify_source', dict(side_effect=lambda *a: events.append('rpm24_verified'))),
+                            (rpm24, 'verify_composed_source', dict(side_effect=lambda *a: events.append('rpm24_composed_verified'))),
                             (wakeup, 'apply', dict(side_effect=apply_wakeup)),
                             (wakeup, 'verify_source', dict(side_effect=lambda *a: events.append('wakeup_verified'))),
                             (wakeup, 'verify_build', dict(return_value=['wakeup_reason_init', 'last_resume_reason_show', 'last_suspend_time_show'])),
@@ -311,11 +318,13 @@ class DeviceTests(unittest.TestCase):
                             self.assertFalse((args.public / 'RESULT.json').exists())
                         else:
                             d.worker(args)
-                            self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified',
-                                                      'wakeup', 'wakeup_verified', 'compile', 'verified', 'rpm_verified', 'wakeup_verified'])
+                            self.assertEqual(events, ['fixes', 'verified', 'rpm', 'rpm_verified', 'rpm24', 'rpm24_verified',
+                                                      'wakeup', 'wakeup_verified', 'compile', 'verified', 'rpm24_composed_verified', 'wakeup_verified'])
                             row = json.loads((args.public / 'RESULT.json').read_text())
                             self.assertEqual(row['device_fixes'], f.expected('5.4.274'))
                             self.assertEqual(row['rpm_fixes'], rpm.expected('5.4.274'))
+                            self.assertEqual(row['rpm24_fixes'], apply_rpm24())
+                            events.pop()  # remove only test fixture generator marker
                             self.assertEqual(row['wakeup_fixes'], wakeup.expected('5.4.274'))
                             wakeup.verify_build.assert_called_once_with('5.4.274', args.work)
                             self.assertEqual(row['config_compat'], compat.expected_proof())

@@ -18,6 +18,7 @@ import veux_device_fixes as fixes
 import veux_config_compat as compat
 import veux_source_transport as transport
 import veux_rpm_fixes as rpm
+import veux_rpm24 as rpm24
 import veux_wakeup_fixes as wakeup
 import veux_rmnet as rmnet
 import veux_perf_compat as perf
@@ -26,7 +27,7 @@ import veux_perf_compat as perf
 def preserve_device_diagnostics(work, public, diag):
     """Retain compact build evidence before deleting temporary source trees."""
     e.preserve_diagnostics(work, public, diag)
-    paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json', work / 'RPM-FIXES.json', work / 'WAKEUP-FIXES.json']
+    paths = [*work.glob('*.log'), work / 'DEVICE-FIXES.json', work / 'RPM-FIXES.json', work / 'RPM24.json', work / 'WAKEUP-FIXES.json']
     paths.append(work / 'RMNET.json')
     # ConfigDiag10 writes the raw evidence below this directory. The legacy
     # preservation function only knows its own top-level JSON files.
@@ -84,13 +85,16 @@ def worker(args):
         fixes.verify_source(src, label, proof)
         rpm_proof = rpm.apply(src, label, work)
         rpm.verify_source(src, label, rpm_proof)
+        rpm24_proof = rpm24.apply(src, label, work)
+        rpm24.verify_source(src, label, rpm24_proof)
         wakeup_proof = wakeup.apply(src, label, work)
         wakeup.verify_source(src, label, wakeup_proof)
         image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
         fixes.verify_source(src, label, proof)
-        rpm.verify_source(src, label, rpm_proof)
+        rpm24.verify_composed_source(src, label, rpm_proof, rpm24_proof)
         result['device_fixes'] = proof
         result['rpm_fixes'] = rpm_proof
+        result['rpm24_fixes'] = rpm24_proof
         wakeup.verify_source(src, label, wakeup_proof)
         result['wakeup_fixes'] = wakeup_proof
         result['wakeup_linked_symbols'] = wakeup.verify_build(label, work)
@@ -130,6 +134,8 @@ def verify_results(args):
         e.require(row.get('device_fixes') == fixes.expected(label),
                   'missing or outdated device fixes: ' + label)
         rpm.verify_result(label, row)
+        if targets.get('candidate_manual_build') is True or 'performance_compat' in row or 'rpm24_fixes' in row:
+            rpm24.verify_result(label, row)
         wakeup.verify_result(label, row)
         if rmnet.requested(targets, label) or 'rmnet' in row:
             rmnet.verify_package(row, args.artifacts / label)
