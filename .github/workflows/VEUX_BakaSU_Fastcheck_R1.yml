@@ -1,0 +1,80 @@
+name: VEUX - BakaSU/ReSukiSU Fast Compatibility Check R1
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '31 6,18 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-bakasu-fastcheck-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Fast read-only upstream check (no kernel build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout exact main snapshot (read-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Mandatory actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Chrizz100/veux-nongki-universal-kernel
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline .github/workflows/VEUX_BakaSU_Fastcheck_R1.yml
+          echo 'ACTIONLINT_FASTCHECK=PASS'
+
+      - name: Run fast offline unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s Tests -p test_veux_bakasu_fastcheck_r1.py -v
+          python3 -c "import ast,pathlib; ast.parse(pathlib.Path('common/scripts/veux_bakasu_fastcheck_r1.py').read_text())"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'FASTCHECK_LOCAL_GATES=PASS'
+
+      - name: Check latest BakaSU source and explicit SUSFS blocker
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 common/scripts/veux_bakasu_fastcheck_r1.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/veux-bakasu-fastcheck-r1"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'SOURCE_AUDIT_COMPLETE=PASS; KERNEL_BUILD_PERFORMED=NO'
+
+      - name: Upload fastcheck evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-BakaSU-Fastcheck-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-bakasu-fastcheck-r1/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
