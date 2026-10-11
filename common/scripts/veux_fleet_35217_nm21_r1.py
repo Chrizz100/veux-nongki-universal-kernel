@@ -165,6 +165,40 @@ def remote_head(url: str, ref: str) -> str:
     return cols[0]
 
 
+def audit_frozen_upstream(donor: Path, component: str,
+                          pinned: str, observed: str) -> dict:
+    """Allow a moved branch tip ONLY when it descends from the frozen source pin.
+
+    A moved tip is NOT compiled, installed, or automatically promoted.  The
+    checkout remains detached at pinned; a rewritten/unknown tip is rejected.
+    Git graph proof is performed against the just-cloned complete upstream.
+    """
+    require(component in ('susfs','nomount'),'INVALID_FROZEN_COMPONENT')
+    require(all(re.fullmatch(r'[0-9a-f]{40}', v) for v in (pinned,observed)),
+            'INVALID_FROZEN_UPSTREAM_SHA '+component)
+    require(run('git','-C',donor,'rev-parse','HEAD')==pinned,
+            'PINNED_DONOR_IDENTITY_MISMATCH '+component)
+    require(run('git','-C',donor,'cat-file','-t',observed)=='commit',
+            'UNKNOWN_UPSTREAM_TIP '+component)
+    try:
+        run('git','-C',donor,'merge-base','--is-ancestor',pinned,observed,
+            timeout=90)
+    except FleetBlocked as exc:
+        raise FleetBlocked('UPSTREAM_NON_FAST_FORWARD '+component+
+                           ': source must be reviewed before changing the pin') from exc
+    count=int(run('git','-C',donor,'rev-list','--count',pinned+'..'+observed))
+    require(count>=0,'NEGATIVE_UPSTREAM_DISTANCE '+component)
+    return {
+        'source_component':component,
+        'frozen_build_commit':pinned,
+        'observed_branch_head':observed,
+        'commits_ahead_not_integrated':count,
+        'upstream_advanced':observed!=pinned,
+        'needs_review_before_integrating_new_head':observed!=pinned,
+        'candidate_uses_only_frozen_commit':True,
+    }
+
+
 def prepare(repo: Path, root: Path, kernel: str) -> dict:
     repo=repo.resolve(strict=True)
     require(kernel in KERNELS,'UNKNOWN_KERNEL')
@@ -192,18 +226,21 @@ def prepare(repo: Path, root: Path, kernel: str) -> dict:
         entry=TARGETS[comp]
         newhead=remote_head(entry['url'],entry['ref'])
         heads[comp]=newhead
-        if comp=='nomount':
-            require(newhead==entry['commit'],
-                    'NOMOUNT_HEAD_CHANGED: review latest head before updating pin')
-        elif comp=='susfs':
-            require(newhead==entry['commit'],
-                    'SUSFS_HEAD_CHANGED: audit compatibility/backports before compiling')
+        # Never integrate a floating HEAD.  Source is always the frozen pin;
+        # for SUSFS and NoMount, verify ancestry after fetching full history.
+        # Upstream drift is recorded and requires review before updating pins.
         # We intentionally freeze ReSukiSU 35217 even if main advanced.
         donor=dest/comp
         e.checkout(entry['url'],entry['commit'],donor,full=True)
         require(e.git(donor,'rev-parse','HEAD')==entry['commit'],
                 'PINNED_DONOR_IDENTITY_MISMATCH '+comp)
         require(not e.git(donor,'status','--porcelain'),'DIRTY_UPSTREAM_DONOR '+comp)
+        if comp in ('susfs','nomount'):
+            report.setdefault('frozen_upstream_audit',{})[comp] = audit_frozen_upstream(
+                donor,comp,entry['commit'],newhead)
+            if newhead!=entry['commit']:
+                print('FROZEN_'+comp.upper()+'_PIN=PASS; HEAD_ADVANCED_NOT_INTEGRATED',
+                      flush=True)
         if comp=='resukisu':
             require(reviewed.checked_uapi(donor)==5,'RESUKISU_UAPI5_REVIEW_MISMATCH')
             compat=donor/'kernel/tools/susfs_compat.mk'
@@ -231,6 +268,9 @@ def prepare(repo: Path, root: Path, kernel: str) -> dict:
             'no_promotion':True}
     e.write_json(dest/'targets.json',result)
     report['heads_at_checkout']=heads
+    report['upstream_heads_not_used_as_source']=True
+    report['review_new_upstream_commits_before_integration']=any(
+        h!=TARGETS[c]['commit'] for c,h in heads.items())
     report['upstream_symlinks']=links
     report['proven_274_requires_awinic_r3']=kernel=='5.4.274'
     report['retained_device_fixes']=True
