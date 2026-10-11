@@ -129,6 +129,83 @@ class IsolatedTrialTests(unittest.TestCase):
                 with self.assertRaisesRegex(trial.TrialBlocked, "broken or cyclic"):
                     trial.check_symlinks(root)
 
+    def test_workflow_precreated_empty_report_directory_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            checkout = base / "checkout"
+            checkout.mkdir()
+            work = base / "runner-temp" / "veux-nm21-r2"
+            report = work / "report"
+            report.mkdir(parents=True)
+            self.assertEqual(trial.initialize_workspace(checkout, work), work.resolve())
+            self.assertTrue(report.is_dir())
+            self.assertEqual(list(report.iterdir()), [])
+
+    def test_empty_new_workspace_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            checkout = base / "checkout"
+            checkout.mkdir()
+            work = base / "runner-temp" / "new"
+            self.assertEqual(trial.initialize_workspace(checkout, work), work.resolve())
+            self.assertTrue(work.is_dir())
+
+    def test_existing_report_directory_receives_failure_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            checkout = base / "checkout"
+            checkout.mkdir()
+            work = base / "work"
+            (work / "report").mkdir(parents=True)
+            with mock.patch.object(trial, "check_project_identity",
+                                   side_effect=trial.TrialBlocked("expected test failure")):
+                with self.assertRaisesRegex(trial.TrialBlocked, "expected test failure"):
+                    trial.prepare(checkout, work)
+            report = json.loads((work / "report" / "NOMOUNT21_R2.json").read_text())
+            self.assertEqual(report["status"], "BLOCKED")
+            self.assertEqual(report["reason"], "expected test failure")
+            self.assertFalse(report["repository_written"])
+            self.assertFalse(report["can_flash"])
+
+    def test_unexpected_workspace_content_remains_blocked(self):
+        for kind in ("file", "directory", "report_file", "report_subdir"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                checkout = base / "checkout"
+                checkout.mkdir()
+                work = base / "work"
+                work.mkdir()
+                if kind == "file":
+                    (work / "targets.json").write_text("stale")
+                elif kind == "directory":
+                    (work / "bundle").mkdir()
+                elif kind == "report_file":
+                    (work / "report").mkdir()
+                    (work / "report" / "old.json").write_text("stale")
+                else:
+                    (work / "report" / "nested").mkdir(parents=True)
+                with self.assertRaises(trial.TrialBlocked):
+                    trial.initialize_workspace(checkout, work)
+
+    def test_workspace_symlinks_and_nested_checkout_remain_blocked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            checkout = base / "checkout"
+            checkout.mkdir()
+            existing = base / "outside"
+            existing.mkdir()
+            linked_root = base / "linked-root"
+            linked_root.symlink_to(existing, target_is_directory=True)
+            with self.assertRaisesRegex(trial.TrialBlocked, "workspace symlink"):
+                trial.initialize_workspace(checkout, linked_root)
+            work = base / "work"
+            work.mkdir()
+            (work / "report").symlink_to(existing, target_is_directory=True)
+            with self.assertRaisesRegex(trial.TrialBlocked, "unsafe pre-created report"):
+                trial.initialize_workspace(checkout, work)
+            with self.assertRaisesRegex(trial.TrialBlocked, "OUTSIDE repository"):
+                trial.initialize_workspace(checkout, checkout / "temp")
+
     def test_frozen_component_contract_is_required(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

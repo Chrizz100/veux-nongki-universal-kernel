@@ -154,11 +154,37 @@ def write_report(root: Path, report: dict):
     (folder / "NOMOUNT21_R2.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
 
+def initialize_workspace(repo: Path, root: Path) -> Path:
+    """Accept only the workflow's empty pre-created report directory.
+
+    GitHub Actions creates ``<work>/report`` ahead of the preflight so failure
+    reports can be uploaded.  Every other existing workspace entry is still
+    rejected, and neither the workspace nor report may be symlinks.
+    """
+    require(not root.is_symlink(), "workspace symlink rejected")
+    real_repo = repo.resolve(strict=True)
+    real_root = root.resolve()
+    require(not real_root.is_relative_to(real_repo),
+            "temporary workspace must be OUTSIDE repository")
+    if real_root.exists():
+        require(real_root.is_dir(), "workspace is not a directory")
+        entries = list(real_root.iterdir())
+        require(all(entry.name == "report" for entry in entries),
+                "workspace already populated")
+        report = real_root / "report"
+        if entries:
+            require(not report.is_symlink() and report.is_dir(),
+                    "unsafe pre-created report directory")
+            require(not any(report.iterdir()),
+                    "pre-created report directory is not empty")
+    else:
+        real_root.mkdir(parents=True, exist_ok=False)
+    return real_root
+
+
 def prepare(repo: Path, root: Path) -> dict:
-    repo, root = repo.resolve(strict=True), root.resolve()
-    require(not root.is_relative_to(repo), "temporary workspace must be OUTSIDE repository")
-    require(not root.exists() or not any(root.iterdir()), "workspace already populated")
-    root.mkdir(parents=True, exist_ok=True)
+    repo = repo.resolve(strict=True)
+    root = initialize_workspace(repo, root)
     report = {"schema": 1, "project": REPOSITORY, "kernel": KERNEL,
               "status": "BLOCKED", "trial_kind": "isolated-nomount21",
               "repository_written": False, "current_build_modified": False,
