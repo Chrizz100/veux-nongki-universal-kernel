@@ -1,0 +1,141 @@
+name: VEUX V4 - Prepare Safe Engine Compatibility R1
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-v4-engine-compat-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+jobs:
+  migration:
+    name: Audit and prepare replacement Python engine (no build or write)
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact repository state read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify repository and upload file inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f common/scripts/VEUX_V4_Engine_Compat_R1.py
+          test -f tests/test_veux_v4_engine_compat_r1.py
+          test -f .github/workflows/VEUX_V4_Engine_Compat_R1.yml
+          test -f common/contracts/CURRENT_BUILD.json
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'EXACT_REPOSITORY=PASS'
+
+      - name: Check workflow with pinned actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -version
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline -shellcheck= \
+            .github/workflows/VEUX_V4_Engine_Compat_R1.yml
+          echo 'ACTIONLINT=PASS'
+
+      - name: Run YAML, source and migration regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" -m pip install --disable-pip-version-check \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          "$PY" - <<'PY'
+          from pathlib import Path
+          for name in (
+              'common/scripts/VEUX_V4_Engine_Compat_R1.py',
+              'tests/test_veux_v4_engine_compat_r1.py',
+          ):
+              p = Path(name)
+              compile(p.read_text(), name, 'exec')
+          print('SOURCE_PYTHON_SYNTAX=PASS')
+          PY
+          "$PY" tests/test_veux_v4_engine_compat_r1.py
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" - <<'PY'
+          from pathlib import Path
+          from ruamel.yaml import YAML
+          yaml = YAML(typ='safe')
+          yaml.version = (1, 2)
+          yaml.allow_duplicate_keys = False
+          path = Path('.github/workflows/VEUX_V4_Engine_Compat_R1.yml')
+          obj = yaml.load(path.read_text())
+          assert obj['permissions'] == {'contents': 'read'}
+          assert set(obj.get('on', {})) == {'workflow_dispatch'}
+          assert len(obj['jobs']) == 1
+          print('STRICT_YAML=PASS')
+          PY
+          echo 'OFFLINE_REGRESSIONS=PASS'
+
+      - name: Generate COMPLETE engine replacement outside checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" common/scripts/VEUX_V4_Engine_Compat_R1.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/VEUX-V4-Engine-Compat-R1"
+          test -s "$RUNNER_TEMP/VEUX-V4-Engine-Compat-R1/common/scripts/veux_update_engine.py"
+          test -s "$RUNNER_TEMP/VEUX-V4-Engine-Compat-R1/VEUX_V4_ENGINE_MIGRATION_R1.json"
+          "$PY" - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path(os.environ['RUNNER_TEMP'])/'VEUX-V4-Engine-Compat-R1/VEUX_V4_ENGINE_MIGRATION_R1.json'
+          obj = json.loads(p.read_text())
+          assert obj['uapi_5_compat'] and obj['nomount_21_version_macro_supported']
+          assert obj['susfs_buildblock_preserved']
+          assert obj['repository_modified'] is False
+          assert obj['kernel_build_performed'] is False
+          assert obj['kernel_build_approved'] is False
+          print('COMPATIBILITY_REPLACEMENT=PASS')
+          PY
+
+      - name: Upload complete patched engine and audit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-V4-Engine-Compat-R1-${{ github.run_id }}
+          path: ${{ runner.temp }}/VEUX-V4-Engine-Compat-R1/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Confirm repository untouched and no kernel build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'REPOSITORY_UNCHANGED=PASS'
+          echo 'NO_KERNEL_BUILD=PASS'
+          echo 'NO_MAIN_PROMOTION=PASS'
+          echo 'SUSFS_BUILD_BLOCKER_PRESERVED=YES'
