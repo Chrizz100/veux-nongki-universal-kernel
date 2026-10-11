@@ -1,5 +1,3 @@
-%YAML 1.2
----
 name: VEUX - Awinic getter R3 candidate - RPM24 R4 - 5.4.274 (manual)
 on:
   workflow_dispatch: {}
@@ -27,43 +25,61 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        # actionlint is installed only in the runner's temporary directory.
-        # A lint error aborts BEFORE all kernel source operations or compilation.
-        test -f .github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD.yml
+        # GitHub may save a second upload with a suffix such as (1).yml.
+        # Inspect only the workflow actually executing this run.
+        workflow_ref="${GITHUB_WORKFLOW_REF%%@*}"
+        case "$workflow_ref" in
+          "$GITHUB_REPOSITORY"/.github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD*.yml) ;;
+          *) echo "::error::Unexpected workflow reference: $GITHUB_WORKFLOW_REF"; exit 1 ;;
+        esac
+        workflow_file="${workflow_ref#"$GITHUB_REPOSITORY"/}"
+        test -f "$workflow_file"
         mkdir -p "$RUNNER_TEMP/veux-actionlint-bin"
-        GOBIN="$RUNNER_TEMP/veux-actionlint-bin"   go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-        "$RUNNER_TEMP/veux-actionlint-bin/actionlint" -oneline   .github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD.yml
-        printf 'ACTIONLINT_GITHUB_RUNNER=PASS
-        '
+        GOBIN="$RUNNER_TEMP/veux-actionlint-bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+        printf 'ACTIONLINT_SOURCE=%s\n' "$workflow_file"
+        "$RUNNER_TEMP/veux-actionlint-bin/actionlint" -oneline "$workflow_file"
+        printf 'ACTIONLINT_GITHUB_RUNNER=PASS\n'
     - name: Verify repository and bounded dependencies
       shell: bash
-      run: "set -euo pipefail\ntest \"$GITHUB_REPOSITORY\" = Chrizz100/veux-nongki-universal-kernel\n\
-        test \"$GITHUB_REF\" = refs/heads/main\ntest -z \"$(git status --porcelain
-        --untracked-files=all)\"\ngit checkout -B main \"$(git rev-parse HEAD)\"\n\
-        echo \"BASE_SHA=$(git rev-parse HEAD)\" >> \"$GITHUB_ENV\"\nmissing=()\nfor
-        package in bc binutils bison build-essential ca-certificates curl dwarves
-        file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv
-        rsync unzip zip xz-utils zstd; do\n  if ! dpkg-query -W -f='${Status}' \"\
-        $package\" 2>/dev/null | grep -qx 'install ok installed'; then\n    missing+=(\"\
-        $package\")\n  fi\ndone\nif ((${#missing[@]})); then\n  timeout --kill-after=15s
-        180s sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-        update\n  timeout --kill-after=15s 240s sudo apt-get -o DPkg::Lock::Timeout=60
-        install -y --no-install-recommends \"${missing[@]}\"\nfi\npython3 -m venv
-        \"$RUNNER_TEMP/veux-python\"\nPY=\"$RUNNER_TEMP/veux-python/bin/python\"\n\
-        timeout --kill-after=10s 180s \"$PY\" -m pip install --disable-pip-version-check
-        --retries 2 --timeout 30 ruamel.yaml==0.19.1 PyYAML==6.0.3\n\"$PY\" -c 'import
-        ruamel.yaml, yaml'\necho \"PY=$PY\" >> \"$GITHUB_ENV\"\necho \"TOOLS=$RUNNER_TEMP/veux-rpm24-implementation\"\
-        \ >> \"$GITHUB_ENV\"\necho \"PAYLOAD=$RUNNER_TEMP/veux-rpm24-implementation\"\
-        \ >> \"$GITHUB_ENV\"\nmkdir -p \"$RUNNER_TEMP/veux-rpm24-report\"\n\n# Refuse
-        unreviewed changes to the kernel release worker/RPM24 gates.\nfor entry in\
-        \   '6401eda65d26f047e8cb2ce836c12fbfeadbd80f common/scripts/veux_release_device.py'\
-        \   'e08344b581c2aa6e7933552e3bb1a1811021c909 common/scripts/veux_rpm24.py'\
-        \   'f8e5d6dfdfaf5892a4b6050411bcf8715f58b0b8 common/scripts/test_veux_rpm24.py'\
-        \   '318d2d15a1928ab44f5b5b2b1c750a0e5316f83a common/scripts/veux_update_engine.py';
-        do\n  expected=${entry%% *}\n  filename=${entry#* }\n  actual=$(git hash-object
-        -- \"$filename\")\n  if [[ \"$actual\" != \"$expected\" ]]; then\n    echo
-        \"::error::Verified RPM24-R4 source changed: $filename\"\n    exit 1\n  fi\n\
-        done\necho 'AWINIC_R3_RPM24_R4_BASE_FILE_PINS=PASS'\n"
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = Chrizz100/veux-nongki-universal-kernel
+        test "$GITHUB_REF" = refs/heads/main
+        test -z "$(git status --porcelain --untracked-files=all)"
+        git checkout -B main "$(git rev-parse HEAD)"
+        missing=()
+        for package in bc binutils bison build-essential ca-certificates curl dwarves file flex git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv rsync unzip zip xz-utils zstd; do
+          if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+            missing+=("$package")
+          fi
+        done
+        if ((${#missing[@]})); then
+          timeout --kill-after=15s 180s sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          timeout --kill-after=15s 240s sudo apt-get -o DPkg::Lock::Timeout=60 install -y --no-install-recommends "${missing[@]}"
+        fi
+        python3 -m venv "$RUNNER_TEMP/veux-python"
+        PY="$RUNNER_TEMP/veux-python/bin/python"
+        timeout --kill-after=10s 180s "$PY" -m pip install --disable-pip-version-check --retries 2 --timeout 30 ruamel.yaml==0.19.1 PyYAML==6.0.3
+        "$PY" -c 'import ruamel.yaml, yaml'
+        {
+          printf 'BASE_SHA=%s\n' "$(git rev-parse HEAD)"
+          printf 'PY=%s\n' "$PY"
+          printf 'TOOLS=%s\n' "$RUNNER_TEMP/veux-rpm24-implementation"
+          printf 'PAYLOAD=%s\n' "$RUNNER_TEMP/veux-rpm24-implementation"
+        } >> "$GITHUB_ENV"
+        mkdir -p "$RUNNER_TEMP/veux-rpm24-report"
+        
+        # Refuse unreviewed changes to the kernel release worker/RPM24 gates.
+        for entry in   '6401eda65d26f047e8cb2ce836c12fbfeadbd80f common/scripts/veux_release_device.py'   'e08344b581c2aa6e7933552e3bb1a1811021c909 common/scripts/veux_rpm24.py'   'f8e5d6dfdfaf5892a4b6050411bcf8715f58b0b8 common/scripts/test_veux_rpm24.py'   '318d2d15a1928ab44f5b5b2b1c750a0e5316f83a common/scripts/veux_update_engine.py'; do
+          expected=${entry%% *}
+          filename=${entry#* }
+          actual=$(git hash-object -- "$filename")
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Verified RPM24-R4 source changed: $filename"
+            exit 1
+          fi
+        done
+        echo 'AWINIC_R3_RPM24_R4_BASE_FILE_PINS=PASS'
     - name: Unpack hash-authenticated RPM24 payload
       shell: bash
       run: "set -euo pipefail\n\"$PY\" - <<'PYCODE'\nimport base64,gzip,hashlib,json,os\n\
