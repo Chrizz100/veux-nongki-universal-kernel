@@ -1,0 +1,153 @@
+name: VEUX V4 - NoMount 21 Isolated Trial R2
+
+'on':
+  workflow_dispatch:
+    inputs:
+      enable_compile:
+        description: 'Experimental single-kernel CI compile after source preflight (NO main promotion, NO device PASS)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-v4-nomount21-trial-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+jobs:
+  isolated_trial:
+    name: Verify frozen 5.4.274 + isolated NoMount 21
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout pinned main snapshot (read-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact workflow via actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline -shellcheck= \
+            .github/workflows/VEUX_V4_NoMount21_Isolated_R2.yml
+          echo 'ACTIONLINT=PASS'
+
+      - name: Verify repo contents and install preflight dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f common/contracts/CURRENT_BUILD.json
+          test -f common/scripts/veux_update_engine.py
+          test -f common/scripts/veux_nm21_trial_r2.py
+          test -f Tests/test_veux_nm21_trial_r2.py
+          test -z "$(git status --porcelain --untracked-files=all)"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex \
+            git jq libelf-dev libncurses-dev libssl-dev perl python3 python3-venv \
+            rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" -m pip install --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/veux-nm21-r2/report"
+
+      - name: Compile Python sources without touching checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" - <<'PY'
+          from pathlib import Path
+          for name in (
+              'common/scripts/veux_nm21_trial_r2.py',
+              'Tests/test_veux_nm21_trial_r2.py',
+          ):
+              compile(Path(name).read_text(), name, 'exec')
+          print('PYTHON_SYNTAX=PASS')
+          PY
+          "$PY" Tests/test_veux_nm21_trial_r2.py
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_current_components.py
+          echo 'HOST_TESTS=PASS'
+
+      - name: Prepare isolated source candidate and perform source preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_nm21_trial_r2.py prepare \
+            --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-nm21-r2"
+
+      - name: Upload source-preflight report (also on failure)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-NoMount21-R2-Preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-nm21-r2/report/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Experimental 5.4.274 compile (explicit opt-in only)
+        id: trial_build
+        if: ${{ inputs.enable_compile == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_release_device.py worker \
+            --kernel 5.4.274 \
+            --bundle "$RUNNER_TEMP/veux-nm21-r2/bundle" \
+            --work "$RUNNER_TEMP/veux-nm21-r2/builds/5.4.274" \
+            --public "$RUNNER_TEMP/veux-nm21-r2/public/5.4.274" \
+            --overlays "$RUNNER_TEMP/veux-nm21-r2/overlays" \
+            --jobs "$(nproc)"
+
+      - name: Upload experimental build artifacts
+        if: ${{ inputs.enable_compile == true }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.trial_build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/veux-nm21-r2/public/5.4.274/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload build diagnostics on failure
+        if: ${{ failure() && inputs.enable_compile == true }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-NoMount21-R2-Diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-nm21-r2/builds/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Prove checkout unchanged and no promotion
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'REPOSITORY_UNCHANGED=PASS'
+          echo 'CURRENT_BUILD_UNCHANGED=PASS'
+          echo 'NO_MAIN_PROMOTION=PASS'
+          echo 'DEVICE_PASS_NOT_INFERRED=YES'
