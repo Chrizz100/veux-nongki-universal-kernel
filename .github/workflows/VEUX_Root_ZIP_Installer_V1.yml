@@ -1,0 +1,355 @@
+name: VEUX - Root ZIP Installer V1
+
+'on':
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'ZIP in repo root, e.g. VEUX_NM21_R2_FIX1.zip'
+        required: true
+        type: string
+        default: VEUX_NM21_R2_FIX1.zip
+      apply_changes:
+        description: 'After validation, automatically commit files to main (and remove uploaded ZIP)'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veux-root-zip-installer-main
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  PACKAGE_NAME: ${{ inputs.package_name }}
+
+jobs:
+  install_zip:
+    name: Validate, test and optionally apply root ZIP
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact main snapshot without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify repository state and ZIP input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          [[ "$PACKAGE_NAME" =~ ^VEUX_[a-zA-Z0-9_-]{1,80}\.zip$ ]]
+          test -f "$PACKAGE_NAME"
+          test ! -L "$PACKAGE_NAME"
+          git ls-files --error-unmatch -- "$PACKAGE_NAME" >/dev/null
+          echo 'EXACT_REPOSITORY_AND_ROOT_ZIP=PASS'
+
+      - name: Install verified actionlint 1.7.12 and check installer YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline -shellcheck= \
+            .github/workflows/VEUX_Root_ZIP_Installer_V1.yml
+          echo 'ACTIONLINT_INSTALLER=PASS'
+
+      - name: Authenticate ZIP manifest and install only permitted files locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          """VEUX root-ZIP installer V1 -- embedded verbatim into the GitHub workflow.
+          
+          The archive stays untrusted until every path and preimage has been verified.
+          No external fetch, no shell execution, no elevated GitHub token in this step.
+          """
+          from __future__ import annotations
+          
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import stat
+          import sys
+          import zipfile
+          
+          PROJECT = "Chrizz100/veux-nongki-universal-kernel"
+          MANIFEST = "payload-manifest.json"
+          MAX_FILE_SIZE = 10 * 1024 * 1024
+          MAX_ALL_SIZE = 30 * 1024 * 1024
+          MAX_FILES = 50
+          SHA = re.compile(r"[0-9a-f]{64}\Z")
+          PACKAGE = re.compile(r"VEUX_[A-Za-z0-9_-]{1,80}\.zip\Z")
+          PATHS = (
+              re.compile(r"common/scripts/[A-Za-z0-9_]+\.py\Z"),
+              re.compile(r"Tests/test_[A-Za-z0-9_]+\.py\Z"),
+              re.compile(r"\.github/workflows/VEUX_[A-Za-z0-9_-]+\.ya?ml\Z"),
+          )
+          SELF = ".github/workflows/VEUX_Root_ZIP_Installer_V1.yml"
+          
+          
+          class InstallBlocked(ValueError):
+              pass
+          
+          
+          def require(ok: bool, reason: str) -> None:
+              if not ok:
+                  raise InstallBlocked(reason)
+          
+          
+          def digest(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def clean_path(value: str) -> bool:
+              if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
+                  return False
+              if value.startswith("/") or value.endswith("/") or "//" in value:
+                  return False
+              posix = PurePosixPath(value)
+              return str(posix) == value and len(posix.parts) > 1 and all(
+                  part not in ("", ".", "..") for part in posix.parts
+              )
+          
+          
+          def allowed(value: str) -> bool:
+              return clean_path(value) and value != SELF and any(
+                  regex.fullmatch(value) is not None for regex in PATHS
+              )
+          
+          
+          def safe_destination(repo: Path, rel: str) -> Path:
+              require(allowed(rel), "path not allowlisted: " + str(rel))
+              target = repo.joinpath(*PurePosixPath(rel).parts)
+              current = repo
+              for segment in PurePosixPath(rel).parts:
+                  current = current / segment
+                  require(not current.is_symlink(), "destination symlink refused: " + rel)
+              require(not target.exists() or target.is_file(), "not a regular target: " + rel)
+              return target
+          
+          
+          def verify_archive(repo: Path, archive: Path, *, expected_repo: str = PROJECT) -> tuple[dict, list[tuple[str, bytes, bool]]]:
+              require(repo.is_dir() and (repo / ".git").exists(), "GitHub checkout not found")
+              require(expected_repo == PROJECT, "wrong GitHub repository")
+              require(PACKAGE.fullmatch(archive.name) is not None, "unsafe root ZIP name")
+              require(not archive.is_symlink() and archive.parent.resolve() == repo.resolve(),
+                      "ZIP must be a regular file at the repository root")
+              require(archive.is_file() and archive.stat().st_size <= MAX_ALL_SIZE,
+                      "missing or oversized ZIP")
+              with zipfile.ZipFile(archive, "r", allowZip64=False) as z:
+                  info = z.infolist()
+                  names = [i.filename for i in info]
+                  require(1 < len(info) <= MAX_FILES + 1, "invalid ZIP entry count")
+                  require(len(names) == len(set(names)), "duplicate ZIP entries")
+                  require(MANIFEST in names, "missing package manifest")
+                  require(all(n == MANIFEST or allowed(n) for n in names),
+                          "unsafe ZIP path or extra content")
+                  require(all(not i.is_dir() and not (i.flag_bits & 1) for i in info),
+                          "directory or encrypted ZIP entry refused")
+                  require(all(stat.S_IFMT(i.external_attr >> 16) in (0, stat.S_IFREG) for i in info),
+                          "symlink or special file in ZIP refused")
+                  require(all(i.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for i in info),
+                          "unsupported ZIP compression type")
+                  require(all(i.file_size <= MAX_FILE_SIZE for i in info) and
+                          sum(i.file_size for i in info) <= MAX_ALL_SIZE,
+                          "unpacked ZIP too large")
+                  raw_manifest = z.read(MANIFEST)
+                  require(len(raw_manifest) <= 100000, "manifest too large")
+                  m = json.loads(raw_manifest.decode("utf-8"))
+                  require(isinstance(m, dict) and m.get("schema") == 1 and
+                          m.get("repository") == expected_repo and
+                          isinstance(m.get("package_id"), str) and
+                          re.fullmatch(r"VEUX-[A-Za-z0-9_-]{1,80}", m["package_id"]) and
+                          isinstance(m.get("files"), list),
+                          "invalid manifest header")
+                  rows = m["files"]
+                  require(1 <= len(rows) <= MAX_FILES, "invalid manifest file count")
+                  require(all(isinstance(r, dict) and set(r) ==
+                              {"path", "before_sha256", "sha256"} for r in rows),
+                          "invalid manifest row keys")
+                  declared = [r["path"] for r in rows]
+                  require(len(set(declared)) == len(declared) and
+                          set(names) == set(declared) | {MANIFEST},
+                          "manifest and ZIP files differ")
+                  pending: list[tuple[str, bytes, bool]] = []
+                  for row in rows:
+                      rel = row["path"]
+                      require(allowed(rel), "unauthorized manifest path: " + str(rel))
+                      before, after = row["before_sha256"], row["sha256"]
+                      require((before is None or (isinstance(before, str) and SHA.fullmatch(before)))
+                              and isinstance(after, str) and SHA.fullmatch(after),
+                              "malformed file checksums: " + rel)
+                      data = z.read(rel)
+                      require(digest(data) == after, "payload SHA256 mismatch: " + rel)
+                      if rel.endswith(".py"):
+                          compile(data.decode("utf-8"), rel, "exec")
+                      target = safe_destination(repo, rel)
+                      actual = digest(target.read_bytes()) if target.exists() else None
+                      # Exact replay is permitted, but unrelated local changes are never overwritten.
+                      require(actual == before or actual == after,
+                              "preimage mismatch (no overwrite): " + rel)
+                      pending.append((rel, data, actual != after))
+                  return m, pending
+          
+          
+          def install(repo: Path, archive: Path, output: Path, expected_repo: str = PROJECT) -> dict:
+              manifest, checked = verify_archive(repo, archive, expected_repo=expected_repo)
+              output.mkdir(parents=True, exist_ok=False)
+              # All entries were verified before any write is attempted.
+              for rel, data, changed in checked:
+                  if not changed:
+                      continue
+                  target = safe_destination(repo, rel)
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(data)
+              report = {
+                  "schema": 1,
+                  "installer": "VEUX_Root_ZIP_Installer_V1",
+                  "repository": PROJECT,
+                  "package_id": manifest["package_id"],
+                  "package_name": archive.name,
+                  "package_sha256": digest(archive.read_bytes()),
+                  "all_files_verified": True,
+                  "files_checked": len(checked),
+                  "files_changed": [r for r, _, changed in checked if changed],
+                  "files_unchanged": [r for r, _, changed in checked if not changed],
+                  "kernel_built": False,
+                  "active_kernel_changed": False,
+                  "current_build_contract_changed": False,
+              }
+              (output / "VEUX_ROOT_ZIP_INSTALL_REPORT.json").write_text(
+                  json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+              )
+              return report
+          
+          
+          if __name__ == "__main__":
+              try:
+                  repo = Path(os.environ["GITHUB_WORKSPACE"]).resolve(strict=True)
+                  name = os.environ["PACKAGE_NAME"]
+                  out = Path(os.environ["RUNNER_TEMP"]) / "veux-zip-install-audit"
+                  result = install(repo, repo / name, out,
+                                   expected_repo=os.environ["GITHUB_REPOSITORY"])
+                  print("ZIP_CONTENTS_VERIFIED=PASS")
+                  print("CHANGED_FILES=" + str(len(result["files_changed"])))
+                  print("PACKAGE_SHA256=" + result["package_sha256"])
+              except (InstallBlocked, ValueError, OSError, UnicodeError, zipfile.BadZipFile,
+                      KeyError, TypeError, SyntaxError) as exc:
+                  print("ZIP_INSTALL_BLOCKED: " + str(exc), file=sys.stderr)
+                  sys.exit(1)
+          PY
+
+      - name: Validate new Python sources, workflows and regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! python3 -m venv "$RUNNER_TEMP/veux-zip-installer-venv"; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3-venv
+            python3 -m venv "$RUNNER_TEMP/veux-zip-installer-venv"
+          fi
+          PY="$RUNNER_TEMP/veux-zip-installer-venv/bin/python"
+          "$PY" -m pip install --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          "$PY" - <<'PY'
+          import json
+          from pathlib import Path
+          import os
+          import subprocess
+          audit=Path(os.environ['RUNNER_TEMP'])/'veux-zip-install-audit/VEUX_ROOT_ZIP_INSTALL_REPORT.json'
+          report=json.loads(audit.read_text())
+          for path in report['files_changed']:
+              if path.startswith('.github/workflows/'):
+                  subprocess.run([os.environ['RUNNER_TEMP']+'/veux-actionlint/actionlint',
+                                  '-oneline', '-shellcheck=', path],check=True)
+          print('CHANGED_WORKFLOWS_ACTIONLINT=PASS')
+          PY
+          "$PY" Tests/test_veux_nm21_trial_r2.py
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_current_components.py
+          git diff --check
+          echo 'SOURCE_AND_REGRESSION_GATES=PASS'
+
+      - name: Upload installation audit
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Root-ZIP-Install-Audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-zip-install-audit/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Apply reviewed changes and remove uploaded ZIP
+        if: ${{ inputs.apply_changes == true }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          report=json.loads((Path(os.environ['RUNNER_TEMP'])/
+            'veux-zip-install-audit/VEUX_ROOT_ZIP_INSTALL_REPORT.json').read_text())
+          intended=set(report['files_changed'])
+          # Detect all tracked modifications, including modifications made by tests.
+          actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          if actual != intended:
+              raise SystemExit('CHANGED_PATHS_DIFFER: '+repr((actual,intended)))
+          for name in sorted(intended):
+              subprocess.run(['git','add','--',name],check=True)
+          staged=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          if staged != intended:
+              raise SystemExit('STAGED_PATHS_DIFFER: '+repr((staged,intended)))
+          print('GIT_STAGING_SCOPE=PASS')
+          PY
+          test -n "$GH_TOKEN"
+          base_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ -z "$remote_sha" || "$remote_sha" != "$base_sha" ]]; then
+            echo '::error::main advanced; refusing automatic commit'
+            exit 1
+          fi
+          git rm -- "$PACKAGE_NAME"
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore(veux): apply verified root ZIP package [skip ci]'
+          auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth_header"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth_header"
+          git push origin HEAD:refs/heads/main
+          echo 'ROOT_ZIP_AUTO_INSTALL=PASS'
+          echo 'KERNEL_BUILD=NO'
+          echo 'CURRENT_BUILD_MODIFIED=NO'
+
+      - name: Report successful dry run without GitHub changes
+        if: ${{ inputs.apply_changes == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo 'ROOT_ZIP_DRY_RUN=PASS'
+          echo 'GITHUB_REPOSITORY_MODIFIED=NO'
+          echo 'KERNEL_BUILD=NO'
