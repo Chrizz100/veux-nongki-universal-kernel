@@ -1,0 +1,304 @@
+name: VEUX V4 - Upstream Candidate R5 - Safe Fetch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-v4-candidate-r5-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fetch-candidates:
+    name: Fetch and audit official upstream sources (no kernel build)
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+    steps:
+      - name: Checkout exact main commit read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify workflow with actionlint 1.7.12 (checksum pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          package="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$package"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$package" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$package" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          workflow=.github/workflows/VEUX_V4_Upstream_Candidate_R5_Safe_Fetch.yml
+          test -f "$workflow"
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -version
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline -shellcheck= "$workflow"
+          echo 'ACTIONLINT=PASS'
+
+      - name: Verify frozen build contract and host tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          PY="$RUNNER_TEMP/veux-python/bin/python"
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_source_transport.py
+          "$PY" - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          current = json.loads((root / 'common/contracts/CURRENT_BUILD.json').read_text())
+          required = {'resukisu', 'susfs', 'nomount'}
+          versions = {'5.4.274', '5.4.292', '5.4.293', '5.4.300', '5.4.301', '5.4.302'}
+          assert current.get('status') == 'compile-package-static-validated'
+          assert current.get('device_pass_inferred') is False
+          assert set(current.get('lineages', {})) == versions
+          assert set(current['lineages']['5.4.274']['targets']) == required
+          assert current['targets'] == current['lineages']['5.4.274']['targets']
+          assert current['targets']['resukisu'].get('uapi') == 5
+          assert subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip() == os.environ['GITHUB_SHA']
+          for name in sorted(required):
+              data = current['targets'][name]
+              assert re.fullmatch(r'[0-9a-f]{40}', data['commit']), name
+              assert re.fullmatch(r'refs/heads/[A-Za-z0-9._/-]+', data['ref']), name
+              assert data['url'].startswith(('https://github.com/', 'https://gitlab.com/')), name
+          print('CURRENT_BUILD_AUTHORITY=PASS')
+          print('CURRENT_REPOSITORY_SHA='+os.environ['GITHUB_SHA'])
+          PY
+
+      - name: Fetch new commits and save isolated source candidates
+        id: candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/veux-python/bin/python" - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          work = Path(os.environ['RUNNER_TEMP']) / 'VEUX-V4-Upstream-Candidates-R5'
+          sources = work / 'sources'
+          sources.mkdir(parents=True, exist_ok=False)
+          repo = Path.cwd()
+          contract = json.loads((repo / 'common/contracts/CURRENT_BUILD.json').read_text())
+          current = contract['targets']
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          report = {
+              'schema': 1,
+              'kind': 'source-only-candidates',
+              'repository_main_commit': sha,
+              'current_contract_path': 'common/contracts/CURRENT_BUILD.json',
+              'kernel': '5.4.274',
+              'components': {},
+              'updates_found': False,
+              'manual_review_required': False,
+              'kernel_build_performed': False,
+              'repository_modified': False,
+              'kernel_build_approved': False,
+              'device_pass_inferred': False,
+          }
+
+          def command(*args, cwd=None, timeout=900):
+              p = subprocess.run([str(x) for x in args], cwd=cwd, text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 timeout=timeout, check=False)
+              if p.returncode:
+                  raise RuntimeError(f'{args[0]} exit={p.returncode}: {p.stderr[-1200:]}')
+              return p.stdout.strip()
+
+          def checksum(p):
+              return hashlib.sha256(p.read_bytes()).hexdigest()
+
+          def snapshot(src, dest, selected):
+              dest.mkdir(parents=True)
+              for relative in selected:
+                  path = src / relative
+                  if not path.exists():
+                      raise RuntimeError(f'upstream source missing: {relative}')
+                  target = dest / relative
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  if path.is_dir():
+                      shutil.copytree(path, target, symlinks=True)
+                  else:
+                      shutil.copy2(path, target)
+              for item in dest.rglob('*'):
+                  if item.is_symlink():
+                      raise RuntimeError(f'upstream symlink requires review: {item}')
+
+          selected = {
+              'resukisu': ('kernel', 'uapi', 'LICENSE'),
+              'susfs': ('kernel_patches', 'LICENSE', 'README.md'),
+              'nomount': ('kernel', 'LICENSE', 'README.md'),
+          }
+          for name in ('resukisu', 'susfs', 'nomount'):
+              old = current[name]
+              url, branch, previous = old['url'], old['ref'], old['commit']
+              rows = command('git', 'ls-remote', '--exit-code', '--refs', url, branch,
+                             timeout=120).splitlines()
+              if len(rows) != 1 or len(rows[0].split()) != 2:
+                  raise RuntimeError(f'{name}: ambiguous remote ref')
+              head, got_ref = rows[0].split()
+              if got_ref != branch or not re.fullmatch(r'[0-9a-f]{40}', head):
+                  raise RuntimeError(f'{name}: invalid remote ref')
+              changed = head != previous
+              row = {
+                  'url': url,
+                  'ref': branch,
+                  'integrated_commit': previous,
+                  'upstream_head': head,
+                  'changed': changed,
+                  'kernel_source_paths_changed': [],
+                  'review_reasons': [],
+                  'snapshot_saved': False,
+              }
+              report['components'][name] = row
+              if not changed:
+                  continue
+              report['updates_found'] = True
+              donor = Path(os.environ['RUNNER_TEMP']) / ('veux-upstream-' + name)
+              command('git', 'clone', '--quiet', '--no-checkout', url, donor, timeout=900)
+              command('git', 'checkout', '--quiet', '--detach', head, cwd=donor)
+              if command('git', 'cat-file', '-t', previous, cwd=donor) != 'commit':
+                  raise RuntimeError(f'{name}: integrated commit unavailable in donor')
+              command('git', 'merge-base', '--is-ancestor', previous, head, cwd=donor)
+              changed_paths = command('git', 'diff', '--name-only', previous, head,
+                                      cwd=donor).splitlines()
+              prefixes = ('kernel_patches/',) if name == 'susfs' else (
+                  ('kernel/', 'uapi/') if name == 'resukisu' else ('kernel/',))
+              row['kernel_source_paths_changed'] = sorted(
+                  p for p in changed_paths if p.startswith(prefixes))
+              if row['kernel_source_paths_changed']:
+                  row['review_reasons'].append(
+                      'Changed kernel paths require VEUX 5.4.274 source and behavior review')
+              row['upstream_commits_ahead_of_integrated'] = int(
+                  command('git', 'rev-list', '--count', previous+'..'+head, cwd=donor))
+              row['commit_titles'] = command(
+                  'git', 'log', '--format=%h %s', '--max-count=100',
+                  previous+'..'+head, cwd=donor).splitlines()
+              dest = sources / name
+              snapshot(donor, dest, selected[name])
+              row['snapshot_saved'] = True
+              row['snapshot_sha256'] = {
+                  p.relative_to(dest).as_posix(): checksum(p)
+                  for p in sorted(dest.rglob('*')) if p.is_file() and not p.is_symlink()
+              }
+              if name == 'resukisu':
+                  kbuild = (dest/'kernel/Kbuild').read_text()
+                  blockers = ('$(error Please wait susfs update.)',
+                              '$(error Please wait susfs update)')
+                  if any(marker in kbuild for marker in blockers) or (
+                      'susfs_compat.mk' in kbuild and
+                      (dest/'kernel/tools/susfs_compat.mk').exists() and
+                      '$(error Please wait susfs update' in
+                      (dest/'kernel/tools/susfs_compat.mk').read_text()
+                  ):
+                      row['review_reasons'].append(
+                          'Upstream blocks CONFIG_KSU_SUSFS while SUSFS integration is pending')
+                  if not (dest/'kernel/feature/module_load_filter.c').exists():
+                      row['review_reasons'].append(
+                          'Existing normalization expects module_load_filter source; review engine')
+                  if (dest/'uapi/supercall.h').exists():
+                      h = (dest/'uapi/supercall.h').read_text()
+                      if 'KERNEL_SU_UAPI_VERSION = 5;' not in h:
+                          row['review_reasons'].append('KernelSU UAPI changed or was not detected')
+              if name == 'nomount':
+                  h = (dest/'kernel/src/nomount.h').read_text()
+                  direct = re.search(r'#define\s+NOMOUNT_VERSION\s+"([^\"]+)"', h)
+                  base = re.search(r'#define\s+NOMOUNT_BASE_VERSION\s+"([^\"]+)"', h)
+                  if direct:
+                      row['declared_version'] = direct.group(1)
+                      row['version_scheme'] = 'direct'
+                  elif base:
+                      row['declared_version'] = base.group(1)
+                      row['version_scheme'] = 'base-with-optional-commit-count'
+                      row['review_reasons'].append(
+                          'V4 engine expects literal NOMOUNT_VERSION: parser adaptation required')
+                  else:
+                      row['review_reasons'].append('NoMount version macro unrecognized')
+                  if row.get('declared_version') != str(old.get('version')):
+                      row['review_reasons'].append(
+                          'NoMount kernel version changed: explicit compatibility review required')
+              if name == 'susfs':
+                  header = dest/'kernel_patches/include/linux/susfs.h'
+                  if header.is_file():
+                      m = re.search(r'#define\s+SUSFS_VERSION\s+"v?([^\"]+)"',
+                                    header.read_text())
+                      if not m or m.group(1) != str(old.get('version')):
+                          row['review_reasons'].append('SUSFS version requires manual review')
+              if row['review_reasons']:
+                  report['manual_review_required'] = True
+          report['kernel_build_approved'] = False  # source-only; never auto-promote
+          (work/'UPSTREAM_CANDIDATES_R5.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True)+'\n')
+          (work/'README.txt').write_text(
+              'VEUX V4 UPSTREAM CANDIDATES R5\n'
+              'Source snapshots only; unbuilt and not approved for flashing.\n'
+              'The authoritative integration state is CURRENT_BUILD.json at repository_main_commit.\n'
+              'Check report review_reasons, diffs and kernel/5.4 adaptation before any build.\n'
+              'No repository updates, no builds, no flashable files.\n')
+          print('CANDIDATE_ARTIFACT='+str(work))
+          print('UPDATES_FOUND='+str(report['updates_found']).upper())
+          print('MANUAL_REVIEW_REQUIRED='+str(report['manual_review_required']).upper())
+          print('KERNEL_BUILD_APPROVED=NO')
+          print('REPOSITORY_MODIFIED=NO')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('## VEUX V4 safe upstream fetch\n\n')
+              f.write('Main: `'+sha+'`\n')
+              for name, row in report['components'].items():
+                  f.write(f"- {name}: `{row['integrated_commit'][:12]}` -> "
+                          f"`{row['upstream_head'][:12]}`; changed={row['changed']} "
+                          f"kernel_paths={len(row['kernel_source_paths_changed'])}; "
+                          f"review={bool(row['review_reasons'])}\n")
+              f.write('\nNo compilation, no repository promotion, no device validation.\n')
+          PY
+
+      - name: Upload candidates and source review report
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-V4-Upstream-Candidates-R5-${{ github.run_id }}
+          path: ${{ runner.temp }}/VEUX-V4-Upstream-Candidates-R5/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+      - name: Verify checked-out repository stayed unchanged
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'REPOSITORY_UNCHANGED=PASS'
+          echo 'UPSTREAM_SOURCES_FETCHED=PASS'
+          echo 'NO_KERNEL_BUILD=PASS'
