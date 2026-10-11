@@ -179,6 +179,62 @@ class FleetTests(unittest.TestCase):
                              cwd=folder,capture_output=True,text=True,timeout=60)
             self.assertEqual(p.returncode,0,p.stdout+'\n'+p.stderr)
 
+    def test_frozen_upstream_head_match_and_fast_forward(self):
+        # Real local commit graph: network-free and independent of GitLab.
+        with tempfile.TemporaryDirectory() as d:
+            repo=Path(d)/'upstream';repo.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(repo),*args],
+                                               text=True,stderr=subprocess.PIPE).strip()
+            git('init','-q')
+            git('config','user.name','VEUX Audit')
+            git('config','user.email','veux-audit@example.invalid')
+            (repo/'record').write_text('pinned\n')
+            git('add','record');git('commit','-qm','pinned')
+            pinned=git('rev-parse','HEAD')
+            first=fleet.audit_frozen_upstream(repo,'susfs',pinned,pinned)
+            self.assertEqual(first['commits_ahead_not_integrated'],0)
+            self.assertFalse(first['needs_review_before_integrating_new_head'])
+            (repo/'record').write_text('new upstream change, not integrated\n')
+            git('commit','-qam','advance')
+            advanced=git('rev-parse','HEAD')
+            # Audit a checkout of the frozen commit with the later head present.
+            git('checkout','--quiet','--detach',pinned)
+            second=fleet.audit_frozen_upstream(repo,'susfs',pinned,advanced)
+            self.assertEqual(second['commits_ahead_not_integrated'],1)
+            self.assertTrue(second['needs_review_before_integrating_new_head'])
+            self.assertEqual(second['frozen_build_commit'],pinned)
+            self.assertEqual(second['observed_branch_head'],advanced)
+            self.assertEqual(git('rev-parse','HEAD'),pinned)
+            third=fleet.audit_frozen_upstream(repo,'nomount',pinned,advanced)
+            self.assertTrue(third['candidate_uses_only_frozen_commit'])
+
+    def test_frozen_upstream_refuses_rewrite_missing_tip_and_wrong_pin(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo=Path(d)/'upstream';repo.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(repo),*args],
+                                               text=True,stderr=subprocess.PIPE).strip()
+            git('init','-q')
+            git('config','user.name','VEUX Audit')
+            git('config','user.email','veux-audit@example.invalid')
+            (repo/'a').write_text('a');git('add','a');git('commit','-qm','a')
+            pinned=git('rev-parse','HEAD')
+            git('checkout','--quiet','--orphan','rewritten')
+            git('rm','-q','--cached','a')
+            (repo/'a').unlink()
+            (repo/'b').write_text('b');git('add','b');git('commit','-qm','b')
+            unrelated=git('rev-parse','HEAD')
+            git('checkout','--quiet','--detach',pinned)
+            with self.assertRaisesRegex(fleet.FleetBlocked,'UPSTREAM_NON_FAST_FORWARD'):
+                fleet.audit_frozen_upstream(repo,'susfs',pinned,unrelated)
+            with self.assertRaises(fleet.FleetBlocked):
+                fleet.audit_frozen_upstream(repo,'susfs',pinned,'a'*40)
+            with self.assertRaisesRegex(fleet.FleetBlocked,'INVALID_FROZEN_UPSTREAM_SHA'):
+                fleet.audit_frozen_upstream(repo,'nomount','bad',unrelated)
+            with self.assertRaisesRegex(fleet.FleetBlocked,'INVALID_FROZEN_COMPONENT'):
+                fleet.audit_frozen_upstream(repo,'resukisu',pinned,unrelated)
+
     def test_workflow_is_matrix_and_fail_closed(self):
         try:
             from ruamel.yaml import YAML
