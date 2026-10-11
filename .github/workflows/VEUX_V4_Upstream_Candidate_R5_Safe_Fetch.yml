@@ -143,6 +143,9 @@ jobs:
               dest.mkdir(parents=True)
               for relative in selected:
                   path = src / relative
+                  # A selected top-level entry must be a real source entry.
+                  if path.is_symlink():
+                      raise RuntimeError(f'selected upstream root is a symlink: {relative}')
                   if not path.exists():
                       raise RuntimeError(f'upstream source missing: {relative}')
                   target = dest / relative
@@ -151,9 +154,27 @@ jobs:
                       shutil.copytree(path, target, symlinks=True)
                   else:
                       shutil.copy2(path, target)
-              for item in dest.rglob('*'):
-                  if item.is_symlink():
-                      raise RuntimeError(f'upstream symlink requires review: {item}')
+              # ReSukiSU has kernel/include/uapi -> ../../uapi. Its target is
+              # part of the separately selected top-level uapi snapshot.
+              # Preserve links, but allow only valid relative in-tree targets.
+              root = dest.resolve(strict=True)
+              links = []
+              for item in sorted(dest.rglob('*')):
+                  if not item.is_symlink():
+                      continue
+                  label = item.relative_to(dest).as_posix()
+                  target = os.readlink(item)
+                  if os.path.isabs(target):
+                      raise RuntimeError(f'absolute upstream symlink rejected: {label} -> {target}')
+                  try:
+                      resolved = item.resolve(strict=True)
+                  except (OSError, RuntimeError) as exc:
+                      raise RuntimeError(f'broken or cyclic upstream symlink: {label} -> {target}') from exc
+                  if not resolved.is_relative_to(root):
+                      raise RuntimeError(f'escaping upstream symlink rejected: {label} -> {target}')
+                  links.append({'path': label, 'target': target,
+                                'resolves_to': resolved.relative_to(root).as_posix()})
+              return links
 
           selected = {
               'resukisu': ('kernel', 'uapi', 'LICENSE'),
@@ -206,7 +227,7 @@ jobs:
                   'git', 'log', '--format=%h %s', '--max-count=100',
                   previous+'..'+head, cwd=donor).splitlines()
               dest = sources / name
-              snapshot(donor, dest, selected[name])
+              row['snapshot_symlinks'] = snapshot(donor, dest, selected[name])
               row['snapshot_saved'] = True
               row['snapshot_sha256'] = {
                   p.relative_to(dest).as_posix(): checksum(p)
