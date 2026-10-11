@@ -140,53 +140,124 @@ def source_checkout(opts, recipe, env, ctx, outputs, dest):
              full=str(opts.get("fetch-depth", 1)) == "0")
 
 
+# VEUX_V4_ENGINE_COMPAT_R1: CURRENT_BUILD-authoritative UAPI5/NoMount21 fail-closed resolver
 def resolve(work):
+    """Resolve only FROM CURRENT_BUILD integration; fail closed on unreviewed changes."""
     cfg, fleet = check_repo()
+    current = json.loads((REPO / "common/contracts/CURRENT_BUILD.json").read_text())
+    require(current.get("status") == "compile-package-static-validated", "CURRENT_BUILD is unvalidated")
+    require(current.get("device_pass_inferred") is False, "CURRENT_BUILD wrongly asserts device PASS")
+    require(set(current.get("targets", {})) == set(COMPONENTS), "CURRENT_BUILD targets mismatch")
+    require(set(current.get("lineages", {})) == set(fleet["lineages"]), "CURRENT_BUILD lineages mismatch")
+    for label, row in current["lineages"].items():
+        require(row.get("targets") == current["targets"], f"inconsistent CURRENT_BUILD lineage {label}")
     work.mkdir(parents=True, exist_ok=False)
     result = {"schema": 1, "repository_sha": git(REPO, "rev-parse", "HEAD"),
               "golden_sha256": digest(REPO / cfg["golden_contract"]),
-              "lineages": sorted(fleet["lineages"]), "components": {}}
+              "lineages": sorted(fleet["lineages"]), "components": {},
+              "comparison_contract": "common/contracts/CURRENT_BUILD.json",
+              "compatibility_review_required": False, "build_approved": False}
+    errors = []
     for component in COMPONENTS:
-        m = yaml_read(REPO / f"common/upstream/{component}/manifest.yml")
-        failures = []
-        for url in m["sources"]:
-            try:
-                value = run(["git", "ls-remote", "--exit-code", url, m["track"]["ref"]], timeout=90)
-                lines = value.splitlines()
-                require(len(lines) == 1, "upstream ref is ambiguous")
-                target, ref = lines[0].split()
-                require(SHA.fullmatch(target) and ref == m["track"]["ref"], "invalid upstream identity")
-                break
-            except (Blocked, subprocess.TimeoutExpired) as exc:
-                failures.append(str(exc))
-        else:
-            raise Blocked(f"cannot resolve {component}: {failures}")
+        old = current["targets"][component]
+        url = old["url"]
+        ref = old["ref"]
+        integrated = old["commit"]
+        require(SHA.fullmatch(integrated), f"invalid CURRENT_BUILD {component} commit")
+        require(ref.startswith("refs/heads/") and ".." not in ref,
+                f"invalid CURRENT_BUILD {component} ref")
+        remote = run(["git", "ls-remote", "--exit-code", "--refs", url, ref], timeout=90)
+        lines = remote.splitlines()
+        require(len(lines) == 1, f"ambiguous {component} upstream ref")
+        parts = lines[0].split()
+        require(len(parts) == 2 and SHA.fullmatch(parts[0]) and parts[1] == ref,
+                f"invalid {component} upstream identity")
+        target = parts[0]
         donor = work / component
         checkout(url, target, donor, full=True)
-        base = m["stable"]["commit"]
-        git(donor, "merge-base", "--is-ancestor", base, target)
-        entry = {"commit": target, "base": base, "url": url, "ref": ref,
-                 "ahead": int(git(donor, "rev-list", "--count", f"{base}..{target}"))}
+        # Reject history rewrites and all changes outside the tracked branch.
+        require(git(donor, "cat-file", "-t", integrated) == "commit",
+                f"integrated {component} commit is not available upstream")
+        ancestor = run(["git", "-C", donor, "merge-base", "--is-ancestor", integrated, target],
+                       timeout=90)  # raises Blocked on unrelated history
+        _ = ancestor
+        from pathlib import Path as _Path
+        _root = donor.resolve(strict=True)
+        # The official kernel/include/uapi -> ../../uapi link is safe.
+        # A dangling/absolute/cyclic/outside link must never enter an overlay.
+        for _item in donor.rglob("*"):
+            if _item.is_symlink():
+                _link = _Path(os.readlink(_item))
+                require(not _link.is_absolute(), f"absolute upstream symlink: {_item}")
+                try:
+                    _destination = _item.resolve(strict=True)
+                except (OSError, RuntimeError) as exc:
+                    raise Blocked(f"broken or cyclic upstream symlink: {_item}") from exc
+                require(_destination.is_relative_to(_root),
+                        f"upstream symlink escapes repository: {_item} -> {_destination}")
+        entry = {"commit": target, "url": url, "ref": ref,
+                 "base": integrated,  # compatibility metadata, NOT a stale stable pin
+                 "integrated_commit": integrated,
+                 "ahead": int(git(donor, "rev-list", "--count", f"{integrated}..{target}"))}
+        kernel_changed = git(donor, "diff", "--name-only", f"{integrated}..{target}", "--", "kernel/")
+        entry["kernel_paths_changed"] = [x for x in kernel_changed.splitlines() if x.startswith("kernel/")]
         if component == "resukisu":
-            count = int(git(donor, "rev-list", "--count", target))
+            critical = {"kernel/feature/selinux_hide.c", "kernel/selinux/sepolicy.c",
+                        "kernel/Kbuild", "kernel/Kconfig", "kernel/tools/susfs_compat.mk",
+                        "kernel/compat/kernel_compat.h", "kernel/hook/lsm_hooks.c"}
+            if critical.intersection(entry["kernel_paths_changed"]):
+                errors.append("BakaSU critical SELinux/SUSFS/kernel interface code changed "
+                              "since CURRENT_BUILD; manual source review is required")
+            from veux_current_components import checked_uapi
             kbuild = (donor / "kernel/Kbuild").read_text()
-            require("expr 30000 + $(KSU_LOCAL_VERSION) + 700" in kbuild, "ReSukiSU version formula changed")
+            require("expr 30000 + $(KSU_LOCAL_VERSION) + 700" in kbuild,
+                    "ReSukiSU/BakaSU version formula changed")
+            count = int(git(donor, "rev-list", "--count", target))
+            new_uapi = checked_uapi(donor)  # frozen UAPI5/header/service event tests
+            require(new_uapi == old["uapi"] == 5,
+                    f"unreviewed ReSukiSU/BakaSU UAPI transition: {old['uapi']} -> {new_uapi}")
             entry.update(version=str(30700 + count), local_version=count,
-                         tag=git(donor, "describe", "--tags", "--abbrev=0", target), uapi=4)
-            require("KERNEL_SU_UAPI_VERSION = 4;" in (donor / "uapi/supercall.h").read_text(), "UAPI changed")
+                         tag=git(donor, "describe", "--tags", "--abbrev=0", target), uapi=new_uapi)
+            compat = donor / "kernel/tools/susfs_compat.mk"
+            if ("include $(KSU_SRC)/tools/susfs_compat.mk" in kbuild
+                    and compat.is_file()
+                    and "$(error Please wait susfs update.)" in compat.read_text()):
+                errors.append("BakaSU upstream intentionally BLOCKS CONFIG_KSU_SUSFS: "
+                              "Please wait susfs update; no kernel build or bypass allowed")
         elif component == "susfs":
-            match = re.search(r'#define SUSFS_VERSION "v?([^\"]+)"', (donor / "kernel_patches/include/linux/susfs.h").read_text())
-            require(match, "SUSFS version missing")
-            entry["version"] = match[1]
+            header = donor / "kernel_patches/include/linux/susfs.h"
+            found = re.search(r'#define SUSFS_VERSION "v?([^\"]+)"', header.read_text())
+            require(found is not None, "SUSFS declared version missing")
+            entry["version"] = found[1]
+            if entry["version"] != str(old.get("version")):
+                errors.append("SUSFS version changed; review 5.4 OPEN_REDIRECT/SRCU backports")
         else:
-            match = re.search(r'#define NOMOUNT_VERSION "([^\"]+)"', (donor / "kernel/src/nomount.h").read_text())
-            require(match, "NoMount version missing")
-            # The kernel wire version is not a semantic module version.
-            entry.update(version=match[1], version_kind="kernel-wire-version")
+            header = (donor / "kernel/src/nomount.h").read_text()
+            direct = re.search(r'#define\s+NOMOUNT_VERSION\s+"([^\"]+)"', header)
+            base = re.search(r'#define\s+NOMOUNT_BASE_VERSION\s+"([^\"]+)"', header)
+            if direct:
+                entry.update(version=direct[1], version_kind="kernel-wire-version")
+            elif base:
+                entry.update(version=base[1], version_kind="base-version-dynamic-commit-count")
+                entry["dynamic_commit_count"] = "NOMOUNT_COMMIT_COUNT" in header
+                # No count is fabricated when the embedded source has no .git.
+            else:
+                raise Blocked("NoMount version macro no longer recognized")
+            if entry["version"] != str(old.get("version")) or entry["version_kind"] != old.get("version_kind"):
+                errors.append("NoMount 20 -> 21 ABI/version scheme changed; "
+                              "compatibility review and compiled 5.4 runtime tests required")
         result["components"][component] = entry
-        print(f"RESOLVED {component} {target} version={entry['version']} delta={entry['ahead']}", flush=True)
+        print(f"RESOLVED {component} {target} version={entry['version']} "
+              f"delta_from_integrated={entry['ahead']}", flush=True)
+    result["compatibility_review_required"] = bool(errors)
+    result["review_reasons"] = errors
+    # Keep source copies and machine-readable evidence even when blocked.
+    write_json(work / "COMPATIBILITY-REVIEW.json", result)
+    require(not errors, "V4 UPSTREAM BUILD BLOCKED: " + " | ".join(errors))
+    result["build_approved"] = True  # only preflight; never means compile/device PASS
     write_json(work / "targets.json", result)
     return result
+
 
 
 def parse_env(path):
