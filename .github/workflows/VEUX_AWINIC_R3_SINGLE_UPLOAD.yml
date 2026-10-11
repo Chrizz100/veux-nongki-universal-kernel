@@ -1,3 +1,5 @@
+%YAML 1.2
+---
 name: VEUX - Awinic getter R3 candidate - RPM24 R4 - 5.4.274 (manual)
 on:
   workflow_dispatch: {}
@@ -25,20 +27,14 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        # GitHub may save a second upload with a suffix such as (1).yml.
-        # Inspect only the workflow actually executing this run.
-        workflow_ref="${GITHUB_WORKFLOW_REF%%@*}"
-        case "$workflow_ref" in
-          "$GITHUB_REPOSITORY"/.github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD*.yml) ;;
-          *) echo "::error::Unexpected workflow reference: $GITHUB_WORKFLOW_REF"; exit 1 ;;
-        esac
-        workflow_file="${workflow_ref#"$GITHUB_REPOSITORY"/}"
-        test -f "$workflow_file"
+        # actionlint is installed only in the runner's temporary directory.
+        # A lint error aborts BEFORE all kernel source operations or compilation.
+        test -f .github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD.yml
         mkdir -p "$RUNNER_TEMP/veux-actionlint-bin"
-        GOBIN="$RUNNER_TEMP/veux-actionlint-bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-        printf 'ACTIONLINT_SOURCE=%s\n' "$workflow_file"
-        "$RUNNER_TEMP/veux-actionlint-bin/actionlint" -oneline "$workflow_file"
-        printf 'ACTIONLINT_GITHUB_RUNNER=PASS\n'
+        GOBIN="$RUNNER_TEMP/veux-actionlint-bin"   go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+        "$RUNNER_TEMP/veux-actionlint-bin/actionlint" -oneline   .github/workflows/VEUX_AWINIC_R3_SINGLE_UPLOAD.yml
+        printf 'ACTIONLINT_GITHUB_RUNNER=PASS
+        '
     - name: Verify repository and bounded dependencies
       shell: bash
       run: "set -euo pipefail\ntest \"$GITHUB_REPOSITORY\" = Chrizz100/veux-nongki-universal-kernel\n\
