@@ -37,7 +37,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -f common/scripts/VEUX_V4_Engine_Compat_R1.py
-          test -f tests/test_veux_v4_engine_compat_r1.py
+          test -f Tests/test_veux_v4_engine_compat_r1.py
           test -f .github/workflows/VEUX_V4_Engine_Compat_R1.yml
           test -f common/contracts/CURRENT_BUILD.json
           test -z "$(git status --porcelain --untracked-files=all)"
@@ -73,13 +73,13 @@ jobs:
           from pathlib import Path
           for name in (
               'common/scripts/VEUX_V4_Engine_Compat_R1.py',
-              'tests/test_veux_v4_engine_compat_r1.py',
+              'Tests/test_veux_v4_engine_compat_r1.py',
           ):
               p = Path(name)
               compile(p.read_text(), name, 'exec')
           print('SOURCE_PYTHON_SYNTAX=PASS')
           PY
-          "$PY" tests/test_veux_v4_engine_compat_r1.py
+          "$PY" Tests/test_veux_v4_engine_compat_r1.py
           "$PY" common/scripts/test_veux_update_engine.py
           "$PY" common/scripts/test_veux_current_components.py
           "$PY" - <<'PY'
