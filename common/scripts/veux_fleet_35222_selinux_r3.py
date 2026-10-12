@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 import veux_bakasu_selinux_backport_r3 as selinux_r3
 
@@ -74,6 +75,24 @@ CODE_BLOBS = {
 AWINIC_POST_SHA256 = 'f44881388908c8002b96383356104b00f8c823ca11193106d87dc1f8601378b4'
 AWINIC_PATCH_SHA256 = '5c00ebcf5ceb1f9e2c8988a16d538e0048f7b4bb28298de875d6b4f0e854e7a2'
 
+# Exact pinned GitLab transport only. Never fall back to an unverified mirror,
+# switch to a floating HEAD, or hide a history/commit mismatch.
+SUSFS_GITLAB_URL = 'https://gitlab.com/simonpunk/susfs4ksu.git'
+SUSFS_GITLAB_REF = 'refs/heads/gki-android13-5.10'
+SUSFS_GITLAB_PIN = '5326e21a7eb232f9e21debdd5164e99bee3d1e2f'
+SUSFS_GITLAB_RETRY_DELAYS = (5, 15, 30, 45)  # five total attempts
+GITLAB_OVERLOAD_MARKERS = (
+    'gitlab is currently unable to handle this request due to load',
+    'the requested url returned error: 503',
+    'the requested url returned error: 502',
+    'the requested url returned error: 504',
+    'the requested url returned error: 429',
+    '503 service unavailable',
+    '502 bad gateway',
+    '504 gateway timeout',
+    '429 too many requests',
+)
+
 
 class FleetBlocked(RuntimeError):
     pass
@@ -91,6 +110,85 @@ def run(*args: object, timeout: int = 240, cwd: Path | None = None) -> str:
     require(proc.returncode==0,
             'COMMAND_FAILURE '+str(args[0])+' rc='+str(proc.returncode)+': '+proc.stderr[-1250:])
     return proc.stdout.strip()
+
+
+def gitlab_is_transient(exc: BaseException) -> bool:
+    """Only overload/rate-limit transport errors are retried, never identity errors."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in GITLAB_OVERLOAD_MARKERS)
+
+
+def _write_gitlab_retry_log(folder: Path | None, stage: str, rows: list[dict], status: str) -> None:
+    if folder is None:
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / ('SUSFS_GITLAB_' + stage.upper().replace('-', '_') + '.json')
+    require(not target.is_symlink(), 'UNSAFE_GITLAB_RETRY_LOG')
+    target.write_text(json.dumps({
+        'component': 'susfs', 'source_url': SUSFS_GITLAB_URL,
+        'ref': SUSFS_GITLAB_REF, 'pinned_commit': SUSFS_GITLAB_PIN,
+        'stage': stage, 'status': status, 'attempts': rows,
+        'head_is_not_a_build_pin': True, 'fallback_mirror_used': False,
+    }, indent=2, sort_keys=True) + '\n')
+
+
+def retry_susfs_gitlab(stage: str, operation, *, audit: Path | None = None,
+                       cleanup=None):
+    """Bounded retry for the exact GitLab overload seen in two failed runs.
+
+    Non-transport, verification and source-identity errors fail immediately.
+    GitLab's frozen commit and source URL never change.
+    """
+    require(stage in ('head', 'clone'), 'UNEXPECTED_GITLAB_RETRY_STAGE')
+    attempts = []
+    for index in range(len(SUSFS_GITLAB_RETRY_DELAYS) + 1):
+        number = index + 1
+        try:
+            result = operation()
+        except Exception as exc:
+            if not gitlab_is_transient(exc):
+                raise
+            if cleanup is not None:
+                cleanup()
+            exhausted = index == len(SUSFS_GITLAB_RETRY_DELAYS)
+            attempts.append({'attempt': number, 'result': 'TRANSIENT_GITLAB_OVERLOAD'})
+            _write_gitlab_retry_log(audit, stage, attempts, 'EXHAUSTED' if exhausted else 'RETRYING')
+            if exhausted:
+                raise FleetBlocked('SUSFS_GITLAB_OVERLOAD_RETRY_EXHAUSTED ' + stage +
+                                   ': official GitLab server overloaded; pin unchanged') from exc
+            delay = SUSFS_GITLAB_RETRY_DELAYS[index]
+            print(f'SUSFS_GITLAB_{stage.upper()}_OVERLOAD_RETRY={number}; '
+                  f'waiting={delay}s; official pinned source unchanged', flush=True)
+            time.sleep(delay)
+        else:
+            attempts.append({'attempt': number, 'result': 'PASS'})
+            _write_gitlab_retry_log(audit, stage, attempts, 'PASS')
+            return result
+    raise FleetBlocked('UNREACHABLE_GITLAB_RETRY_STATE')
+
+
+def _remove_partial_susfs_checkout(donor: Path) -> None:
+    """Remove ONLY a failed temporary SUSFS clone, never any existing checkout."""
+    require(donor.name == 'susfs' and donor.parent.name == 'bundle',
+            'SUSFS_PARTIAL_CHECKOUT_SCOPE_CHANGED')
+    require(not donor.is_symlink(), 'SUSFS_PARTIAL_CHECKOUT_SYMLINK')
+    if donor.exists():
+        require(donor.is_dir(), 'SUSFS_PARTIAL_CHECKOUT_NOT_DIRECTORY')
+        shutil.rmtree(donor)
+
+
+def checkout_exact_susfs_with_retry(engine, entry: dict, donor: Path, *, audit: Path | None = None) -> None:
+    """Clone from the official GitLab URL at a fixed, authenticated SHA."""
+    require(entry['url'] == SUSFS_GITLAB_URL and entry['ref'] == SUSFS_GITLAB_REF
+            and entry['commit'] == SUSFS_GITLAB_PIN,
+            'SUSFS_SOURCE_PIN_OR_URL_CHANGED')
+    require(donor.name == 'susfs' and donor.parent.name == 'bundle' and
+            not donor.exists() and not donor.is_symlink(),
+            'SUSFS_CHECKOUT_DESTINATION_UNSAFE')
+    retry_susfs_gitlab('clone',
+                       lambda: engine.checkout(entry['url'], entry['commit'], donor, full=True),
+                       audit=audit, cleanup=lambda: _remove_partial_susfs_checkout(donor))
+    require(donor.is_dir() and not donor.is_symlink(), 'SUSFS_CHECKOUT_NOT_REAL_DIRECTORY')
 
 
 def git_blob(blob: bytes) -> str:
@@ -271,7 +369,15 @@ def prepare(repo: Path, root: Path, kernel: str) -> dict:
     links={}
     for comp in ('resukisu','susfs','nomount'):
         entry=TARGETS[comp]
-        newhead=remote_head(entry['url'],entry['ref'])
+        if comp == 'susfs':
+            require(entry['url'] == SUSFS_GITLAB_URL and entry['ref'] == SUSFS_GITLAB_REF
+                    and entry['commit'] == SUSFS_GITLAB_PIN,
+                    'SUSFS_SOURCE_PIN_OR_URL_CHANGED')
+            newhead=retry_susfs_gitlab(
+                'head', lambda: remote_head(entry['url'], entry['ref']),
+                audit=root/'report')
+        else:
+            newhead=remote_head(entry['url'],entry['ref'])
         heads[comp]=newhead
         # Never integrate a floating HEAD.  Source is always the frozen pin;
         # for SUSFS and NoMount, verify ancestry after fetching full history.
@@ -279,7 +385,10 @@ def prepare(repo: Path, root: Path, kernel: str) -> dict:
         # Freeze audited BakaSU 35222 BEFORE the upstream SUSFS build blocker.
         # Newer branch heads are never silently integrated.
         donor=dest/comp
-        e.checkout(entry['url'],entry['commit'],donor,full=True)
+        if comp == 'susfs':
+            checkout_exact_susfs_with_retry(e, entry, donor, audit=root/'report')
+        else:
+            e.checkout(entry['url'],entry['commit'],donor,full=True)
         require(e.git(donor,'rev-parse','HEAD')==entry['commit'],
                 'PINNED_DONOR_IDENTITY_MISMATCH '+comp)
         require(not e.git(donor,'status','--porcelain'),'DIRTY_UPSTREAM_DONOR '+comp)
