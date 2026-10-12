@@ -85,6 +85,73 @@ def verify_donor(donor: Path) -> dict:
             'parent':BACKPORT_PARENT,'files':{n:{'before':a,'after':b} for n,(a,b) in FILE_BLOBS.items()},
             'guard_not_integrated':True,'test_build_required':True}
 
+# Targeted host-kernel export for the fa12 SELinux code on Linux 5.4.
+# The BakaSU static_export_check.mk for fa12 requires these two functions to
+# have external linkage with CONFIG_KALLSYMS_ALL disabled.  Do not disable the
+# check, touch the ELF module ABI, or change the functions' implementations.
+LEGACY_SELINUX_EXPORTS = (
+    'security_dump_masked_av',
+    'context_struct_compute_av',
+)
+
+
+def stage_legacy_selinux_exports(src: Path) -> tuple[Path, bytes, bytes, dict]:
+    """Stage exact `static`-qualifier removals, without writing to the source.
+
+    Only the 5.4 SELinux-state layout is supported. This deliberately rejects
+    unfamiliar source signatures, instead of masking an upstream ABI change.
+    """
+    src = src.resolve(strict=True)
+    makefile = src / 'Makefile'
+    security = src / 'security/selinux/include/security.h'
+    path = src / 'security/selinux/ss/services.c'
+    for item in (makefile, security, path):
+        checked(item.is_file() and not item.is_symlink() and
+                item.resolve().is_relative_to(src),
+                'SELINUX_HOST_FILE_MISSING_OR_SYMLINK ' + str(item.relative_to(src)))
+    mk = makefile.read_text()
+    checked(bool(re.search(r'^VERSION[ \t]*=[ \t]*5[ \t]*$', mk, re.M)) and
+            bool(re.search(r'^PATCHLEVEL[ \t]*=[ \t]*4[ \t]*$', mk, re.M)),
+            'HOST_EXPORT_REQUIRES_LINUX_5_4')
+    checked(bool(re.search(r'\bstruct\s+selinux_state\b',security.read_text())),
+            'HOST_EXPORT_REQUIRES_SELINUX_STATE')
+
+    original = path.read_bytes()
+    before = original.decode('utf-8')
+    updated = before
+    counts = {}
+    for symbol in LEGACY_SELINUX_EXPORTS:
+        pattern = re.compile(r'(?m)^(?P<indent>[ \t]*)static[ \t]+void[ \t]+'
+                             + re.escape(symbol) + r'(?=[ \t]*\()')
+        found = list(pattern.finditer(updated))
+        # A forward declaration + definition is normal for context_struct_compute_av.
+        allowed = (1,) if symbol == 'security_dump_masked_av' else (1, 2)
+        checked(len(found) in allowed, 'HOST_EXPORT_UNEXPECTED_STATIC_COUNT '
+                + symbol + ' count=' + str(len(found)))
+        for match in found:
+            next_text = updated[match.end():match.end()+180]
+            checked(bool(re.match(r'\s*\(\s*struct\s+policydb\s*\*\s*policydb\b', next_text)),
+                    'HOST_EXPORT_SIGNATURE_CHANGED ' + symbol)
+        updated, replacements = pattern.subn(
+            lambda m: m.group('indent') + 'void ' + symbol, updated)
+        checked(replacements == len(found), 'HOST_EXPORT_REPLACEMENT_COUNT ' + symbol)
+        checked(not pattern.search(updated), 'HOST_EXPORT_STATIC_SURVIVED ' + symbol)
+        counts[symbol] = replacements
+    checked(updated != before, 'HOST_EXPORT_NO_EFFECT')
+    proof = {
+        'host_kernel': '5.4',
+        'source_file': 'security/selinux/ss/services.c',
+        'before_sha256': hashlib.sha256(original).hexdigest(),
+        'after_sha256': hashlib.sha256(updated.encode()).hexdigest(),
+        'symbols': counts,
+        'new_export_symbol_macros': False,
+        'changed_function_bodies': False,
+        'config_kallsyms_all_was_not_changed': True,
+        'config_modversions_was_not_changed': True,
+    }
+    return path, original, updated.encode(), proof
+
+
 def apply_source_backport(src: Path, donor: Path, report: Path) -> dict:
     """Validate ALL five source preimages first; then apply only pinned files.
 
@@ -117,6 +184,9 @@ def apply_source_backport(src: Path, donor: Path, report: Path) -> dict:
                 ' observed='+git_blob(original))
         replacement=read_commit_blob(donor, BACKPORT_COMMIT, relative, after)
         stage.append((target, original, replacement,after))
+    # Preflight the host export as well, BEFORE altering any BakaSU source.
+    host_path, host_before, host_after, host_proof = stage_legacy_selinux_exports(src)
+    stage.append((host_path, host_before, host_after, git_blob(host_after)))
     # All preconditions passed.  Mutation is limited to the temporary kernel
     # source and fails closed if another process modifies a staged preimage.
     try:
@@ -130,13 +200,14 @@ def apply_source_backport(src: Path, donor: Path, report: Path) -> dict:
         raise
     proof['source_directory']=str(src)
     proof['changed_kernel_paths']=list(FILE_BLOBS)
+    proof['host_kernel_symbol_exports']=host_proof
     proof['device_pass']=False
     proof['kernel_build']=False
     proof['susfs_version']='2.3.0'
     proof['effective_version_label']='35222+fa12-security-backport (NOT official 35225)'
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n')
-    print('BAKASU_R3_PINNED_SELINUX_BACKPORT=PASS; CHANGED=5; NO_SUSFS_GUARD_REMOVED',flush=True)
+    print('BAKASU_R3_PINNED_SELINUX_BACKPORT=PASS; CHANGED=5; HOST_EXPORTS=2; NO_SUSFS_GUARD_REMOVED',flush=True)
     return proof
 
 # Inject after the existing protected AWINIC wrapper: this preserves the exact
