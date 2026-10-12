@@ -56,6 +56,26 @@ def fake_candidate(*,extra_in_patch=False):
             p.write_text('PRE '+name+'\n')
         (src/'drivers').mkdir()
         (src/'drivers/kernelsu').symlink_to('../KernelSU/kernel')
+        # Faithfully model the 5.4 SELinux state and its global-function
+        # declarations. Kernel 5.4 has one security_dump_masked_av and one
+        # forward declaration plus definition of context_struct_compute_av.
+        (src/'Makefile').write_text('VERSION = 5\nPATCHLEVEL = 4\nSUBLEVEL = 274\n')
+        header=src/'security/selinux/include/security.h'
+        header.parent.mkdir(parents=True)
+        header.write_text('struct selinux_state { int active; };\n')
+        services=src/'security/selinux/ss/services.c'
+        services.parent.mkdir(parents=True)
+        services.write_text(
+            'static void context_struct_compute_av(struct policydb *policydb,\n'
+            '  struct context *source, struct context *target,\n'
+            '  u16 tclass, struct av_decision *avd, struct extended_perms *xperms);\n'
+            'static void security_dump_masked_av(struct policydb *policydb,\n'
+            '  struct context *source, struct context *target,\n'
+            '  u16 tclass, u32 permissions, const char *reason) { }\n'
+            'static void context_struct_compute_av(struct policydb *policydb,\n'
+            '  struct context *source, struct context *target,\n'
+            '  u16 tclass, struct av_decision *avd, struct extended_perms *xperms) { }\n'
+        )
         override=dict(SOURCE_PIN=pin,BACKPORT_COMMIT=commit,BACKPORT_PARENT=parent,
                       FILE_BLOBS=blobs,
                       KNOWN_SUSFS_35222_BLOB=bp.git_blob(b'compat checks valid\n'),
@@ -95,6 +115,13 @@ class BackportTests(unittest.TestCase):
             self.assertFalse(p['kernel_build'])
             self.assertTrue(report.exists())
             self.assertEqual(p['changed_kernel_paths'],paths)
+            self.assertEqual(p['host_kernel_symbol_exports']['symbols'],
+                             {'security_dump_masked_av':1,'context_struct_compute_av':2})
+            services=(src/'security/selinux/ss/services.c').read_text()
+            self.assertNotIn('static void security_dump_masked_av',services)
+            self.assertNotIn('static void context_struct_compute_av',services)
+            self.assertEqual(services.count('void context_struct_compute_av'),2)
+            self.assertEqual(services.count('void security_dump_masked_av'),1)
             for name,(_,after) in blobs.items():
                 self.assertEqual(bp.git_blob((src/'KernelSU'/name).read_bytes()),after)
             self.assertTrue(b'$(error Please wait susfs update.)' not in (src/'KernelSU/kernel/tools/susfs_compat.mk').read_bytes() if (src/'KernelSU/kernel/tools/susfs_compat.mk').exists() else True)
@@ -145,6 +172,102 @@ class BackportTests(unittest.TestCase):
             target.symlink_to('/etc/passwd')
             with self.assertRaisesRegex(bp.UnsafeBackport,'SOURCE_FILE_MISSING_OR_SYMLINK'):
                 bp.apply_source_backport(src,donor,top/'report.json')
+
+    def test_host_export_preflight_does_not_modify_any_sources(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            host=src/'security/selinux/ss/services.c'
+            old=host.read_bytes()
+            path,before,after,proof=bp.stage_legacy_selinux_exports(src)
+            self.assertEqual(path,host)
+            self.assertEqual(host.read_bytes(),old)
+            self.assertEqual(before,old)
+            self.assertNotEqual(before,after)
+            self.assertEqual(proof['host_kernel'],'5.4')
+            self.assertEqual(proof['symbols']['context_struct_compute_av'],2)
+            self.assertEqual(proof['symbols']['security_dump_masked_av'],1)
+            self.assertFalse(proof['new_export_symbol_macros'])
+            self.assertFalse(proof['changed_function_bodies'])
+
+    def test_reject_wrong_kernel_version_without_writing(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            (src/'Makefile').write_text('VERSION = 5\nPATCHLEVEL = 10\n')
+            original=(src/'KernelSU'/paths[0]).read_bytes()
+            with self.assertRaisesRegex(bp.UnsafeBackport,'HOST_EXPORT_REQUIRES_LINUX_5_4'):
+                bp.apply_source_backport(src,donor,top/'BAD.json')
+            self.assertEqual(original,(src/'KernelSU'/paths[0]).read_bytes())
+            self.assertFalse((top/'BAD.json').exists())
+
+    def test_reject_missing_selinux_state(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            (src/'security/selinux/include/security.h').write_text('struct old_selinux_state {};\n')
+            with self.assertRaisesRegex(bp.UnsafeBackport,'HOST_EXPORT_REQUIRES_SELINUX_STATE'):
+                bp.stage_legacy_selinux_exports(src)
+
+    def test_reject_unexpected_static_definition_count(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            f=src/'security/selinux/ss/services.c'
+            f.write_text(f.read_text().replace('static void security_dump_masked_av','static int security_dump_masked_av'))
+            with self.assertRaisesRegex(bp.UnsafeBackport,'HOST_EXPORT_UNEXPECTED_STATIC_COUNT'):
+                bp.stage_legacy_selinux_exports(src)
+
+    def test_reject_unapproved_export_prototype_signature(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            f=src/'security/selinux/ss/services.c'
+            f.write_text(f.read_text().replace('security_dump_masked_av(struct policydb *policydb,',
+                                               'security_dump_masked_av(struct olddb *policydb,'))
+            with self.assertRaisesRegex(bp.UnsafeBackport,'HOST_EXPORT_SIGNATURE_CHANGED'):
+                bp.stage_legacy_selinux_exports(src)
+
+    def test_reject_host_symlink_before_upstream_changes(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            f=src/'security/selinux/ss/services.c'
+            f.unlink()
+            f.symlink_to('/etc/hosts')
+            initial=(src/'KernelSU'/paths[0]).read_bytes()
+            with self.assertRaisesRegex(bp.UnsafeBackport,'SELINUX_HOST_FILE_MISSING_OR_SYMLINK'):
+                bp.apply_source_backport(src,donor,top/'BAD.json')
+            self.assertEqual(initial,(src/'KernelSU'/paths[0]).read_bytes())
+
+    def test_missing_host_source_does_not_mutate_upstream_backport(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            (src/'security/selinux/ss/services.c').unlink()
+            before=[(src/'KernelSU'/rel).read_bytes() for rel in paths]
+            with self.assertRaisesRegex(bp.UnsafeBackport,'SELINUX_HOST_FILE_MISSING_OR_SYMLINK'):
+                bp.apply_source_backport(src,donor,top/'BAD.json')
+            self.assertEqual(before,[(src/'KernelSU'/rel).read_bytes() for rel in paths])
+
+    def test_host_export_rollback_on_failed_writer(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            host=src/'security/selinux/ss/services.c'
+            before=[(src/'KernelSU'/rel).read_bytes() for rel in paths]
+            host_before=host.read_bytes()
+            original_method=Path.write_bytes
+            attempts=[]
+            def guarded_writer(path,data):
+                # Only the write of the modified host source is denied once.
+                if path==host and data!=host_before and not attempts:
+                    attempts.append(1)
+                    raise OSError('synthetic transient host write failure')
+                return original_method(path,data)
+            with patch.object(Path,'write_bytes',guarded_writer):
+                with self.assertRaisesRegex(OSError,'synthetic transient'):
+                    bp.apply_source_backport(src,donor,top/'FAILED.json')
+            self.assertEqual(before,[(src/'KernelSU'/rel).read_bytes() for rel in paths])
+            self.assertEqual(host_before,host.read_bytes())
+            self.assertFalse((top/'FAILED.json').exists())
+
+    def test_fix_matches_upstream_static_export_check_requirements(self):
+        # BakaSU fa12 static_export_check.mk checks these same literal tokens.
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            host=src/'security/selinux/ss/services.c'
+            _,before,after,_=bp.stage_legacy_selinux_exports(src)
+            self.assertIn(b'static void security_dump_masked_av',before)
+            self.assertIn(b'static void context_struct_compute_av',before)
+            for mark in (b'static void security_dump_masked_av',
+                         b'static void context_struct_compute_av'):
+                self.assertNotIn(mark,after)
+            self.assertEqual(after.replace(b'void security_dump_masked_av',b'static void security_dump_masked_av').replace(
+                b'void context_struct_compute_av',b'static void context_struct_compute_av'),before)
 
     def test_worker_injects_only_one_readonly_temp_source_site(self):
         s=bp.ANCHOR+"        overlay_hash = r.save_overlay(src, before, args.overlays / label, label, targets)\n"+bp.RESULT_ANCHOR
