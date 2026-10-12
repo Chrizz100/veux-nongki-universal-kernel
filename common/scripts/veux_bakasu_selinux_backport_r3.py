@@ -85,6 +85,77 @@ def verify_donor(donor: Path) -> dict:
             'parent':BACKPORT_PARENT,'files':{n:{'before':a,'after':b} for n,(a,b) in FILE_BLOBS.items()},
             'guard_not_integrated':True,'test_build_required':True}
 
+# Device-reported regression: Linux 5.4.274 R3 fa12 runtime prevented normal
+# execve (/system/bin/sh, BakaSU libksud.so) while R2 35222 worked. The fa12
+# handler changes app SELinux current via new manual SID/cred mutation. Android
+# Zygote invokes setcontext AFTER switching from root to an app UID.
+# Keep the exact security fix as upstream for >= 5.10, but route this *single*
+# older-kernel hook to Linux's original, already working setprocattr callback.
+# This does NOT relax SELinux and does NOT claim fa12 side-channel protection
+# for this one legacy interface. No SUSFS or NoMount pin is changed.
+LEGACY_54_SETPROCATTR_PATH = 'kernel/feature/selinux_hide.c'
+LEGACY_54_GUARD_ANCHOR = '''    if (strcmp(name, "current")) {
+        goto call_orig;
+    }
+
+    struct ksu_task_security_struct *tsec;
+'''
+LEGACY_54_GUARD = '''    if (strcmp(name, "current")) {
+        goto call_orig;
+    }
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+    /* VEUX 5.4: preserve the stock, enforcing SELinux process SID transition.
+     * The fa12 manual SID/credential path regressed Android app execve on VEUX.
+     * This fallback is limited to the legacy kernel; no allow/deny is bypassed.
+     */
+    goto call_orig;
+#endif
+
+    struct ksu_task_security_struct *tsec;
+'''
+
+
+def stage_legacy_54_setprocattr_guard(fa12_data: bytes) -> tuple[bytes, dict]:
+    """Pure, fail-closed adapter of exactly the pinned fa12 C source.
+
+    No device source or donor commit is touched. Production call is gated by
+    stage_legacy_selinux_exports(src), requiring kernel 5.4 and SELinux state.
+    """
+    expected = FILE_BLOBS[LEGACY_54_SETPROCATTR_PATH][1]
+    checked(git_blob(fa12_data) == expected,
+            'LEGACY_SETPROCATTR_EXPECTED_FA12_POSTIMAGE_MISSING')
+    original = fa12_data.decode('utf-8', errors='strict')
+    checked(original.count(LEGACY_54_GUARD_ANCHOR) == 1,
+            'LEGACY_SETPROCATTR_ANCHOR_DRIFT')
+    checked(original.count('int __nocfi ksu_handle_selinux_setprocattr(') == 2,
+            'LEGACY_SETPROCATTR_PROTOTYPE_DRIFT')
+    checked(original.count('    return ksu_orig_setprocattr(name, value, size);') == 1,
+            'LEGACY_SETPROCATTR_ORIGINAL_CALL_NOT_FOUND')
+    checked(original.count('call_orig:') == 1,
+            'LEGACY_SETPROCATTR_CALL_ORIG_DRIFT')
+    updated = original.replace(LEGACY_54_GUARD_ANCHOR, LEGACY_54_GUARD, 1)
+    checked(updated.replace(LEGACY_54_GUARD, LEGACY_54_GUARD_ANCHOR, 1) == original,
+            'LEGACY_SETPROCATTR_UNRELATED_CHANGE')
+    checked(updated.count('#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)') >= 1,
+            'LEGACY_SETPROCATTR_MISSING_VERSION_GUARD')
+    result = updated.encode('utf-8')
+    proof = {
+        'kernel_version_scope': '5.4 (source Makefile gate); 5.4.274 (R3 fleet target)',
+        'source_relative': LEGACY_54_SETPROCATTR_PATH,
+        'official_fa12_git_blob': expected,
+        'effective_git_blob': git_blob(result),
+        'effective_sha256': hashlib.sha256(result).hexdigest(),
+        'insertions': 1,
+        'other_fa12_code_unchanged': True,
+        'legacy_setprocattr': 'original_stock_kernel_callback',
+        'selinux_enforcing_not_changed': True,
+        'sidechannel_fix_at_legacy_setprocattr': 'not_claimed',
+        'device_runtime_pass': False,
+    }
+    return result, proof
+
+
 # Targeted host-kernel export for the fa12 SELinux code on Linux 5.4.
 # The BakaSU static_export_check.mk for fa12 requires these two functions to
 # have external linkage with CONFIG_KALLSYMS_ALL disabled.  Do not disable the
@@ -183,7 +254,9 @@ def apply_source_backport(src: Path, donor: Path, report: Path) -> dict:
         checked(git_blob(original)==before, 'VEUX_SOURCE_PREIMAGE_DRIFT '+relative+
                 ' observed='+git_blob(original))
         replacement=read_commit_blob(donor, BACKPORT_COMMIT, relative, after)
-        stage.append((target, original, replacement,after))
+        if relative == LEGACY_54_SETPROCATTR_PATH:
+            replacement, legacy_54_proof = stage_legacy_54_setprocattr_guard(replacement)
+        stage.append((target, original, replacement, git_blob(replacement)))
     # Preflight the host export as well, BEFORE altering any BakaSU source.
     host_path, host_before, host_after, host_proof = stage_legacy_selinux_exports(src)
     stage.append((host_path, host_before, host_after, git_blob(host_after)))
@@ -201,13 +274,14 @@ def apply_source_backport(src: Path, donor: Path, report: Path) -> dict:
     proof['source_directory']=str(src)
     proof['changed_kernel_paths']=list(FILE_BLOBS)
     proof['host_kernel_symbol_exports']=host_proof
+    proof['legacy_54_setprocattr_runtime_compat']=legacy_54_proof
     proof['device_pass']=False
     proof['kernel_build']=False
     proof['susfs_version']='2.3.0'
-    proof['effective_version_label']='35222+fa12-security-backport (NOT official 35225)'
+    proof['effective_version_label']='35222+fa12-5.4-setprocattr-runtime-compat (NOT official 35225)'
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(proof,sort_keys=True,indent=2)+'\n')
-    print('BAKASU_R3_PINNED_SELINUX_BACKPORT=PASS; CHANGED=5; HOST_EXPORTS=2; NO_SUSFS_GUARD_REMOVED',flush=True)
+    print('BAKASU_R3_PINNED_SELINUX_BACKPORT=PASS; CHANGED=5; HOST_EXPORTS=2; LEGACY_54_SETPROCATTR_FALLBACK=PASS; NO_SUSFS_GUARD_REMOVED',flush=True)
     return proof
 
 # Inject after the existing protected AWINIC wrapper: this preserves the exact
