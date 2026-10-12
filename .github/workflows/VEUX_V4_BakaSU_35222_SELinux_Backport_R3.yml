@@ -214,7 +214,13 @@ jobs:
               if z.testzip() is not None: raise SystemExit('R3_AK3_CORRUPTED')
               files={'rmnet_shs.ko':z.read('rmnet/rmnet_shs.ko'),
                      'rmnet_offload.ko':z.read('rmnet/rmnet_offload.ko')}
-          symvers=(root/'builds/5.4.274/build/Module.symvers').read_bytes()
+          # The release worker removes its temporary build directory after
+          # copying diagnostics. The archived Module.symvers is the
+          # authenticated result from this exact kernel compilation.
+          symvers_file=root/'builds/diagnostics/5.4.274/build/Module.symvers'
+          if not symvers_file.is_file() or symvers_file.is_symlink():
+              raise SystemExit('R3_ARCHIVED_MODULE_SYMVERS_MISSING')
+          symvers=symvers_file.read_bytes()
           proof=abi.audit(symvers,files)
           if proof['module_layout_kernel_crc']!='0xbff14f69':
               raise SystemExit('VENDOR_ABI_MODULE_LAYOUT_CRC_CHANGED')
