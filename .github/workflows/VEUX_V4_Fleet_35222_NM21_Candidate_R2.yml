@@ -1,0 +1,209 @@
+name: VEUX V4 - BakaSU 35222 NoMount21 Candidate R2
+
+'on':
+  workflow_dispatch:
+    inputs:
+      enable_build:
+        description: 'After 6/6 source preflight, compile/package/static-check all six kernels (NO push, NO flash)'
+        required: true
+        type: boolean
+        default: false
+      scope:
+        description: 'First compile 5.4.274, or choose all six kernels after this candidate passes'
+        required: true
+        type: choice
+        options:
+          - '5.4.274'
+          - 'all'
+        default: '5.4.274'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-v4-fleet-35222-nm21-candidate-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+jobs:
+  validate:
+    name: Confirm proven six-kernel source, local tests and workflow
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact repository commit (read-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify workflow with checksum-pinned actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline -shellcheck= \
+            .github/workflows/VEUX_V4_Fleet_35222_NM21_Candidate_R2.yml
+          echo 'ACTIONLINT_FLEET_R2=PASS'
+
+      - name: Install explicit host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git python3 python3-venv ca-certificates
+          python3 -m venv "$RUNNER_TEMP/veux-fleet-venv"
+          "$RUNNER_TEMP/veux-fleet-venv/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Verify candidate Python, AWINIC assets, regression gates, and exact repository state
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$RUNNER_TEMP/veux-fleet-venv/bin/python"
+          "$PY" - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in (
+              'common/scripts/veux_fleet_awinic_r1.py',
+              'common/scripts/veux_fleet_35222_nm21_r2.py',
+              'Tests/test_veux_fleet_35222_nm21_r2.py',
+          ):
+              ast.parse(Path(path).read_text(), filename=path)
+          print('FLEET_PYTHON_SYNTAX=PASS')
+          PY
+          "$PY" Tests/test_veux_fleet_35222_nm21_r2.py
+          "$PY" Tests/test_veux_fleet_35217_nm21_r1.py
+          "$PY" common/scripts/test_veux_update_engine.py
+          "$PY" common/scripts/test_veux_release.py
+          "$PY" common/scripts/test_veux_current_components.py
+          "$PY" common/scripts/test_veux_device_fixes.py
+          "$PY" common/scripts/test_veux_rpm_fixes.py
+          "$PY" common/scripts/test_veux_rpm24.py
+          "$PY" common/scripts/test_veux_config_compat.py
+          "$PY" common/scripts/test_veux_source_transport.py
+          "$PY" common/scripts/test_veux_rmnet.py
+          "$PY" common/scripts/test_veux_perf_compat.py
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'FLEET_HOST_REGRESSION_GATES=PASS'
+
+  fleet:
+    name: '35222 / NM21 source + optional kernel build: ${{ matrix.kernel }}'
+    needs: validate
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        kernel: ${{ fromJSON(inputs.scope == 'all' && '["5.4.274","5.4.292","5.4.293","5.4.300","5.4.301","5.4.302"]' || '["5.4.274"]') }}
+    steps:
+      - name: Checkout exact source commit (read-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare reproducible VEUX compile environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex \
+            git jq libelf-dev libncurses-dev libssl-dev perl python3 \
+            python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          echo "PY=$RUNNER_TEMP/veux-python/bin/python" >> "$GITHUB_ENV"
+          echo 'BUILD_ENVIRONMENT=PASS'
+
+      - name: Resolve audited 35222 / SUSFS23 / NoMount21 target using true build evidence
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_nm21_r2.py prepare \
+            --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-fleet-r2-$KERNEL" \
+            --kernel "$KERNEL"
+
+      - name: Mandatory full source-integration preflight for this lineage
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_nm21_r2.py preflight \
+            --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-fleet-r2-$KERNEL" \
+            --kernel "$KERNEL"
+          echo "FLEET_SOURCE_PREFLIGHT_$KERNEL=PASS"
+
+      - name: Compile, package and static-check this source candidate (explicit opt-in)
+        if: ${{ inputs.enable_build }}
+        shell: bash
+        env:
+          KERNEL: ${{ matrix.kernel }}
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_nm21_r2.py build \
+            --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-fleet-r2-$KERNEL" \
+            --kernel "$KERNEL" --jobs 4
+
+      - name: Publish kernel and boot candidates only after per-kernel complete gates
+        if: ${{ inputs.enable_build && success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Fleet-R2-${{ matrix.kernel }}-35222-NoMount21-1ded61dc-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-fleet-r2-${{ matrix.kernel }}/public/${{ matrix.kernel }}/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Preserve candidate audit and diagnostics also when blocked
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-Fleet-R2-Audit-${{ matrix.kernel }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-fleet-r2-${{ matrix.kernel }}/report/
+            ${{ runner.temp }}/veux-fleet-r2-${{ matrix.kernel }}/builds/diagnostics/${{ matrix.kernel }}/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+
+      - name: Assert repository was not changed or promoted
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'REPOSITORY_UNCHANGED=PASS'
+          echo 'CURRENT_BUILD_UNCHANGED=PASS'
+          echo 'NO_MAIN_PROMOTION=PASS'
+          echo 'DEVICE_PASS_NOT_INFERRED=YES'
