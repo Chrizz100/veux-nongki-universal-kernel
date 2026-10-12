@@ -1,0 +1,263 @@
+name: VEUX V4 - BakaSU 35222 plus fa12 SELinux Backport R3
+
+'on':
+  workflow_dispatch:
+    inputs:
+      enable_build:
+        description: 'Run 5.4.274 compile/AK3 after source gates. R3 is experimental, no push or flash.'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-bakasu-35222-fa12-r3-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+
+jobs:
+  validate:
+    name: Immutable source, runner syntax, regression and compatibility gates
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact main snapshot with no stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify this workflow with checksum-pinned actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline .github/workflows/VEUX_V4_BakaSU_35222_SELinux_Backport_R3.yml
+          echo 'ACTIONLINT_R3=PASS'
+
+      - name: Install pinned host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git python3 python3-venv ca-certificates
+          python3 -m venv "$RUNNER_TEMP/veux-r3-test-venv"
+          "$RUNNER_TEMP/veux-r3-test-venv/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+
+      - name: Run R3 and proven R2 offline regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="$RUNNER_TEMP/veux-r3-test-venv/bin/python"
+          "$py" - <<'PY'
+          import ast
+          from pathlib import Path
+          for rel in (
+            'common/scripts/veux_bakasu_selinux_backport_r3.py',
+            'common/scripts/veux_fleet_35222_selinux_r3.py',
+            'common/scripts/veux_vendor_modcrc_r3.py',
+            'Tests/test_veux_selinux_backport_r3.py',
+            'Tests/test_veux_vendor_modcrc_r3.py',
+          ):
+              ast.parse(Path(rel).read_text(), filename=rel)
+          print('PYTHON_AST_R3=PASS')
+          PY
+          "$py" -m unittest discover -s Tests -p 'test_veux_*r3.py' -v
+          "$py" Tests/test_veux_fleet_35222_nm21_r2.py
+          "$py" Tests/test_veux_fleet_35217_nm21_r1.py
+          "$py" common/scripts/test_veux_update_engine.py
+          "$py" common/scripts/test_veux_release.py
+          "$py" common/scripts/test_veux_current_components.py
+          "$py" common/scripts/test_veux_device_fixes.py
+          "$py" common/scripts/test_veux_rpm_fixes.py
+          "$py" common/scripts/test_veux_rpm24.py
+          "$py" common/scripts/test_veux_config_compat.py
+          "$py" common/scripts/test_veux_source_transport.py
+          "$py" common/scripts/test_veux_rmnet.py
+          "$py" common/scripts/test_veux_perf_compat.py
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'FLEET_R3_HOST_GATES=PASS'
+
+      - name: Verify AWINIC R3 then SELinux R3 worker-injection chain before any kernel compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="$RUNNER_TEMP/veux-r3-test-venv/bin/python"
+          "$py" - <<'PY'
+          import ast, os, subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, 'common/scripts')
+          import veux_fleet_awinic_r1 as awinic
+          import veux_bakasu_selinux_backport_r3 as selinux
+          scratch=Path(os.environ['RUNNER_TEMP'])/'r3-two-injections'
+          scratch.mkdir(exist_ok=False)
+          assets=scratch/'awinic-r3'
+          hashes=awinic.extract(assets)
+          if len(hashes) != len(awinic.FILES_SHA256):
+              raise SystemExit('AWINIC_ARCHIVE_INCOMPLETE')
+          worker=Path('common/scripts/veux_release_device.py')
+          previous=scratch/'release_worker_awinic.py'
+          subprocess.run([sys.executable, str(assets/'inject_worker.py'),
+                          str(worker.resolve()), str(previous)],check=True)
+          target=scratch/'release_worker_selinux_r3.py'
+          proof=selinux.inject_worker(previous,target)
+          body=target.read_text()
+          ast.parse(body,filename=str(target))
+          if body.count('selinux_backport_r3 = apply_source_backport') != 1:
+              raise SystemExit('SELINUX_SOURCE_ANCHOR_NOT_UNIQUE')
+          if body.count("result['selinux_backport_r3'] = selinux_backport_r3") != 1:
+              raise SystemExit('SELINUX_RESULT_ANCHOR_NOT_UNIQUE')
+          if proof['patched_sha256'] == proof['original_sha256']:
+              raise SystemExit('SELINUX_INJECTION_UNCHANGED')
+          print('AWINIC_TO_SELINUX_R3_WORKER_INJECTION=PASS')
+          PY
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  candidate:
+    name: 'BakaSU 35222 plus isolated SELinux backport: 5.4.274'
+    needs: validate
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact source commit with no stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare pinned VEUX 5.4.274 build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex \
+            git jq libelf-dev libncurses-dev libssl-dev perl python3 \
+            python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-python"
+          "$RUNNER_TEMP/veux-python/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          echo "PY=$RUNNER_TEMP/veux-python/bin/python" >> "$GITHUB_ENV"
+          echo 'R3_ENVIRONMENT=PASS'
+
+      - name: Freeze audited BakaSU 35222 sources and verify fa12 backport provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_selinux_r3.py prepare \
+            --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-selinux-r3-5.4.274" \
+            --kernel '5.4.274'
+
+      - name: Mandatory source backport integration and device-fix preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_selinux_r3.py preflight \
+            --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-selinux-r3-5.4.274" \
+            --kernel '5.4.274'
+          test -s "$RUNNER_TEMP/veux-selinux-r3-5.4.274/source-audit/5.4.274/BAKASU-SELINUX-R3.json"
+          echo 'FA12_R3_SOURCE_PREFLIGHT=PASS'
+
+      - name: Compile, package and static-check kernel 5.4.274 (experimental candidate)
+        if: ${{ inputs.enable_build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -u common/scripts/veux_fleet_35222_selinux_r3.py build \
+            --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-selinux-r3-5.4.274" \
+            --kernel '5.4.274' --jobs 4
+          echo 'FA12_R3_BUILD=PASS'
+
+      - name: Verify module CRCs and embedded security-backport evidence
+        if: ${{ inputs.enable_build && success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import json, os, sys
+          sys.path.insert(0,'common/scripts')
+          import veux_vendor_modcrc_r3 as abi
+          import veux_bakasu_selinux_backport_r3 as backport
+          root=Path(os.environ['RUNNER_TEMP'])/'veux-selinux-r3-5.4.274'
+          public=root/'public/5.4.274'
+          candidate=list(public.glob('*_AnyKernel_RMNET.zip'))
+          if len(candidate)!=1:raise SystemExit('R3_AK3_NOT_UNIQUE')
+          report=json.loads((public/'RESULT.json').read_text())
+          if report.get('selinux_backport_r3',{}).get('isolated_backport')!=backport.BACKPORT_COMMIT:
+              raise SystemExit('R3_BACKPORT_IDENTITY_MISSING')
+          with ZipFile(candidate[0]) as z:
+              if z.testzip() is not None: raise SystemExit('R3_AK3_CORRUPTED')
+              files={'rmnet_shs.ko':z.read('rmnet/rmnet_shs.ko'),
+                     'rmnet_offload.ko':z.read('rmnet/rmnet_offload.ko')}
+          symvers=(root/'builds/5.4.274/build/Module.symvers').read_bytes()
+          proof=abi.audit(symvers,files)
+          if proof['module_layout_kernel_crc']!='0xbff14f69':
+              raise SystemExit('VENDOR_ABI_MODULE_LAYOUT_CRC_CHANGED')
+          if any(p['status']!='MATCH_FOR_SHARED_SYMBOLS' or p['absent_symbols']
+                 for p in proof['modules'].values()):
+              raise SystemExit('R3_RMNET_SYMBOL_VERSION_MISMATCH')
+          proof['note']='RMNET compatibility only; original Xiaomi vendor .ko still need separate comparison'
+          report_file=root/'report/VENDOR_ABI_R3.json'
+          report_file.write_text(json.dumps(proof,indent=2,sort_keys=True)+'\n')
+          print('R3_KNOWN_MODULES_CRC=PASS; VENDOR_XIAOMI_STILL_REQUIRES_MODULE_BYTES')
+          PY
+
+      - name: Publish AK3, boot and RESULTS only after complete per-kernel gates
+        if: ${{ inputs.enable_build && success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R3-5.4.274-BakaSU35222-fa12-backport-NoMount21-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-selinux-r3-5.4.274/public/5.4.274/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Preserve audit and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R3-Audit-5.4.274-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-selinux-r3-5.4.274/report/
+            ${{ runner.temp }}/veux-selinux-r3-5.4.274/builds/diagnostics/5.4.274/
+            ${{ runner.temp }}/veux-selinux-r3-5.4.274/source-audit/5.4.274/BAKASU-SELINUX-R3.json
+            ${{ runner.temp }}/veux-selinux-r3-5.4.274/prepare.json
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+
+      - name: Assert working repository unchanged and never auto-promoted
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'REPOSITORY_UNCHANGED=PASS'
+          echo 'NO_MAIN_PROMOTION=PASS'
+          echo 'NO_DEVICE_PASS_INFERRED=YES'
