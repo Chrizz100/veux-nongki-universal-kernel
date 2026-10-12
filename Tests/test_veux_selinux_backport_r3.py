@@ -5,6 +5,7 @@ import ast
 import contextlib
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +17,40 @@ REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO/'common/scripts'))
 import veux_bakasu_selinux_backport_r3 as bp
 import veux_fleet_35222_selinux_r3 as runner
+
+# Faithful hook skeleton from fa12 SELinux hide, with just its bodies mocked.
+# The real upstream git blob is checked separately, by immutable Git source SHA.
+HOOK_POST = '''#ifndef LINUX_VERSION_CODE
+#define LINUX_VERSION_CODE 328959
+#endif
+#define KERNEL_VERSION(a,b,c) (((a)<<16)|((b)<<8)|(c))
+#define __nocfi
+#define likely(a) (a)
+int ksu_get_uid_t(int uid) { return uid; }
+int current_uid(void) { return 10000; }
+int ksu_orig_setprocattr(const char *name, void *value, unsigned long size) {return 72;}
+struct ksu_task_security_struct {int sid;};
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+int __nocfi ksu_handle_selinux_setprocattr(const char *name, void *value, unsigned long size)
+#else
+int __nocfi ksu_handle_selinux_setprocattr(void *p, char *name, void *value, unsigned long size)
+#endif
+{
+    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
+        goto call_orig;
+    }
+
+    if (strcmp(name, "current")) {
+        goto call_orig;
+    }
+
+    struct ksu_task_security_struct *tsec;
+    (void)tsec;
+    return 99;
+call_orig:
+    return ksu_orig_setprocattr(name, value, size);
+}
+'''
 
 @contextlib.contextmanager
 def fake_candidate(*,extra_in_patch=False):
@@ -42,13 +77,14 @@ def fake_candidate(*,extra_in_patch=False):
         git('add','rust.lock');git('commit','-qm','userspace only')
         parent=git('rev-parse','HEAD')
         for i,name in enumerate(paths):
-            (donor/name).write_text('POST '+name+'\n')
+            (donor/name).write_text(HOOK_POST if name == bp.LEGACY_54_SETPROCATTR_PATH else 'POST '+name+'\n')
         if extra_in_patch:
             (donor/'extra').write_text('unexpected\n')
         git('add','.');git('commit','-qm','isolated selinux patch')
         commit=git('rev-parse','HEAD')
         git('checkout','-q','--detach',pin)
-        blobs={name:(bp.git_blob(('PRE '+name+'\n').encode()),bp.git_blob(('POST '+name+'\n').encode())) for name in paths}
+        blobs={name:(bp.git_blob(('PRE '+name+'\n').encode()),
+                     bp.git_blob((HOOK_POST if name == bp.LEGACY_54_SETPROCATTR_PATH else 'POST '+name+'\n').encode())) for name in paths}
         src=top/'work/kernel'
         vendor=src/'KernelSU/kernel';vendor.mkdir(parents=True)
         for name in paths:
@@ -123,7 +159,14 @@ class BackportTests(unittest.TestCase):
             self.assertEqual(services.count('void context_struct_compute_av'),2)
             self.assertEqual(services.count('void security_dump_masked_av'),1)
             for name,(_,after) in blobs.items():
-                self.assertEqual(bp.git_blob((src/'KernelSU'/name).read_bytes()),after)
+                effective=(src/'KernelSU'/name).read_bytes()
+                if name == bp.LEGACY_54_SETPROCATTR_PATH:
+                    self.assertEqual(bp.git_blob(effective),p['legacy_54_setprocattr_runtime_compat']['effective_git_blob'])
+                    self.assertNotEqual(bp.git_blob(effective), after)
+                    self.assertIn(bp.LEGACY_54_GUARD.encode(),effective)
+                    self.assertTrue(p['legacy_54_setprocattr_runtime_compat']['other_fa12_code_unchanged'])
+                else:
+                    self.assertEqual(bp.git_blob(effective),after)
             self.assertTrue(b'$(error Please wait susfs update.)' not in (src/'KernelSU/kernel/tools/susfs_compat.mk').read_bytes() if (src/'KernelSU/kernel/tools/susfs_compat.mk').exists() else True)
             self.assertEqual(git('status','--porcelain'),'')
 
@@ -268,6 +311,81 @@ class BackportTests(unittest.TestCase):
                 self.assertNotIn(mark,after)
             self.assertEqual(after.replace(b'void security_dump_masked_av',b'static void security_dump_masked_av').replace(
                 b'void context_struct_compute_av',b'static void context_struct_compute_av'),before)
+
+    def test_fa12_legacy_guard_is_exactly_one_version_scoped_change(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            effective, proof=bp.stage_legacy_54_setprocattr_guard(HOOK_POST.encode())
+            self.assertEqual(proof['official_fa12_git_blob'],blobs[bp.LEGACY_54_SETPROCATTR_PATH][1])
+            self.assertEqual(proof['insertions'],1)
+            self.assertFalse(proof['device_runtime_pass'])
+            self.assertIn(b'goto call_orig;',effective)
+            self.assertEqual(effective.count(bp.LEGACY_54_GUARD.encode()),1)
+            self.assertEqual(effective.replace(bp.LEGACY_54_GUARD.encode(),bp.LEGACY_54_GUARD_ANCHOR.encode(),1),HOOK_POST.encode())
+
+    def test_legacy_guard_rejects_unapproved_upstream_blob(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            with self.assertRaisesRegex(bp.UnsafeBackport,'EXPECTED_FA12_POSTIMAGE_MISSING'):
+                bp.stage_legacy_54_setprocattr_guard(b'changed code')
+
+    def test_legacy_guard_rejects_changed_setprocattr_anchor(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            source=HOOK_POST.replace('if (strcmp(name, "current"))','if (strcmp(name, "other"))').encode()
+            with patch.dict(bp.FILE_BLOBS,{bp.LEGACY_54_SETPROCATTR_PATH:(blobs[bp.LEGACY_54_SETPROCATTR_PATH][0],bp.git_blob(source))}):
+                with self.assertRaisesRegex(bp.UnsafeBackport,'ANCHOR_DRIFT'):
+                    bp.stage_legacy_54_setprocattr_guard(source)
+
+    def test_legacy_guard_rejects_duplicate_setprocattr_anchor(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            source=HOOK_POST.replace(bp.LEGACY_54_GUARD_ANCHOR,bp.LEGACY_54_GUARD_ANCHOR*2).encode()
+            with patch.dict(bp.FILE_BLOBS,{bp.LEGACY_54_SETPROCATTR_PATH:(blobs[bp.LEGACY_54_SETPROCATTR_PATH][0],bp.git_blob(source))}):
+                with self.assertRaisesRegex(bp.UnsafeBackport,'ANCHOR_DRIFT'):
+                    bp.stage_legacy_54_setprocattr_guard(source)
+
+    def test_legacy_guard_refuses_second_mutation(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            modified,_=bp.stage_legacy_54_setprocattr_guard(HOOK_POST.encode())
+            with self.assertRaisesRegex(bp.UnsafeBackport,'EXPECTED_FA12_POSTIMAGE_MISSING'):
+                bp.stage_legacy_54_setprocattr_guard(modified)
+
+    def test_5_10_upstream_handler_stays_unchanged_in_small_c_harness(self):
+        """Ensure 5.10+ still exercises upstream manual path, not VEUX fallback."""
+        if not shutil.which('clang') and not shutil.which('gcc'):
+            self.skipTest('No host C compiler')
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            source,_=bp.stage_legacy_54_setprocattr_guard(HOOK_POST.encode())
+            fixture='#include <string.h>\n'+source.decode()+\
+                    '\nint main(void) {return ksu_handle_selinux_setprocattr("current", 0, 0) != 99;}\n'
+            stub=top/'modern_mock.c';stub.write_text(fixture)
+            cmd=['clang' if shutil.which('clang') else 'gcc','-std=gnu11',
+                 '-DLINUX_VERSION_CODE=330240','-Wall','-Werror',str(stub),'-o',str(top/'modern_test')]
+            result=subprocess.run(cmd,stderr=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+            self.assertEqual(result.returncode,0,msg=result.stderr)
+            self.assertEqual(subprocess.run([str(top/'modern_test')],timeout=4).returncode,0)
+
+    def test_legacy_guard_does_not_touch_other_four_backport_sources(self):
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            report=top/'report/BACKPORT.json'
+            bp.apply_source_backport(src,donor,report)
+            for p in paths:
+                if p != bp.LEGACY_54_SETPROCATTR_PATH:
+                    self.assertEqual(bp.git_blob((src/'KernelSU'/p).read_bytes()),blobs[p][1])
+            self.assertEqual(len(bp.FILE_BLOBS),5)
+            self.assertFalse((src/'KernelSU/kernel/tools/susfs_compat.mk').exists())
+
+    def test_legacy_guard_5_4_runtime_path_in_small_c_harness(self):
+        """Compile + execute mock handler on host, not a full kernel build."""
+        if not shutil.which('clang') and not shutil.which('gcc'):
+            self.skipTest('No host C compiler')
+        with fake_candidate() as (top,donor,src,blobs,paths,git):
+            source,_=bp.stage_legacy_54_setprocattr_guard(HOOK_POST.encode())
+            # C fixture models the exact branch/goto and original function call.
+            fixture='#include <string.h>\n'+source.decode()+'\nint main(void) {return ksu_handle_selinux_setprocattr("current", 0, 0) != 72;}\n'
+            stub=top/'legacy_mock.c';stub.write_text(fixture)
+            cmd=['clang' if shutil.which('clang') else 'gcc','-std=gnu11','-Wall','-Werror',str(stub),'-o',str(top/'legacy_test')]
+            result=subprocess.run(cmd,stderr=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+            self.assertEqual(result.returncode,0,msg=result.stderr)
+            run=subprocess.run([str(top/'legacy_test')],timeout=4)
+            self.assertEqual(run.returncode,0)
 
     def test_worker_injects_only_one_readonly_temp_source_site(self):
         s=bp.ANCHOR+"        overlay_hash = r.save_overlay(src, before, args.overlays / label, label, targets)\n"+bp.RESULT_ANCHOR
