@@ -412,5 +412,120 @@ class SemanticAuditR2Tests(unittest.TestCase):
             row=port.classify_host(root,self.exec_patch(True),self.exec_patch(False))['findings'][0]
             self.assertEqual(row['result'],'NEEDS_MANUAL_5_4_REBASE')
 
+class R4UnhookIdentityR3Tests(unittest.TestCase):
+    """Regression for run 38385351673: old R4 blob vs pinned unhook postimage."""
+
+    @staticmethod
+    def sample():
+        old=b'legacy R4 tested source\n'
+        new=old+b'protected unhook error path\n'
+        # Local test-only alternate pins are never used by the default
+        # production workflow, which hard-pins official R4 and Unhook hashes.
+        pin=replace(port.SourcePins(),r4_hook_blob=port.blob(old),
+                    r4_hook_sha256=port.sha256(old),
+                    r4_unhook_sha256=port.sha256(new))
+        proof={'before_sha256':port.sha256(old),'after_sha256':port.sha256(new),
+            'r4_effective_source_pinned':True,
+            'setprocattr_r4_fallback_unchanged':True,
+            'protects_original_pointers_after_restore_error':True,
+            'reports_error_to_feature_set':True,
+            'preserves_fake_status_when_exit_restore_fails':True,
+            'selinux_enforcing_unchanged':True,
+            'kernel_build':False,'device_pass':False,'promotion':False}
+        return old,new,pin,proof
+
+    def test_constants_match_actual_verified_artifact(self):
+        self.assertEqual(port.R4_HOOK_SHA256,
+                         '5e40cb29c74fbca6b2b15072e395fb971932894eebe9f846f970a7de139c0a8f')
+        self.assertEqual(port.R4_UNHOOK_R1_SHA256,
+                         'be787e0cab3c366c3a8f8dc4662a711370a9e50a137adbdb753ab65b11067f88')
+        self.assertEqual(port.R4_HOOK_BLOB,'a2ef78981d1a1e39ab45649a3658367da770eba7')
+
+    def test_baseline_without_proof_accepted(self):
+        old,new,pin,proof=self.sample()
+        result=port.verify_pinned_r4_hook(old,pin,None)
+        self.assertEqual(result['status'],'PINNED_R4_BASELINE')
+        self.assertFalse(result['unhook_proof_verified'])
+
+    def test_new_postimage_with_full_proof_accepted(self):
+        old,new,pin,proof=self.sample()
+        self.assertNotEqual(port.blob(new),pin.r4_hook_blob)
+        result=port.verify_pinned_r4_hook(new,pin,proof)
+        self.assertEqual(result['status'],'PINNED_R4_PLUS_UNHOOK_R1')
+        self.assertEqual(result['effective_sha256'],proof['after_sha256'])
+        self.assertTrue(result['unhook_proof_verified'])
+
+    def test_staged_source_without_proof_blocked(self):
+        old,new,pin,proof=self.sample()
+        with self.assertRaisesRegex(port.PortError,'R4_RUNTIME_FIXED_SELINUX_HOOK_REQUIRED'):
+            port.verify_pinned_r4_hook(new,pin,None)
+
+    def test_unexpected_source_edit_with_old_proof_blocked(self):
+        old,new,pin,proof=self.sample()
+        with self.assertRaisesRegex(port.PortError,'EFFECTIVE_SOURCE_HASH_MISMATCH'):
+            port.verify_pinned_r4_hook(new+b'evil mutation',pin,proof)
+
+    def test_before_hash_drift_blocked(self):
+        old,new,pin,proof=self.sample()
+        proof['before_sha256']='0'*64
+        with self.assertRaisesRegex(port.PortError,'PREIMAGE_IDENTITY_MISSING'):
+            port.verify_pinned_r4_hook(new,pin,proof)
+
+    def test_after_hash_forgery_blocked(self):
+        old,new,pin,proof=self.sample()
+        proof['after_sha256']='0'*64
+        with self.assertRaisesRegex(port.PortError,'POSTIMAGE_PROOF_MISMATCH'):
+            port.verify_pinned_r4_hook(new,pin,proof)
+
+    def test_missing_security_guarantees_blocked(self):
+        old,new,pin,proof=self.sample()
+        for key in ('r4_effective_source_pinned',
+                    'setprocattr_r4_fallback_unchanged',
+                    'protects_original_pointers_after_restore_error',
+                    'reports_error_to_feature_set',
+                    'preserves_fake_status_when_exit_restore_fails',
+                    'selinux_enforcing_unchanged'):
+            with self.subTest(key=key):
+                mutated=dict(proof);mutated[key]=False
+                with self.assertRaisesRegex(port.PortError,'PROOF_INCOMPLETE'):
+                    port.verify_pinned_r4_hook(new,pin,mutated)
+
+    def test_false_build_or_device_pass_blocked(self):
+        old,new,pin,proof=self.sample()
+        for key in ('kernel_build','device_pass','promotion'):
+            with self.subTest(key=key):
+                mutated=dict(proof);mutated[key]=True
+                with self.assertRaisesRegex(port.PortError,'FALSE_RELEASE_CLAIM'):
+                    port.verify_pinned_r4_hook(new,pin,mutated)
+
+    def test_old_r4_source_cannot_pass_new_unhook_proof(self):
+        old,new,pin,proof=self.sample()
+        with self.assertRaisesRegex(port.PortError,'UNHOOK_PROOF_BUT_SOURCE_STILL_BASELINE'):
+            port.verify_pinned_r4_hook(old,pin,proof)
+
+    def test_full_source_only_probe_realizes_new_hook_without_writes(self):
+        with sample_workspace() as (_,src,donor,report,pins):
+            hook=src/'KernelSU/kernel/feature/selinux_hide.c'
+            old=hook.read_bytes();new=old+b'protected unhook error path\n'
+            hook.write_bytes(new)
+            p=replace(pins,r4_hook_sha256=port.sha256(old),
+                      r4_unhook_sha256=port.sha256(new))
+            proof=dict(self.sample()[3],before_sha256=port.sha256(old),
+                       after_sha256=port.sha256(new))
+            result=port.probe(src,donor,report,p,unhook_proof=proof)
+            self.assertEqual(result['r4_hook_identity']['status'],'PINNED_R4_PLUS_UNHOOK_R1')
+            self.assertEqual(hook.read_bytes(),new)
+            self.assertEqual(json.loads(report.read_text())['r4_hook_identity'],
+                             result['r4_hook_identity'])
+            self.assertFalse(result['security']['automatic_promotion_blocked'] is False)
+
+    def test_actual_preflight_proof_is_forwarded_to_probe(self):
+        repo=Path(__file__).resolve().parents[1]
+        fleet=(repo/'common/scripts/veux_fleet_35222_selinux_r3.py').read_text()
+        self.assertIn('unhook_proof=unhook_proof)',fleet)
+        self.assertLess(fleet.index('unhook_proof = apply_source_guard('),
+                        fleet.index('susfs_54_port_probe('))
+        self.assertIn('PIN_PROMOTION=BLOCKED',SCRIPT.read_text())
+
 if __name__=='__main__':
     unittest.main(verbosity=2)
