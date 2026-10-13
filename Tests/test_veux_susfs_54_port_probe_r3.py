@@ -260,5 +260,157 @@ class PortStageTests(unittest.TestCase):
                         text.index("status['source_preflight']=True"))
         self.assertIn("root/'report/SUSFS_54_PORT_PROBE_R1.json'",text)
 
+class SemanticAuditR2Tests(unittest.TestCase):
+    """R2: read-only host-layout proof, no unsafe semantics assumptions."""
+
+    def test_exact_unused_declaration_absent_is_noop(self):
+        old=['#ifdef CONFIG_KSU_SUSFS\n',port.UNUSED_EXEC_DECL,
+             'extern int ksu_handle_execveat(void);\n','#endif\n']
+        new=[old[0],old[2],old[3]]
+        self.assertTrue(port.is_upstream_unused_decl_cleanup('fs/exec.c',old,new,
+                     '#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_execveat(void);\n#endif\n'))
+
+    def test_unused_decl_cleanup_cannot_drop_live_symbol_use(self):
+        old=['#ifdef CONFIG_KSU_SUSFS\n',port.UNUSED_EXEC_DECL]
+        new=['#ifdef CONFIG_KSU_SUSFS\n']
+        self.assertFalse(port.is_upstream_unused_decl_cleanup('fs/exec.c',old,new,
+                         '__ksu_is_allow_uid_for_current(2000);'))
+        self.assertFalse(port.is_upstream_unused_decl_cleanup('fs/exec.c',old,new,
+                         port.UNUSED_EXEC_DECL))
+
+    def test_unused_decl_cleanup_exact_gki_scope_only(self):
+        old=[port.UNUSED_EXEC_DECL,'extern int good(void);\n']
+        new=['extern int changed(void);\n']
+        self.assertFalse(port.is_upstream_unused_decl_cleanup('fs/exec.c',old,new,''))
+        self.assertFalse(port.is_upstream_unused_decl_cleanup('hooks.c',old,old[1:],''))
+        self.assertFalse(port.is_upstream_unused_decl_cleanup('fs/exec.c',
+                         ['extern int good(void);\n'],[],''))
+
+    @staticmethod
+    def make_hosts(root, wrappers:bool):
+        h=root/'security/selinux/hooks.c';h.parent.mkdir(parents=True,exist_ok=True)
+        f=root/'security/selinux/selinuxfs.c';f.parent.mkdir(parents=True,exist_ok=True)
+        e=root/'fs/exec.c';e.parent.mkdir(parents=True,exist_ok=True)
+        e.write_text('extern int ksu_handle_execveat(int *fd);\n')
+        h.write_text('#ifdef CONFIG_KSU_SUSFS\n'
+         'static int selinux_setprocattr(const char *name, void *value, size_t size) { return 0; }\n'
+         + ('static int my_setprocattr(const char *name, void *value, size_t size) { return 0; }\n'
+           if wrappers else '') + 'LSM_HOOK_INIT(setprocattr, selinux_setprocattr)\n'
+         'ksu_selinux_hide_running\nsecurity_context_to_sid\n')
+        f.write_text('static int sel_open_handle_status(void) { return 0; }\n'
+         'static int sel_write_context(void) { return 0; }\n'
+         'static int sel_write_access(void) { return 0; }\n'
+         'ksu_selinux_hide_running\nfake_status_initialize_key\n'
+         + ('static int my_sel_open_handle_status(void){return 0;}\n'
+            'static int my_write_context(void){return 0;}\n'
+            'static int my_write_access(void){return 0;}\n' if wrappers else ''))
+        bakasu=root/'KernelSU/kernel/feature/selinux_hide.c'
+        bakasu.parent.mkdir(parents=True,exist_ok=True)
+        bakasu.write_text(('static int my_sel_open_handle_status(void) {return 0;}\n'
+                           'static int my_write_access(void) {return 0;}\n'
+                           'static int my_write_context(void) {return 0;}\n'
+                           'ksu_handle_selinux_setprocattr\norig_context_write\n'
+                           'orig_access_write\nkfree(canon);\nkfree(scon);\nkfree(tcon);\n')
+                          if wrappers else 'ksu_handle_selinux_setprocattr\n')
+        return h,f,e,bakasu
+
+    def test_detects_wrapper_layout_but_never_approves(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);h,f,e,bakasu=self.make_hosts(root,True)
+            snapshot={v:v.read_bytes() for v in (h,f,e,bakasu)}
+            result=port.inspect_host_5_4_selinux(root)
+            self.assertTrue(result['no_semantic_port_or_runtime_approval'])
+            self.assertTrue(result['selinux_cleanup_requires_code_review'])
+            self.assertEqual(result['source_paths']['security/selinux/hooks.c']['status'],
+                             'LEGACY_WRAPPERS_PRESENT_REVIEW_ORIGINAL_CLEANUP')
+            self.assertEqual(result['source_paths']['security/selinux/selinuxfs.c']['symbols']['my_write_context'],1)
+            self.assertEqual(result['source_paths']['KernelSU/kernel/feature/selinux_hide.c']['status'],
+                             'BAKASU_R4_LEGACY_WRAPPERS_REVIEW_RUNTIME_SEMANTICS')
+            self.assertFalse(result['source_paths']['fs/exec.c']['review_required'])
+            self.assertEqual({v:v.read_bytes() for v in (h,f,e,bakasu)},snapshot)
+
+    def test_absence_of_named_wrappers_does_not_fake_equivalence(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);self.make_hosts(root,False)
+            result=port.inspect_host_5_4_selinux(root)
+            h=result['source_paths']['security/selinux/hooks.c']
+            self.assertTrue(h['review_required'])
+            self.assertEqual(h['status'],'NO_NAMED_GKI_WRAPPERS_FOUND_EQUIVALENCE_UNPROVEN')
+            self.assertTrue(result['source_paths']['security/selinux/selinuxfs.c']['review_required'])
+            self.assertEqual(result['source_paths']['KernelSU/kernel/feature/selinux_hide.c']['status'],
+                             'BAKASU_R4_HOOK_LAYOUT_UNVERIFIED')
+
+    def test_missing_hosts_are_blocked_not_silent_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            result=port.inspect_host_5_4_selinux(Path(td))
+            self.assertTrue(all(r['status']=='SOURCE_NOT_PRESENT_OR_UNSAFE' and r['review_required']
+                                for r in result['source_paths'].values()))
+
+    def test_symlink_outside_source_is_never_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/'kernel';root.mkdir()
+            external=Path(td)/'external';external.write_text('a private outside file\n')
+            file=root/'security/selinux/hooks.c';file.parent.mkdir(parents=True)
+            file.symlink_to(external)
+            proof=port.inspect_host_5_4_selinux(root)
+            self.assertEqual(proof['source_paths']['security/selinux/hooks.c']['status'],
+                             'SOURCE_NOT_PRESENT_OR_UNSAFE')
+
+    def test_real_probe_embeds_layout_evidence_without_source_edit(self):
+        with sample_workspace() as (_,src,donor,report,pin):
+            h=src/'security/selinux/hooks.c';before=h.read_bytes()
+            data=port.probe(src,donor,report,pin)
+            self.assertEqual(h.read_bytes(),before)
+            self.assertTrue(data['real_5_4_selinux_layout']['no_semantic_port_or_runtime_approval'])
+            self.assertTrue(data['security']['source_only_no_kernel_compilation'])
+            self.assertEqual(data['decision'],'MANUAL_REVIEW_5_4_HOOKS_REQUIRED')
+            self.assertEqual(json.loads(report.read_text())['real_5_4_selinux_layout'],
+                             data['real_5_4_selinux_layout'])
+
+    def test_unused_decl_gki_patch_source_triggers_only_noop_state(self):
+        old_lines=['int do_execve(void)\n',port.UNUSED_EXEC_DECL,'int unrelated(void)\n']
+        new_lines=['int do_execve(void)\n','int unrelated(void)\n']
+        self.assertTrue(port.is_upstream_unused_decl_cleanup('fs/exec.c',old_lines,new_lines,
+                         'int do_execve(void)\nint unrelated(void)\n'))
+
+    @staticmethod
+    def exec_patch(declaration_present: bool):
+        head='diff --git a/fs/exec.c b/fs/exec.c\n@@ -1,3 +1,4 @@\n'
+        body=' #ifdef CONFIG_KSU_SUSFS\n'
+        if declaration_present:
+            body+='+'+port.UNUSED_EXEC_DECL
+        body+=' extern int ksu_handle_execveat(void);\n #endif\n'
+        return head+body
+
+    def test_classify_exec_cleanup_not_present_in_real_54_is_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);f=root/'fs/exec.c';f.parent.mkdir(parents=True)
+            f.write_text('#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_execveat(void);\n#endif\n')
+            prior=f.read_bytes()
+            proof=port.classify_host(root,self.exec_patch(True),self.exec_patch(False))
+            row=proof['findings'][0]
+            self.assertEqual(row['result'],'UPSTREAM_UNUSED_DECL_ALREADY_ABSENT_IN_5_4')
+            self.assertEqual(proof['host_paths_requiring_manual_port'],0)
+            self.assertEqual(row['candidate_sha256'],row['original_sha256'])
+            self.assertEqual(f.read_bytes(),prior)
+
+    def test_classify_exec_cleanup_present_only_stages_in_memory(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);f=root/'fs/exec.c';f.parent.mkdir(parents=True)
+            f.write_text('#ifdef CONFIG_KSU_SUSFS\n'+port.UNUSED_EXEC_DECL+
+                         'extern int ksu_handle_execveat(void);\n#endif\n')
+            prior=f.read_bytes()
+            row=port.classify_host(root,self.exec_patch(True),self.exec_patch(False))['findings'][0]
+            self.assertEqual(row['result'],'IN_MEMORY_STAGE_ONLY_NOT_APPROVED')
+            self.assertNotEqual(row['original_sha256'],row['candidate_sha256'])
+            self.assertEqual(f.read_bytes(),prior)
+
+    def test_classify_exec_cleanup_with_live_54_symbol_is_not_whitelisted(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);f=root/'fs/exec.c';f.parent.mkdir(parents=True)
+            f.write_text('bool marker=__ksu_is_allow_uid_for_current(123);\n')
+            row=port.classify_host(root,self.exec_patch(True),self.exec_patch(False))['findings'][0]
+            self.assertEqual(row['result'],'NEEDS_MANUAL_5_4_REBASE')
+
 if __name__=='__main__':
     unittest.main(verbosity=2)
