@@ -4,10 +4,10 @@
   "component_gate": true,
   "components": {
     "nomount": {
-      "ahead": 195,
+      "ahead": 250,
       "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
       "changed": true,
-      "commit": "c7f63e3feb4125d591b6969a33aac04feb40f8ba",
+      "commit": "7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3",
       "compatibility_errors": [],
       "component_gate": true,
       "current_commit": "c5fad9d8f97c5a207f7342fd91789449915ea047",
@@ -27,16 +27,16 @@
       "version_kind": "base-version-dynamic-commit-count"
     },
     "resukisu": {
-      "ahead": 51,
+      "ahead": 57,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
       "changed": true,
-      "commit": "969de3d0ce65d2d75e5a2f6c548d9e14817ef459",
+      "commit": "f4435f007b16f61705089ff982e3f981a6017979",
       "compatibility_errors": [],
       "component_gate": true,
       "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
-      "local_version": 4521,
+      "local_version": 4527,
       "ref": "refs/heads/main",
       "review_reasons": [],
       "review_required": false,
@@ -46,13 +46,13 @@
       "tag": "v4.2.0-rc3",
       "uapi": 5,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35221"
+      "version": "35227"
     },
     "susfs": {
-      "ahead": 5,
+      "ahead": 7,
       "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
-      "changed": false,
-      "commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
+      "changed": true,
+      "commit": "14c45388ec8cb3ca72f2ac8bf83097b9285a8418",
       "compatibility_errors": [],
       "component_gate": true,
       "current_commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
@@ -103,68 +103,80 @@
   "lineages": {
     "5.4.274": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.274",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.274/source-work/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.274/source-work/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     },
     "5.4.292": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.292",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.292/source-work/.work/5.4.292-update-r1/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.292/source-work/.work/5.4.292-update-r1/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     },
     "5.4.293": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.293",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.293/source-work/.work/5.4.293-update-r1/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.293/source-work/.work/5.4.293-update-r1/kernel/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     },
     "5.4.300": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.300",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.300/source-work/kernel-5.4.300/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.300/source-work/kernel-5.4.300/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     },
     "5.4.301": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.301",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.301/source-work/kernel-5.4.301/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.301/source-work/kernel-5.4.301/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     },
     "5.4.302": {
       "compile_performed": false,
-      "device_fix_source_gate": true,
+      "device_fix_source_gate": false,
       "device_pass_inferred": false,
       "kernel": "5.4.302",
-      "rpm_source_gate": true,
-      "source_integration": true,
-      "status": "PASS",
-      "wakeup_source_gate": true
+      "reason": "ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.302/source-work/kernel-5.4.302/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'",
+      "rpm_source_gate": false,
+      "source_integration": false,
+      "status": "BLOCKED",
+      "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 345, in <module>\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 727, in apply_update\n    integrate_susfs(src, bundle / \"susfs\", rec[\"baseline_susfs\"], targets[\"components\"][\"susfs\"][\"commit\"], work)\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 644, in integrate_susfs\n    apply_host_delta(inside(src / rel, src), a[\"after\"], b[\"after\"])\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 609, in apply_host_delta\n    require(text.count(before) == 1, f\"ambiguous or changed host preimage: {path}: {before[:100]!r}\")\n  File \"/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel/common/scripts/veux_update_engine.py\", line 42, in require\n    raise Blocked(reason)\nveux_update_engine.Blocked: ambiguous or changed host preimage: /home/runner/work/_temp/veux-upstream-source-preflight/5.4.302/source-work/kernel-5.4.302/fs/exec.c: 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\\n'\n",
+      "wakeup_source_gate": false
     }
   },
   "note": "PASS means source/integration gates accept the candidate. REVIEW_REQUIRED means a declared interface/version generation changed and must be explicitly reviewed before a manual build is allowed. No status proves that the kernel compiles; only a manually started compile can prove that.",
   "package_performed": false,
-  "repository_sha": "5533ce0d12ac13f11f2b45e61adee8a3002a5f8e",
+  "repository_sha": "eacf181cef76540f198de42ef37ede877add6c2e",
   "review_reasons": [
     "nomount: NoMount declared version changed: 20 -> 21"
   ],
