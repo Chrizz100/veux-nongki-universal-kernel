@@ -23,6 +23,11 @@ OLD = '5326e21a7eb232f9e21debdd5164e99bee3d1e2f'
 MID = '2837d10b68bacbd7f06758d301237e8f8b363adb'
 NEW = '14c45388ec8cb3ca72f2ac8bf83097b9285a8418'
 R4_HOOK_BLOB = 'a2ef78981d1a1e39ab45649a3658367da770eba7'
+# Exact hashes from successful R4 device-relevant backport source and the
+# independently archived source-only BakaSU Unhook R1 gate (Run 38385351673).
+# The new postimage is intentionally NOT the old R4 Git blob.
+R4_HOOK_SHA256 = '5e40cb29c74fbca6b2b15072e395fb971932894eebe9f846f970a7de139c0a8f'
+R4_UNHOOK_R1_SHA256 = 'be787e0cab3c366c3a8f8dc4662a711370a9e50a137adbdb753ab65b11067f88'
 CORE_BLOBS = {
     'kernel_patches/fs/susfs.c': '1e70f7f2487d1a4c3072f861c7725f733eb59d46',
     'kernel_patches/include/linux/susfs.h': '1e0ae04060839e1adba1db19b4d07638eaae0f95',
@@ -77,6 +82,8 @@ class SourcePins:
     r4_hook_blob: str = R4_HOOK_BLOB
     core: dict[str,str] | None = None
     patches: dict[str,tuple[str,str]] | None = None
+    r4_hook_sha256: str = R4_HOOK_SHA256
+    r4_unhook_sha256: str = R4_UNHOOK_R1_SHA256
 
 
 def verify_git_scope(donor: Path, pins: SourcePins) -> dict:
@@ -177,6 +184,60 @@ def is_upstream_unused_decl_cleanup(path: str, before: list[str],
     # Reject widened upstream changes, duplicated prototypes, or local uses.
     return (old_only == [UNUSED_EXEC_DECL] and not new_only and
             '__ksu_is_allow_uid_for_current' not in text)
+
+
+
+def verify_pinned_r4_hook(data: bytes, pins: SourcePins,
+                          unhook_proof: dict | None) -> dict:
+    """Accept only the exact known-good R4 or cryptographically bound R4+Unhook.
+
+    The original source-only probe was deliberately fail-closed and pinned
+    only the old R4 Git blob. After a verified Unhook R1 change, its postimage
+    MUST differ. We do not relax the guard to arbitrary modified hooks.
+    """
+    source_blob=blob(data)
+    source_sha=sha256(data)
+    if source_blob == pins.r4_hook_blob:
+        demand(unhook_proof is None,
+               'UNHOOK_PROOF_BUT_SOURCE_STILL_BASELINE')
+        # The fixture pins can be different; the real protected R4 blob
+        # MUST also have its already-audited SHA256 identity.
+        if pins.r4_hook_blob == R4_HOOK_BLOB:
+            demand(source_sha == pins.r4_hook_sha256,
+                   'R4_BASELINE_SHA256_DRIFT')
+        return {'status':'PINNED_R4_BASELINE',
+                'effective_sha256':source_sha,
+                'unhook_proof_verified':False}
+
+    demand(isinstance(unhook_proof,dict),
+           'R4_RUNTIME_FIXED_SELINUX_HOOK_REQUIRED')
+    demand(source_sha == pins.r4_unhook_sha256,
+           'R4_UNHOOK_R1_EFFECTIVE_SOURCE_HASH_MISMATCH')
+    demand(unhook_proof.get('before_sha256') == pins.r4_hook_sha256,
+           'R4_UNHOOK_R1_PREIMAGE_IDENTITY_MISSING')
+    demand(unhook_proof.get('after_sha256') == source_sha,
+           'R4_UNHOOK_R1_POSTIMAGE_PROOF_MISMATCH')
+    for key in ('r4_effective_source_pinned',
+                'setprocattr_r4_fallback_unchanged',
+                'protects_original_pointers_after_restore_error',
+                'reports_error_to_feature_set',
+                'preserves_fake_status_when_exit_restore_fails',
+                'selinux_enforcing_unchanged'):
+        demand(unhook_proof.get(key) is True,
+               'R4_UNHOOK_R1_PROOF_INCOMPLETE_'+key)
+    for key in ('kernel_build','device_pass','promotion'):
+        demand(unhook_proof.get(key) is False,
+               'R4_UNHOOK_R1_FALSE_RELEASE_CLAIM_'+key)
+    # Production pins are fixed; source-only unit fixtures use their own
+    # immutable temporary commit/blob to exercise both branches offline.
+    if pins.r4_hook_blob == R4_HOOK_BLOB:
+        demand(b'VEUX 5.4: preserve the stock' in data and
+               b'static int ksu_selinux_hide_unhook()' in data,
+               'R4_SETPROCATTR_OR_UNHOOK_FUNCTION_MISSING')
+    return {'status':'PINNED_R4_PLUS_UNHOOK_R1',
+            'effective_sha256':source_sha,
+            'expected_baseline_sha256':pins.r4_hook_sha256,
+            'unhook_proof_verified':True}
 
 
 def inspect_host_5_4_selinux(src: Path) -> dict:
@@ -309,7 +370,8 @@ def classify_host(src: Path, old_patch: str, new_patch: str) -> dict:
             'findings':findings}
 
 
-def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) -> dict:
+def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None,
+          *, unhook_proof: dict | None = None) -> dict:
     """Do not touch `src` or `donor`. Only write one evidence JSON into a report dir."""
     pins=pins or SourcePins(core=CORE_BLOBS, patches=PATCH_BLOBS)
     src=src.resolve(strict=True)
@@ -327,8 +389,11 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
            bool(re.search(r'^PATCHLEVEL\s*=\s*4$',makefile.read_text(),re.M)),
            'PORT_PROBE_REQUIRES_KERNEL_5_4')
     hook=src/'KernelSU/kernel/feature/selinux_hide.c'
-    demand(hook.is_file() and not hook.is_symlink() and blob(hook.read_bytes())==pins.r4_hook_blob,
+    demand(hook.is_file() and not hook.is_symlink() and
+           hook.resolve(strict=True).is_relative_to(src),
            'R4_RUNTIME_FIXED_SELINUX_HOOK_REQUIRED')
+    hook_bytes = hook.read_bytes()
+    hook_identity = verify_pinned_r4_hook(hook_bytes,pins,unhook_proof)
     scope=verify_git_scope(donor,pins)
     old_text=git(donor,'show',pins.old+':'+HOST_PATCH)+'\n'
     new_text=git(donor,'show',pins.new+':'+HOST_PATCH)+'\n'
@@ -352,6 +417,7 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
             'official_commits':scope,
             'host_5_4':result,
             'real_5_4_selinux_layout':original_layout,
+            'r4_hook_identity':hook_identity,
             'alternative_KernelSU_patch_additions_changed':alternative_changed,
             'security':{
                 'source_only_no_kernel_compilation':True,
@@ -368,8 +434,11 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
             'baseline_bakasu':'35222+fa12+R4_runtime_fix',
             'baseline_susfs_pin':pins.old,
             'new_susfs_head_only_under_review':pins.new}
+    demand(hook.read_bytes()==hook_bytes, 'PORT_PROBE_MUTATED_R4_HOOK_SOURCE')
     output.parent.mkdir(parents=True,exist_ok=True)
     output.write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+    print('R4_SELINUX_HOOK_IDENTITY='+hook_identity['status']+'; PROOF='+
+          ('PASS' if hook_identity['unhook_proof_verified'] else 'BASELINE'),flush=True)
     print('VEUX_SUSFS_54_PORT_PROBE=FINISHED; '
           f"HOST_CHANGED={result['host_paths_with_changed_hunks']}; "
           f"STAGED_IN_MEMORY={result['host_paths_stageable_in_memory']}; "
