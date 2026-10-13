@@ -480,6 +480,26 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
             'file_count': len(selinux_proof['changed_kernel_paths']),
             'verified': True,
         }
+        # Verify and stage the pinned R4 5.4 unhook guard in THIS disposable
+        # source-only tree, even when workflow_dispatch.enable_build=false.
+        # The normal build worker independently repeats the same source guard.
+        # Any SHA/source/ABI drift fails closed before a kernel can compile.
+        from veux_bakasu_unhook_guard_r1 import apply_source_guard
+        unhook_proof = apply_source_guard(
+            src, root/'report/BAKASU-UNHOOK-R1.json')
+        require(unhook_proof.get('r4_effective_source_pinned') is True and
+                unhook_proof.get('setprocattr_r4_fallback_unchanged') is True and
+                unhook_proof.get('protects_original_pointers_after_restore_error') is True,
+                'UNHOOK_R1_SOURCE_PROOF_INCOMPLETE')
+        status['unhook_guard_r1'] = {
+            'verified': True,
+            'source_only_staged': True,
+            'input_sha256': unhook_proof['before_sha256'],
+            'output_sha256': unhook_proof['after_sha256'],
+            'report': 'report/BAKASU-UNHOOK-R1.json',
+            'kernel_build': False,
+            'device_pass': False,
+        }
         fixes_proof=fixes.apply(src,kernel,work)
         fixes.verify_source(src,kernel,fixes_proof)
         rpm_proof=rpm.apply(src,kernel,work)
