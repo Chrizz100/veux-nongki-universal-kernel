@@ -162,6 +162,96 @@ def stage_text(text: str, old: list[str], new: list[str]) -> tuple[str,int]:
     return text,len(edits)
 
 
+# The final 14c45388 change to GKI-5.10 fs/exec.c removes only this
+# unused declaration. Absence in the real 5.4 source is a NO-OP, not a
+# reason to edit the kernel or rebuild it. Require both pinned patch images.
+UNUSED_EXEC_DECL = 'extern bool __ksu_is_allow_uid_for_current(uid_t uid);\n'
+
+
+def is_upstream_unused_decl_cleanup(path: str, before: list[str],
+                                     after: list[str], text: str) -> bool:
+    if path != 'fs/exec.c' or UNUSED_EXEC_DECL not in before:
+        return False
+    old_only = [x for x in before if x not in after]
+    new_only = [x for x in after if x not in before]
+    # Reject widened upstream changes, duplicated prototypes, or local uses.
+    return (old_only == [UNUSED_EXEC_DECL] and not new_only and
+            '__ksu_is_allow_uid_for_current' not in text)
+
+
+def inspect_host_5_4_selinux(src: Path) -> dict:
+    """Read-only evidence about 5.4 hook layout; never a patch or PASS.
+
+    GKI 5.10 moved wrapper logic into native SELinux functions. The 5.4
+    implementation must be inspected, rather than mechanically rebased.
+    These checks intentionally distinguish absence of wrapper *names* from
+    proof of equivalent runtime protection (which this cannot establish).
+    """
+    checks = {
+        'fs/exec.c': ('__ksu_is_allow_uid_for_current',),
+        'security/selinux/hooks.c': (
+            'my_setprocattr', 'selinux_setprocattr',
+            'ksu_selinux_hide_running', 'security_context_to_sid',
+            'LSM_HOOK_INIT(setprocattr',
+        ),
+        'security/selinux/selinuxfs.c': (
+            'my_sel_open_handle_status', 'my_write_context', 'my_write_access',
+            'sel_open_handle_status', 'sel_write_context', 'sel_write_access',
+            'ksu_selinux_hide_running', 'ksu_selinux_hide_enabled',
+            'fake_status_initialize_key',
+        ),
+        'KernelSU/kernel/feature/selinux_hide.c': (
+            'my_sel_open_handle_status', 'my_write_context', 'my_write_access',
+            'ksu_handle_selinux_setprocattr', 'orig_sel_open_handle_status',
+            'orig_context_write', 'orig_access_write',
+            'kfree(canon)', 'kfree(tcon)', 'kfree(scon)',
+            'fake_status_initialize_key', 'ksu_selinux_hide_running',
+            'KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE',
+        ),
+    }
+    result = {}
+    for relative, needles in checks.items():
+        path=src/relative
+        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(src):
+            result[relative]={'status':'SOURCE_NOT_PRESENT_OR_UNSAFE',
+                              'review_required':True}
+            continue
+        data=path.read_bytes()
+        try:
+            value=data.decode('utf-8')
+        except UnicodeDecodeError:
+            result[relative]={'status':'NON_UTF8_SOURCE',
+                              'review_required':True,
+                              'sha256':sha256(data)}
+            continue
+        refs={symbol:len(re.findall(re.escape(symbol),value)) for symbol in needles}
+        if relative=='fs/exec.c':
+            status=('UNUSED_EXTERN_NOT_PRESENT' if refs[needles[0]]==0
+                    else 'SYMBOL_PRESENT_REVIEW_CALLERS')
+            needs=refs[needles[0]]!=0
+        else:
+            wrappers=[name for name in needles if name.startswith('my_') and refs[name]>0]
+            if relative.startswith('KernelSU/'):
+                status=('BAKASU_R4_LEGACY_WRAPPERS_REVIEW_RUNTIME_SEMANTICS' if wrappers
+                        else 'BAKASU_R4_HOOK_LAYOUT_UNVERIFIED')
+            else:
+                status=('LEGACY_WRAPPERS_PRESENT_REVIEW_ORIGINAL_CLEANUP' if wrappers
+                        else 'NO_NAMED_GKI_WRAPPERS_FOUND_EQUIVALENCE_UNPROVEN')
+            needs=True  # No evidence of functional parity/SELinux leak safety.
+        result[relative]={
+            'status':status,'review_required':needs,
+            'sha256':sha256(data),'symbols':refs,
+            'reason':('Presence/absence of names does not prove equivalent '
+                      'policy handling, memory lifetime or device behavior'),
+        }
+        demand(path.read_bytes()==data,
+               'PORT_PROBE_CHANGED_READ_ONLY_HOST_FILE '+relative)
+    return {'source_paths':result,
+            'actual_5_4_host_sources_read_only':True,
+            'no_semantic_port_or_runtime_approval':True,
+            'selinux_cleanup_requires_code_review':True}
+
+
 def classify_host(src: Path, old_patch: str, new_patch: str) -> dict:
     old=images(old_patch); new=images(new_patch)
     demand(old.keys()==new.keys(),'SUSFS_HOST_PATCH_CHANGED_PATH_SET')
@@ -188,6 +278,16 @@ def classify_host(src: Path, old_patch: str, new_patch: str) -> dict:
         orig=local.read_bytes()
         try:
             staging=orig.decode('utf-8')
+            # GKI-5.10's final commit removed one declaration unused by 5.4.
+            # Recognize a no-op on the real source only with exact scoped edit.
+            if (path=='fs/exec.c' and len(differing)==1 and
+                is_upstream_unused_decl_cleanup(path, differing[0][0]['after'],
+                                                differing[0][1]['after'], staging)):
+                entry['result']='UPSTREAM_UNUSED_DECL_ALREADY_ABSENT_IN_5_4'
+                entry['original_sha256']=sha256(orig)
+                entry['candidate_sha256']=sha256(orig)
+                demand(local.read_bytes()==orig,'PORT_PROBE_MUTATED_REAL_5_4_SOURCE '+path)
+                continue
             for a,b in differing:
                 staging,n=stage_text(staging,a['after'],b['after'])
                 entry['staged_edits']+=n
@@ -204,7 +304,8 @@ def classify_host(src: Path, old_patch: str, new_patch: str) -> dict:
             'host_paths_with_changed_hunks':sum(x['candidate_hunks_different']>0 for x in findings),
             'host_paths_stageable_in_memory':sum(x['result']=='IN_MEMORY_STAGE_ONLY_NOT_APPROVED' for x in findings),
             'host_paths_requiring_manual_port':sum(x['result'] not in
-                ('NO_SEMANTIC_CHANGE','IN_MEMORY_STAGE_ONLY_NOT_APPROVED') for x in findings),
+                ('NO_SEMANTIC_CHANGE','IN_MEMORY_STAGE_ONLY_NOT_APPROVED',
+                 'UPSTREAM_UNUSED_DECL_ALREADY_ABSENT_IN_5_4') for x in findings),
             'findings':findings}
 
 
@@ -232,6 +333,7 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
     old_text=git(donor,'show',pins.old+':'+HOST_PATCH)+'\n'
     new_text=git(donor,'show',pins.new+':'+HOST_PATCH)+'\n'
     result=classify_host(src,old_text,new_text)
+    original_layout=inspect_host_5_4_selinux(src)
     if pins.old == OLD and pins.new == NEW:
         observed = {
             f['path']: (f['candidate_hunks_different'],
@@ -249,6 +351,7 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
             'status':'PROBE_COMPLETED_PORT_NOT_APPROVED',
             'official_commits':scope,
             'host_5_4':result,
+            'real_5_4_selinux_layout':original_layout,
             'alternative_KernelSU_patch_additions_changed':alternative_changed,
             'security':{
                 'source_only_no_kernel_compilation':True,
@@ -271,7 +374,8 @@ def probe(src: Path, donor: Path, output: Path, pins: SourcePins | None = None) 
           f"HOST_CHANGED={result['host_paths_with_changed_hunks']}; "
           f"STAGED_IN_MEMORY={result['host_paths_stageable_in_memory']}; "
           f"NEEDS_MANUAL_5_4_PORT={result['host_paths_requiring_manual_port']}; "
-          'PIN_PROMOTION=BLOCKED; DEVICE_PASS=NO; NO_KERNEL_BUILD',flush=True)
+          'PIN_PROMOTION=BLOCKED; DEVICE_PASS=NO; NO_KERNEL_BUILD; '
+          'SELINUX_5_4_PARITY=UNPROVEN',flush=True)
     return report
 
 
