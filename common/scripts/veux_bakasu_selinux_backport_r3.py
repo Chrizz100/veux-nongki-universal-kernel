@@ -292,10 +292,14 @@ ANCHOR = '''        if not r.replay_current(src, label, targets):
 INSERT = ANCHOR + '''        from veux_bakasu_selinux_backport_r3 import apply_source_backport
         selinux_backport_r3 = apply_source_backport(
             src, bundle / "resukisu", work / "BAKASU-SELINUX-R3.json")
+        from veux_bakasu_unhook_guard_r1 import apply_source_guard
+        unhook_guard_r1 = apply_source_guard(
+            src, work / "BAKASU-UNHOOK-R1.json")
 '''
 RESULT_ANCHOR='''        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
 '''
 RESULT_INSERT=RESULT_ANCHOR+'''        result['selinux_backport_r3'] = selinux_backport_r3
+        result['unhook_guard_r1'] = unhook_guard_r1
 '''
 
 def inject_worker(original: Path, destination: Path) -> dict:
