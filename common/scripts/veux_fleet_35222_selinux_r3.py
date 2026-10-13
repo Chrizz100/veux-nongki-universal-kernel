@@ -501,6 +501,12 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
             status['performance_required']=True
         else:
             status['awinic_r3_source_verified']='not-applicable-to-lineage'
+        # R3 SOURCE-ONLY SUSFS 5.4 port probe.  Read-only against both kernel
+        # and pinned official GitLab donor; writes an audit JSON outside source.
+        # A 5.10 hook delta is not a 5.4 implementation approval.
+        from veux_susfs_54_port_probe_r3 import probe as susfs_54_port_probe
+        status['susfs_54_port_probe'] = susfs_54_port_probe(
+            src, bundle/'susfs', root/'report/SUSFS_54_PORT_PROBE_R1.json')
         status['source_preflight']=True
         status['device_fixes_verified']=True
         status['rpm24_source_verified']=True
