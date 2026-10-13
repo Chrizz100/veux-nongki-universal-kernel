@@ -295,11 +295,19 @@ INSERT = ANCHOR + '''        from veux_bakasu_selinux_backport_r3 import apply_s
         from veux_bakasu_unhook_guard_r1 import apply_source_guard
         unhook_guard_r1 = apply_source_guard(
             src, work / "BAKASU-UNHOOK-R1.json")
+        from veux_bakasu_ksud_exists_r3 import apply_648_source_only
+        sucompat_648 = apply_648_source_only(
+            src, bundle / "resukisu", work / "BAKASU-SUCOMPAT-648-R3.json")
+        from veux_bakasu_context_hash_r3 import apply_context_hash_5_4
+        context_hash_d726 = apply_context_hash_5_4(
+            src, bundle / "resukisu", work / "BAKASU-CONTEXT-HASH-D726-R3.json")
 '''
 RESULT_ANCHOR='''        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
 '''
 RESULT_INSERT=RESULT_ANCHOR+'''        result['selinux_backport_r3'] = selinux_backport_r3
         result['unhook_guard_r1'] = unhook_guard_r1
+        result['bakasu_sucompat_648'] = sucompat_648
+        result['bakasu_context_hash_d726'] = context_hash_d726
 '''
 
 def inject_worker(original: Path, destination: Path) -> dict:

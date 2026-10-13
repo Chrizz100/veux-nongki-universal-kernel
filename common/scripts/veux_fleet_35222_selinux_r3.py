@@ -500,6 +500,22 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
             'kernel_build': False,
             'device_pass': False,
         }
+        # Isolated 64814408 upstream ksud-absence fix.  Pinned 35222 remains
+        # the donor build base; never import the upstream SUSFS build stopper.
+        from veux_bakasu_ksud_exists_r3 import apply_648_source_only
+        sucompat_648_proof = apply_648_source_only(
+            src, bundle/'resukisu', root/'report/BAKASU-SUCOMPAT-648-R3.json')
+        require(sucompat_648_proof['official_upstream_function_restorable'] is True and
+                sucompat_648_proof['ksud_absent_does_not_redirect_to_root_shell'] is True and
+                sucompat_648_proof['no_version_or_susfs_pin_promotion'] is True,
+                'BAKASU_SUCOMPAT_648_PROOF_INCOMPLETE')
+        status['bakasu_sucompat_648'] = {
+            'commit': '648144087efd32f5fe68982e8cbf5efc1576038a',
+            'source_only_verified': True,
+            'after_sha256': sucompat_648_proof['after_sha256'],
+            'report': 'report/BAKASU-SUCOMPAT-648-R3.json',
+            'device_pass': False,
+        }
         fixes_proof=fixes.apply(src,kernel,work)
         fixes.verify_source(src,kernel,fixes_proof)
         rpm_proof=rpm.apply(src,kernel,work)
@@ -528,6 +544,24 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
         status['susfs_54_port_probe'] = susfs_54_port_probe(
             src, bundle/'susfs', root/'report/SUSFS_54_PORT_PROBE_R1.json',
             unhook_proof=unhook_proof)
+        # The R4/SUSFS compatibility probe above consumes the exact
+        # R4+Unhook source identity. Apply the isolated d726 hash fix ONLY
+        # after that read-only probe and prove both postimages independently.
+        from veux_bakasu_context_hash_r3 import apply_context_hash_5_4
+        hash_d726_proof = apply_context_hash_5_4(
+            src, bundle/'resukisu', root/'report/BAKASU-CONTEXT-HASH-D726-R3.json')
+        require(hash_d726_proof['upstream_patch_reconstructed_exactly'] is True and
+                hash_d726_proof['R4_unhook_and_setprocattr_guards_preserved'] is True and
+                hash_d726_proof['host']['context_add_hash_nonstatic'] is True,
+                'BAKASU_D726_CONTEXT_HASH_PROOF_INCOMPLETE')
+        status['bakasu_context_hash_d726'] = {
+            'commit': 'd7260ca1e5c128061122924d0d48754e361e135c',
+            'source_only_verified': True,
+            'after_hook_sha256': hash_d726_proof['after_hook_sha256'],
+            'after_mk_sha256': hash_d726_proof['after_mk_sha256'],
+            'report': 'report/BAKASU-CONTEXT-HASH-D726-R3.json',
+            'device_pass': False,
+        }
         status['source_preflight']=True
         status['device_fixes_verified']=True
         status['rpm24_source_verified']=True
