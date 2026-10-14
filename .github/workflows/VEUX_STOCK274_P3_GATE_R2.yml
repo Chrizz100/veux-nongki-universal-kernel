@@ -1,0 +1,179 @@
+name: VEUX 5.4.274 P3 CASS Removal and Xiaomi WALT Provenance R2
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/VEUX_STOCK274_P3_GATE_R2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-p3-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-only-p3:
+    name: Exact P2 source replay, apply CASS removal, audit original WALT (NO FLASH)
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      PACKAGE_NAME: VEUX_STOCK274_P3_GATE_R1.zip
+      TOOL_DIR: ${{ github.workspace }}/veux-stock274-p3-tools
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout exact main without write credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: project
+          persist-credentials: false
+
+      - name: Check ZIP availability, do not build if missing
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ -s "project/$PACKAGE_NAME" ] && [ ! -L "project/$PACKAGE_NAME" ]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+            echo 'WAITING_FOR_ZIP: upload VEUX_STOCK274_P3_GATE_R1.zip to repository ROOT' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Validate workflow syntax using pinned actionlint 1.7.12
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='project/.github/workflows/VEUX_STOCK274_P3_GATE_R2.yml'
+          test -s "$workflow" || { echo 'Workflow filename must be EXACT without (1)' >&2; exit 1; }
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum -c --status
+          mkdir -p "$RUNNER_TEMP/p3-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/p3-actionlint" actionlint
+          "$RUNNER_TEMP/p3-actionlint/actionlint" -oneline "$workflow"
+          echo 'ACTIONLINT_P3=PASS'
+
+      - name: Authenticate and unpack restricted source-only tools
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, stat, zipfile
+          zip_path=pathlib.Path('project')/os.environ['PACKAGE_NAME']
+          target=pathlib.Path(os.environ['TOOL_DIR'])
+          expected={'replay_p2_source.py','stage_stock274.py','walt_source_audit.py',
+                    'test_stage_stock274.py','START_HIER.txt'}
+          if target.exists(): raise SystemExit('OUTPUT_ALREADY_EXISTS')
+          with zipfile.ZipFile(zip_path) as z:
+              if z.testzip() is not None: raise SystemExit('ZIP_CRC_MISMATCH')
+              members=z.infolist()
+              names={i.filename for i in members}
+              if names != expected|{'manifest.json'} or len(members)!=len(names):
+                  raise SystemExit('UNEXPECTED_ARCHIVE_MEMBERS')
+              for m in members:
+                  if pathlib.PurePosixPath(m.filename).is_absolute() or '..' in pathlib.PurePosixPath(m.filename).parts:
+                      raise SystemExit('UNSAFE_ARCHIVE_PATH')
+                  if stat.S_IFMT(m.external_attr >> 16) == stat.S_IFLNK:
+                      raise SystemExit('ARCHIVE_SYMLINK')
+              manifest=json.loads(z.read('manifest.json'))
+              if manifest.get('kernel')!='5.4.274' or manifest.get('flashable') is not False:
+                  raise SystemExit('UNEXPECTED_STAGE_OR_FLASHABLE_PACKAGE')
+              if set(manifest.get('sha256',{})) != expected: raise SystemExit('HASH_MANIFEST_NOT_EXACT')
+              target.mkdir(parents=True)
+              for name in sorted(expected):
+                  contents=z.read(name)
+                  if hashlib.sha256(contents).hexdigest()!=manifest['sha256'][name]:
+                      raise SystemExit('FILE_HASH_DRIFT '+name)
+                  (target/name).write_bytes(contents)
+          for name in sorted(expected):
+              if name.endswith('.py'): compile((target/name).read_bytes(),name,'exec')
+          print('P3_ROOT_ZIP_AUTH=PASS; SOURCE_ONLY=TRUE')
+          PY
+
+      - name: Run local P3 checks and all 25 already imported CASS unit tests
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s "$TOOL_DIR" -p 'test_stage_stock274.py' -v
+          python3 project/common/stock274/source_only_r2/test_prepare_stock274_p3.py
+          echo 'P3_TOOL_TESTS=PASS; R2_TOOL_TESTS=PASS'
+
+      - name: Checkout immutable KSU2-P2-v5 recipe (read-only)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Chrizz100/veux-resukisu-builder
+          ref: e58a67835f266620d4fdb86d816295e401a8858d
+          path: historical
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact original VEUX Positron vendor ancestor (read-only)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          path: kernel
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install small source-only YAML parser dependency
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! python3 -c 'import yaml; assert hasattr(yaml,"safe_load")'; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3-yaml
+          fi
+          python3 -c 'import yaml; print("PYTHON_YAML=PASS")'
+
+      - name: Reproduce pinned 5.4.274 P2 source, APPLY CASS removal locally and audit Xiaomi WALT
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 75
+        run: |
+          set -euo pipefail
+          python3 "$TOOL_DIR/stage_stock274.py"
+          test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json"
+          test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_CASS_REMOVAL/P2_TO_P3_REMOVE_CASS.patch"
+          test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/WALT_REFERENCE_AND_CONFLICT_ANALYSIS/WALT_PORT_RISK_REPORT.json"
+          test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_TO_P4_OFFICIAL_WALT_DONOR_FILES_ONLY.patch"
+          python3 - <<'PY'
+          import json,os,pathlib
+          base=pathlib.Path(os.environ['RUNNER_TEMP'])/'VEUX_274_P3_OUTPUT'
+          report=json.loads((base/'P3_RESULT.json').read_text())
+          assert report['p2_tree']=='16ce899d4549819d42d76b423ebcbd51f1b82a61'
+          assert report['cass_removal_applied_in_temporary_source'] is True
+          assert len(report['cass_patch_paths'])==6
+          assert report['WALT_donor_files_authenticated']==11
+          assert report['WALT_dormant_source_files_staged_in_CI']==11
+          assert report['WALT_5_4_274_integration_proven'] is False
+          assert report['flashable'] is False
+          print('P3_CASS_SOURCE_REPLAY=PASS; OFFICIAL_WALT_DONOR_FILES=STAGED_DORMANT; RELEASE=BLOCKED')
+          PY
+
+      - name: Publish source-only CASS patch and honest WALT compatibility report
+        if: ${{ always() && steps.package.outputs.present == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-5.4.274-P3-SourceOnly-CASS-WALT-Evidence
+          path: ${{ runner.temp }}/VEUX_274_P3_OUTPUT/
+          if-no-files-found: warn
+          retention-days: 14
