@@ -1,0 +1,189 @@
+name: VEUX 5.4.274 Stock Source-Only R2 Import
+
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - 'VEUX_STOCK274_R2_MAIN.zip'
+      - '.github/workflows/VEUX_STOCK274_R2_AUTOIMPORT.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veux-stock274-r2-import-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: VEUX_STOCK274_R2_MAIN.zip
+  DEST_FOLDER: common/stock274/source_only_r2
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  import:
+    name: Verify archive and install source-only tools (NO kernel build)
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact event commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Check package upload without failing when YAML arrived first
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ -f "$PACKAGE_NAME" && ! -L "$PACKAGE_NAME" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'SOURCE_IMPORT=WAITING_FOR_ZIP (upload ZIP to repo root)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Validate workflow via SHA-pinned actionlint
+        if: ${{ steps.package.outputs.ready == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --retry 2 --max-time 90 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline \
+            .github/workflows/VEUX_STOCK274_R2_AUTOIMPORT.yml
+
+      - name: Verify ZIP content and run all source-only host tests
+        if: ${{ steps.package.outputs.ready == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '2e212a4d09740af9988ba04b329057278adcbb0a6afa27a63326218c05e334e8' "$PACKAGE_NAME" | sha256sum -c -
+          python3 - <<'PYTEST'
+          import hashlib, json, os, pathlib, stat, subprocess, tempfile, zipfile
+          archive=pathlib.Path(os.environ['PACKAGE_NAME'])
+          allowed='common/stock274/source_only_r2'
+          with zipfile.ZipFile(archive) as z:
+              bad=z.testzip()
+              if bad is not None: raise SystemExit('ZIP_CRC_FAIL '+bad)
+              infos=z.infolist()
+              names=[i.filename for i in infos]
+              if len(names)!=len(set(names)) or any(i.is_dir() for i in infos):
+                  raise SystemExit('ZIP_DUPLICATE_OR_DIR')
+              if any(stat.S_IFMT(i.external_attr >> 16)==stat.S_IFLNK for i in infos):
+                  raise SystemExit('ZIP_SYMLINK')
+              if sum(i.file_size for i in infos)>4_000_000:
+                  raise SystemExit('ZIP_OVERSIZE')
+              metadata=json.loads(z.read('manifest.json'))
+              if (metadata.get('schema')!=1 or metadata.get('kernel')!='5.4.274' or
+                  metadata.get('project')!='Chrizz100/veux-nongki-universal-kernel' or
+                  metadata.get('target_directory')!=allowed or
+                  metadata.get('stage')!='P2_TO_P3_SOURCE_ONLY' or
+                  metadata.get('flashable') is not False or
+                  metadata.get('stock_walt_integrated') is not False):
+                  raise SystemExit('MANIFEST_SCOPE_MISMATCH')
+              required={
+                  'START_HIER.txt','prepare_stock274_p3.py','test_prepare_stock274_p3.py',
+                  'TESTS_LOKAL.txt','P2_5_4_274_NO_ROOT_BUILD.config',
+                  'XIAOMI_STOCK_A13_5_4_210_REFERENCE.config',
+                  'P2_TO_XIAOMI_STOCK_REFERENZ.csv','SOURCE_STATUS_5_4_274.json',
+                  'ORIGINAL_P2_5_4_274_GREEN_EVIDENCE.zip','SHA256SUMS.txt',
+              }
+              files=metadata.get('files')
+              if not isinstance(files,dict) or set(files)!=required or set(names)!={'manifest.json'}|{'payload/'+f for f in required}:
+                  raise SystemExit('UNEXPECTED_PACKAGE_MEMBERS')
+              with tempfile.TemporaryDirectory(prefix='stock274-r2-') as temp:
+                  root=pathlib.Path(temp)
+                  data={}
+                  for name in sorted(required):
+                      raw=z.read('payload/'+name)
+                      if hashlib.sha256(raw).hexdigest()!=files[name]:
+                          raise SystemExit('PACKAGE_SHA_MISMATCH '+name)
+                      data[name]=raw
+                      (root/name).write_bytes(raw)
+                  subprocess.run(['sha256sum','-c','SHA256SUMS.txt'],cwd=root,
+                                 check=True,timeout=30)
+                  subprocess.run(['python3','-m','unittest','discover','-s',str(root),
+                                  '-p','test_prepare_stock274_p3.py','-v'],
+                                 check=True,timeout=150,env=os.environ.copy())
+                  for name in ('prepare_stock274_p3.py','test_prepare_stock274_p3.py'):
+                      compile(data[name],name,'exec')
+                  print('BUNDLE_INTEGRITY=PASS; P2_CASS_TOOL_TESTS=PASS; BUILD=NOT_RUN')
+          PYTEST
+
+      - name: Install verified source-only files into the repository
+        if: ${{ steps.package.outputs.ready == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYINSTALL'
+          import hashlib,json,os,pathlib,zipfile
+          base=pathlib.Path.cwd().resolve()
+          with zipfile.ZipFile(os.environ['PACKAGE_NAME']) as z:
+              meta=json.loads(z.read('manifest.json'))
+              target=base/meta['target_directory']
+              # No source kernel paths, existing workflows or arbitrary files are changed.
+              if not target.is_relative_to(base): raise SystemExit('PATH_ESCAPE')
+              probe=target
+              while probe!=base:
+                  if probe.is_symlink():raise SystemExit('TARGET_SYMLINK '+str(probe))
+                  probe=probe.parent
+              for name in sorted(meta['files']):
+                  item=target/name
+                  if item.is_symlink() or (item.exists() and not item.is_file()):
+                      raise SystemExit('TARGET_NOT_REGULAR '+name)
+                  content=z.read('payload/'+name)
+                  if item.exists() and item.read_bytes()!=content:
+                      raise SystemExit('REFUSE_TO_REPLACE_MODIFIED_FILE '+name)
+              manifest_path=target/'manifest.json'
+              if manifest_path.is_symlink() or (manifest_path.exists() and manifest_path.read_bytes()!=z.read('manifest.json')):
+                  raise SystemExit('MANIFEST_DRIFT')
+              target.mkdir(parents=True,exist_ok=True)
+              for name in sorted(meta['files']):
+                  item=target/name
+                  item.write_bytes(z.read('payload/'+name))
+              manifest_path.write_bytes(z.read('manifest.json'))
+              for name,expected in meta['files'].items():
+                  if hashlib.sha256((target/name).read_bytes()).hexdigest()!=expected:
+                      raise SystemExit('POSTCOPY_HASH_FAIL '+name)
+              print('STOCK274_R2_FILES_COPIED=PASS; KERNEL_SOURCE_UNCHANGED=YES')
+          PYINSTALL
+          python3 "$DEST_FOLDER/test_prepare_stock274_p3.py"
+          git add -- "$DEST_FOLDER"
+          git diff --cached --check --             "$DEST_FOLDER/prepare_stock274_p3.py"             "$DEST_FOLDER/test_prepare_stock274_p3.py"             "$DEST_FOLDER/manifest.json"
+          if [[ -z "$(git diff --cached --name-only)" ]]; then
+            echo 'SOURCE_IMPORT=ALREADY_INSTALLED' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if git diff --cached --name-only | grep -Ev '^common/stock274/source_only_r2/'; then
+            echo 'SCOPE_ESCAPE' >&2
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin main
+          if [[ "$(git rev-parse refs/remotes/origin/main)" != "$GITHUB_SHA" ]]; then
+            echo '::error::Main changed during import. No push performed; re-run on latest main.'
+            exit 1
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'Import VEUX 5.4.274 source-only R2 checks [skip ci]'
+          git push origin HEAD:refs/heads/main
+          {
+            echo 'SOURCE_ONLY_IMPORT=PASS'
+            echo 'Kernel source files changed: NO'
+            echo 'New kernel build: NO'
+            echo 'WALT port completed: NO'
+            echo 'Flashable ZIP: NO'
+          } >> "$GITHUB_STEP_SUMMARY"
