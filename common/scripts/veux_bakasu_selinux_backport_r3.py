@@ -304,6 +304,11 @@ INSERT = ANCHOR + '''        from veux_bakasu_selinux_backport_r3 import apply_s
         from veux_bakasu_selinux54_policy_parity_r3 import apply_legacy_policy_parity
         selinux54_parity_r3 = apply_legacy_policy_parity(
             src, work / "BAKASU-SELINUX54-PARITY-R3.json")
+        # Final source is the exact official d726 SELinux source.
+        # Earlier 5.4 adapters remain audit inputs, not compiled code.
+        from veux_bakasu_official_selinux_r6 import apply_official_source
+        bakasu_official_r6 = apply_official_source(
+            src, bundle / "resukisu", work / "BAKASU-OFFICIAL-D726-R6.json")
 '''
 RESULT_ANCHOR='''        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
 '''
@@ -312,6 +317,7 @@ RESULT_INSERT=RESULT_ANCHOR+'''        result['selinux_backport_r3'] = selinux_b
         result['bakasu_sucompat_648'] = sucompat_648
         result['bakasu_context_hash_d726'] = context_hash_d726
         result['selinux54_policy_parity_r3'] = selinux54_parity_r3
+        result['bakasu_official_r6'] = bakasu_official_r6
 '''
 
 def inject_worker(original: Path, destination: Path) -> dict:

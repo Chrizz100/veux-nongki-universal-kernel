@@ -28,6 +28,7 @@ import sys
 import time
 from types import SimpleNamespace
 import veux_bakasu_selinux_backport_r3 as selinux_r3
+from veux_bakasu_official_selinux_r6 import SafetyStop as OfficialBakaSafetyStop
 
 REPO_NAME = 'Chrizz100/veux-nongki-universal-kernel'
 EXPECTED_KERNEL_R3 = '5.4.274'
@@ -579,6 +580,24 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
             'report': 'report/BAKASU-SELINUX54-PARITY-R3.json',
             'kernel_build': False, 'device_pass': False,
         }
+        # End with the genuine upstream BakaSU d726 source, with no locally
+        # written R4/R5 SELinux code in the actual compiled kernel.
+        from veux_bakasu_official_selinux_r6 import apply_official_source
+        official_r6 = apply_official_source(
+            src, bundle/'resukisu', root/'report/BAKASU-OFFICIAL-D726-R6.json')
+        require(official_r6['source_matches_official_bakasu_d726_byte_for_byte'] is True and
+                official_r6['r4_setprocattr_adapter_not_in_compiled_source'] is True and
+                official_r6['r5_backup_policy_prescreen_not_in_compiled_source'] is True and
+                official_r6['d726_context_hash_preserved'] is True,
+                'R6_UPSTREAM_SOURCE_FINAL_GATE_INCOMPLETE')
+        status['bakasu_official_r6'] = {
+            'commit': official_r6['source_provenance']['upstream_commit'],
+            'effective_hook_sha256': official_r6['after_sha256'],
+            'effective_hook_git_blob': official_r6['upstream_git_blob'],
+            'fully_official_kernel_selinux_code': True,
+            'report': 'report/BAKASU-OFFICIAL-D726-R6.json',
+            'device_pass':False,
+        }
         status['source_preflight']=True
         status['device_fixes_verified']=True
         status['rpm24_source_verified']=True
@@ -640,6 +659,25 @@ def build(repo: Path, root: Path, kernel: str, jobs: int) -> dict:
     require(p.returncode==0,'FLEET_KERNEL_WORKER_FAILED '+kernel+'; see '+str(buildlog))
     row=json.loads((public/'RESULT.json').read_text())
     backport_data=row.get('selinux_backport_r3') or {}
+    # Final published binary must originate from official BakaSU d726,
+    # not merely pass the legacy R4/R5 intermediate source gates.
+    from veux_bakasu_official_selinux_r6 import (
+        OFFICIAL_HOOK_GIT_BLOB, UPSTREAM_COMMIT, R5_EFFECTIVE_SHA256)
+    official=row.get('bakasu_official_r6') or {}
+    require(official.get('source_matches_official_bakasu_d726_byte_for_byte') is True and
+            official.get('upstream_git_blob')==OFFICIAL_HOOK_GIT_BLOB and
+            official.get('before_sha256')==R5_EFFECTIVE_SHA256 and
+            official.get('source_provenance',{}).get('upstream_commit')==UPSTREAM_COMMIT and
+            official.get('r4_setprocattr_adapter_not_in_compiled_source') is True and
+            official.get('r5_backup_policy_prescreen_not_in_compiled_source') is True and
+            official.get('d726_context_hash_preserved') is True and
+            official.get('device_pass') is False,
+            'R6_OFFICIAL_SELINUX_SOURCE_NOT_IN_PUBLISHED_KERNEL')
+    proof_file=root/'report/BAKASU-OFFICIAL-D726-R6.json'
+    require(proof_file.is_file() and not proof_file.is_symlink(),
+            'R6_OFFICIAL_BUILD_WORKER_PROOF_MISSING')
+    require(json.loads(proof_file.read_text())==official,
+            'R6_WORKER_AND_PUBLIC_PROOFS_DISAGREE')
     require(backport_data.get('isolated_backport')==selinux_r3.BACKPORT_COMMIT,
             'BACKPORT_PROOF_MISSING_IN_PUBLISHED_RESULT')
     require(backport_data.get('changed_kernel_paths')==list(selinux_r3.FILE_BLOBS),
@@ -667,13 +705,17 @@ def build(repo: Path, root: Path, kernel: str, jobs: int) -> dict:
     report={'status':'BUILD_VALIDATED','kernel':kernel,'run_base':GOOD_SIX_RUN,
             'isolated_backport_commit':selinux_r3.BACKPORT_COMMIT,
             'official_35225_not_claimed':True,
+            'effective_official_selinux_commit':UPSTREAM_COMMIT,
+            'effective_official_selinux_git_blob':OFFICIAL_HOOK_GIT_BLOB,
+            'r4_r5_local_selinux_code_compiled':False,
             'extended_274':GOOD_274_RUN,'targets':TARGETS,
             'image_sha256':row['image_sha256'],'artifact_name':row['artifact_name'],
             'compile':True,'package':True,'static_boot':True,
             'device_pass':False,'promotion':False,'repository_written':False}
     (root/'report'/('BUILD_'+kernel+'.json')).write_text(
         json.dumps(report,sort_keys=True,indent=2)+'\n')
-    print('VEUX_FLEET_R3_'+kernel+'_BUILD_PACKAGE_STATIC=PASS; SELINUX_BACKPORT='+selinux_r3.BACKPORT_COMMIT[:8]+'; DEVICE_PASS=NO',flush=True)
+    print('VEUX_FLEET_R6_'+kernel+'_OFFICIAL_D726_BUILD_PACKAGE_STATIC=PASS; '
+          'LOCAL_R4_R5_SELINUX_CODE_COMPILED=NO; DEVICE_PASS=NO', flush=True)
     return report
 
 
@@ -699,7 +741,7 @@ def main() -> int:
                     'MISSING_BUNDLE_FOR_BUILD')
             build(repo,work,args.kernel,args.jobs)
         return 0
-    except (FleetBlocked,selinux_r3.UnsafeBackport,OSError,ValueError,KeyError,ImportError,TimeoutError,
+    except (FleetBlocked,OfficialBakaSafetyStop,selinux_r3.UnsafeBackport,OSError,ValueError,KeyError,ImportError,TimeoutError,
             subprocess.SubprocessError) as exc:
         print('VEUX_FLEET_R3_BLOCKED: '+str(exc),file=sys.stderr,flush=True)
         return 1
