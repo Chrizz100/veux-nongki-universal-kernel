@@ -1,0 +1,30 @@
+test_00_sha256_is_standard (test_prepare_stock274_p3.SourceStageTests.test_00_sha256_is_standard) ... ok
+test_01_genuine_p2_tree_pin_is_40_hex (test_prepare_stock274_p3.SourceStageTests.test_01_genuine_p2_tree_pin_is_40_hex) ... ok
+test_02_p2_gate_accepts_exact_synthetic_tree (test_prepare_stock274_p3.SourceStageTests.test_02_p2_gate_accepts_exact_synthetic_tree) ... ok
+test_03_p2_gate_rejects_real_pin_mismatch (test_prepare_stock274_p3.SourceStageTests.test_03_p2_gate_rejects_real_pin_mismatch) ... ok
+test_04_edits_only_six_paths (test_prepare_stock274_p3.SourceStageTests.test_04_edits_only_six_paths) ... ok
+test_05_config_cass_removed_not_renamed (test_prepare_stock274_p3.SourceStageTests.test_05_config_cass_removed_not_renamed) ... ok
+test_06_init_kconfig_cleanup_preserves_adjacent (test_prepare_stock274_p3.SourceStageTests.test_06_init_kconfig_cleanup_preserves_adjacent) ... ok
+test_07_fair_restores_original_dispatch (test_prepare_stock274_p3.SourceStageTests.test_07_fair_restores_original_dispatch) ... ok
+test_08_rt_removes_header_not_class (test_prepare_stock274_p3.SourceStageTests.test_08_rt_removes_header_not_class) ... ok
+test_09_delete_cass_sources (test_prepare_stock274_p3.SourceStageTests.test_09_delete_cass_sources) ... ok
+test_10_real_git_apply_check_and_postimage (test_prepare_stock274_p3.SourceStageTests.test_10_real_git_apply_check_and_postimage) ... ok
+test_11_create_patch_report_source_unchanged (test_prepare_stock274_p3.SourceStageTests.test_11_create_patch_report_source_unchanged) ... ok
+test_12_modified_source_rejected (test_prepare_stock274_p3.SourceStageTests.test_12_modified_source_rejected) ... ok
+test_13_unpinned_kernel_version_rejected (test_prepare_stock274_p3.SourceStageTests.test_13_unpinned_kernel_version_rejected) ... ok
+test_14_unreviewed_cass_reference_rejected (test_prepare_stock274_p3.SourceStageTests.test_14_unreviewed_cass_reference_rejected) ... ok
+test_15_legacy_ksu_residue_rejected (test_prepare_stock274_p3.SourceStageTests.test_15_legacy_ksu_residue_rejected) ... ok
+test_16_walt_present_must_stop_and_reaudit (test_prepare_stock274_p3.SourceStageTests.test_16_walt_present_must_stop_and_reaudit) ... ok
+test_17_duplicate_cass_config_rejected (test_prepare_stock274_p3.SourceStageTests.test_17_duplicate_cass_config_rejected) ... ok
+test_18_kconfig_unknown_change_blocks (test_prepare_stock274_p3.SourceStageTests.test_18_kconfig_unknown_change_blocks) ... ok
+test_19_wrong_fair_block_blocks (test_prepare_stock274_p3.SourceStageTests.test_19_wrong_fair_block_blocks) ... ok
+test_20_no_output_into_source (test_prepare_stock274_p3.SourceStageTests.test_20_no_output_into_source) ... ok
+test_21_refuse_existing_output (test_prepare_stock274_p3.SourceStageTests.test_21_refuse_existing_output) ... ok
+test_22_refuse_symlink (test_prepare_stock274_p3.SourceStageTests.test_22_refuse_symlink) ... ok
+test_23_git_patch_is_reproducible (test_prepare_stock274_p3.SourceStageTests.test_23_git_patch_is_reproducible) ... ok
+test_24_anomaly_no_susfs_or_walt_added (test_prepare_stock274_p3.SourceStageTests.test_24_anomaly_no_susfs_or_walt_added) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.446s
+
+OK

@@ -1,0 +1,22 @@
+{
+  "files": {
+    "ORIGINAL_P2_5_4_274_GREEN_EVIDENCE.zip": "54d6e4d6c5d9656f0222dc77ab79e4eb3925fa3b4b709e9d2ad9bea125907b45",
+    "P2_5_4_274_NO_ROOT_BUILD.config": "f6a4c78bf637bbf89b5e3a3059cf9d1651e43189a6ac459e806fa289d8628f9d",
+    "P2_TO_XIAOMI_STOCK_REFERENZ.csv": "635bb8a1782230dd2b10a9f1de553644caafea6cce117cf3aa336ba75e1efc27",
+    "SHA256SUMS.txt": "ccc7701821cb801afb04a56bdd911216beb0e845cb6e6efae2f2bc4af33fca7a",
+    "SOURCE_STATUS_5_4_274.json": "61bf69e248eb7e4161d598fa04fb54c604576211d646e6a4070105a435c0d5f2",
+    "START_HIER.txt": "162ab552ef27cab6467bb1b2b5964c4078ca731d9fffaff73461ffc0099091cf",
+    "TESTS_LOKAL.txt": "a374fe7b4985cb84c500e624eabef63ac4b78a650b5086470ba747e2ad7e246f",
+    "XIAOMI_STOCK_A13_5_4_210_REFERENCE.config": "722bcc5a40b5998f147b7e40712fb230be3f8549a593b9c538763324987469de",
+    "prepare_stock274_p3.py": "4f0f9884f2838422d33b27af7c52c6eaec2cb8a629093224a040a28ffbce10b9",
+    "test_prepare_stock274_p3.py": "1eff279c6742d94ebd425b021fd50f2b25ed6f0262833b872fe10782b7b6a0c3"
+  },
+  "flashable": false,
+  "kernel": "5.4.274",
+  "kernel_su_integrated": false,
+  "project": "Chrizz100/veux-nongki-universal-kernel",
+  "schema": 1,
+  "stage": "P2_TO_P3_SOURCE_ONLY",
+  "stock_walt_integrated": false,
+  "target_directory": "common/stock274/source_only_r2"
+}

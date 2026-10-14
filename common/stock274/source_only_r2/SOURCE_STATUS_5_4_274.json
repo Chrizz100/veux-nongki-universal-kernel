@@ -1,0 +1,159 @@
+{
+  "baseline": {
+    "cass_active": true,
+    "compile_success": true,
+    "kernel_release_in_evidence": "5.4.274~positron/61bb08ca",
+    "kernel_version_source": "5.4.274",
+    "reproducibility": true,
+    "root_sources_present": false,
+    "source": "KSU2-P2-v5, successful github CI (root-free but CASS)",
+    "source_artifact_digest": "54d6e4d6c5d9656f0222dc77ab79e4eb3925fa3b4b709e9d2ad9bea125907b45",
+    "source_artifact_name": "ksu2-p2-veux-5.4.274-proven-checkpoint-v5-33832342297",
+    "source_commit_local_to_runner": "61bb08ca2bffba1745bd4ee8a5118ed54a2f8f6e",
+    "source_run": 33832342297,
+    "source_tree": "16ce899d4549819d42d76b423ebcbd51f1b82a61",
+    "vendor_abi_stock_pass": false,
+    "walt_present": false
+  },
+  "configuration_audit": {
+    "comparison_is_cross_source_revision_not_abi_approval": true,
+    "different_or_missing_symbols": 1041,
+    "important": {
+      "CONFIG_CPU_FREQ_GOV_SCHEDUTIL": {
+        "P2_5_4_274": "y",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_HZ_250": {
+        "P2_5_4_274": "y",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_KSU": {
+        "P2_5_4_274": null,
+        "reference_5_4_210": null
+      },
+      "CONFIG_LOCALVERSION": {
+        "P2_5_4_274": "\"-lineageos\"",
+        "reference_5_4_210": "\"-qgki\""
+      },
+      "CONFIG_MEMCG": {
+        "P2_5_4_274": "n",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_MIHW": {
+        "P2_5_4_274": null,
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_MSM_PERFORMANCE": {
+        "P2_5_4_274": "n",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_QGKI": {
+        "P2_5_4_274": "y",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_SCHED_CASS": {
+        "P2_5_4_274": "y",
+        "reference_5_4_210": null
+      },
+      "CONFIG_SCHED_MC": {
+        "P2_5_4_274": "y",
+        "reference_5_4_210": "y"
+      },
+      "CONFIG_SCHED_WALT": {
+        "P2_5_4_274": null,
+        "reference_5_4_210": "y"
+      }
+    },
+    "p2_record_count": 4532,
+    "stock_ref_record_count": 5319
+  },
+  "green_pass": {
+    "complete_stock_near_device_pass": false,
+    "existing_p2_ci": true,
+    "new_device_flash": false,
+    "new_kernel_build": false,
+    "new_yaml_static_green": false
+  },
+  "next_gates": [
+    "Restore exact P2_SOURCE_TREE in isolated checked-out working tree",
+    "Generate source-only CASS patch using tested prepare_stock274_p3.py",
+    "Bring back full OEM WALT scheduler dependency graph into 5.4.274, not a Kbuild-only copy",
+    "Resolve CONFIG_MIHW and MEMCG with ABI-aware Kconfig and code, no forced feature toggling",
+    "Build compiler and stock module ABI proof; preserve existing charger/USB repairs separately",
+    "Only then consider new root/SUSFS integrations"
+  ],
+  "project": "Chrizz100/veux-nongki-universal-kernel",
+  "reference": {
+    "branch": "veux-r-oss",
+    "captured_xiaomi_config_source_version": "5.4.210",
+    "is_complete_5_4_274_stock_source": false,
+    "official_xiaomi_repo": "MiCode/Xiaomi_Kernel_OpenSource",
+    "pinned_commit": "61397e524093d1ccb94769b5460825e2eaf8871e",
+    "reference_source_version": "5.4.134",
+    "walt_11_files_git_blob_sha1": {
+      "Makefile": "8bf42cb669afabc17f69bc16cf74f17fcaf5cdd0",
+      "boost.c": "c37185e293d0ac7affe9b13124fcf76339fbce4e",
+      "core_ctl.c": "af838bd1c71e728d65dcdfee792b1379b07336e5",
+      "cpu-boost.c": "9b2363cf275afbeadbc57b112e89818d0e019320",
+      "qc_vas.c": "ce49eac6d5907108ed46aa48b7ead5146b49618e",
+      "qc_vas.h": "3b67a54946557d92b4582f990e3f015bceb3d0ae",
+      "sched_avg.c": "4a5efa4118b3c6605d74380ff028d66e9a24668b",
+      "trace.c": "7c06ce1fda642d026295ec87f190df55176c1cf9",
+      "trace.h": "5b01043d226142ac380d76f924542719ef863e9e",
+      "walt.c": "9d851c1dd315e2f4fb2385b5aa4a0c2749908b7d",
+      "walt.h": "9a678f0bbb68d92aa670991c8899a5253f51322e"
+    }
+  },
+  "staged_change": {
+    "compile_test_on_modified_sources": false,
+    "no_source_mutation_by_generator": true,
+    "patch_generated_on_real_p2_source_yet": false,
+    "selected_paths": [
+      "arch/arm64/configs/veux_defconfig",
+      "init/Kconfig",
+      "kernel/sched/fair.c",
+      "kernel/sched/rt.c",
+      "kernel/sched/cass.c",
+      "kernel/sched/cass_rt.h"
+    ],
+    "state": "READY_FOR_PINNED_P2_SOURCE_REPLAY",
+    "step": "remove Positron CASS only from exact P2 clean sources",
+    "walt_integrated": false
+  },
+  "supplemental_donor": {
+    "branch": "lineage-20",
+    "commit": "8050fa5150de3697e54e1366e968a3af0a6911ec",
+    "files_different_from_xiaomi_walt": [
+      "boost.c",
+      "core_ctl.c",
+      "trace.h"
+    ],
+    "files_matching_exact_xiaomi_walt": [
+      "Makefile",
+      "cpu-boost.c",
+      "qc_vas.c",
+      "qc_vas.h",
+      "sched_avg.c",
+      "trace.c",
+      "walt.c",
+      "walt.h"
+    ],
+    "only_comparison_not_stock_authority": true,
+    "repository": "xiaomi-sm6375-devs/android_kernel_xiaomi_sm6375",
+    "version": "5.4.219",
+    "walt_11_files_git_blob_sha1": {
+      "Makefile": "8bf42cb669afabc17f69bc16cf74f17fcaf5cdd0",
+      "boost.c": "258495e5153c6b0acd4b64d58ca8d22569631c16",
+      "core_ctl.c": "b3e4e5548acee5cdff24258797bc28d3bd5269ae",
+      "cpu-boost.c": "9b2363cf275afbeadbc57b112e89818d0e019320",
+      "qc_vas.c": "ce49eac6d5907108ed46aa48b7ead5146b49618e",
+      "qc_vas.h": "3b67a54946557d92b4582f990e3f015bceb3d0ae",
+      "sched_avg.c": "4a5efa4118b3c6605d74380ff028d66e9a24668b",
+      "trace.c": "7c06ce1fda642d026295ec87f190df55176c1cf9",
+      "trace.h": "2b8e196b50ba445ba445b04ddbb45808735cb2b3",
+      "walt.c": "9d851c1dd315e2f4fb2385b5aa4a0c2749908b7d",
+      "walt.h": "9a678f0bbb68d92aa670991c8899a5253f51322e"
+    }
+  },
+  "target_kernel_only": "5.4.274"
+}

@@ -1,0 +1,66 @@
+VEUX 5.4.274 – POSITRON → STOCKNAHE BASIS – R2 / 14.10.2026
+================================================================
+
+EINZIGE ZIELKERNELVERSION: Linux 5.4.274. KEIN BOOT.IMG, KEINE AK3,
+KEINE YAML, KEIN FLASH. SU/SUSFS/NoMount BLEIBEN AUSGESCHLOSSEN.
+
+1) BESTÄTIGTER FUNKTIONIERENDER SOURCE-CLEAN-AUSGANGSPUNKT
+GitHub-Historie: Chrizz100/veux-resukisu-builder
+Run: 33832342297 (04.09.2026) completed / success.
+Quellbaum: 16ce899d4549819d42d76b423ebcbd51f1b82a61
+Lokal im Runner angelegter Quellcommit: 61bb08ca2bffba1745bd4ee8a5118ed54a2f8f6e
+Config SHA256: f6a4c78bf637bbf89b5e3a3059cf9d1651e43189a6ac459e806fa289d8628f9d
+Kernel Image SHA256: 9d2c4c83469c9c55e1a5cd8838fb7ba10e24a551650dedf122fbde5f7bf398ca
+Originales Evidence-Artefakt: ORIGINAL_P2_5_4_274_GREEN_EVIDENCE.zip
+Dokumentiert: 5.4.274 gebaut, KSU/SUSFS komplett aus Quellen+Image entfernt,
+reproduzierbarer Build. ABER Positron-CASS ist weiterhin aktiv, WALT fehlt!
+Kernelrelease des P2-Builds: 5.4.274~positron/61bb08ca
+
+2) JETZT TATSÄCHLICH VORBEREITETER QUELLSCHRITT
+prepare_stock274_p3.py erzeugt – aus dem EXAKTEN P2-Quellbaum –
+einen technisch prüfbaren CASS-Entfernungspatch und einen JSON-Nachweis.
+Bearbeitet GENAU 6 Dateien: vier Änderungen und zwei Löschungen.
+Alle Änderungen bleiben außerhalb des Eingabe-Quellbaums.
+Abbruch bei SHA-Tree-Abweichung, unbekannten CASS-Abhängigkeiten,
+unbereinigten Git-Dateien, Symbol- oder Hook-Abweichungen und Symlinks.
+Der ausgegebene Patch wird in einem separaten Test-Checkout mit echtem
+`git apply --check`/`git apply` geprüft und bytegenau nachgelesen.
+
+Aufruf, sobald der P2-Source-Clean-Quellbaum (NICHT P14/SU!) in einem
+isolierten Checkout rekonstruiert ist:
+  python3 prepare_stock274_p3.py --p2-source /PFAD/EXAKT-P2-5.4.274 \
+      --output /PFAD/NEUER-REPORTORDNER
+
+Die neue P2->P3 Quelländerung ist erst NACH DEM AUFRUF auf echten P2-Dateien
+und bestandenem Prüfungsgate bereit. Es wurden hier keine echten P2-Quelldateien
+über GitHub hinweg geändert oder eine neue GitHub-Aktion ausgeführt.
+
+3) ORIGINAL-STOCK-REFERENZ, KEINE VERWECHSLUNG MIT ZIEL-VERSION
+Xiaomi: MiCode/Xiaomi_Kernel_OpenSource @ veux-r-oss
+Commit 61397e524093d1ccb94769b5460825e2eaf8871e (Quellen 5.4.134).
+Vorhandene Xiaomi-Stock-Konfiguration: 5.4.210 (kein 5.4.274-Source-Code).
+WALT-Quelldateien: 11 Stück, authentifizierte Git-Blob-Identitäten
+in SOURCE_STATUS_5_4_274.json. Für 5.4.219 existiert ein jüngerer
+Vergleichsbaum xiaomi-sm6375-devs/android_kernel_xiaomi_sm6375, commit
+8050fa5150de3697e54e1366e968a3af0a6911ec: 8/11 WALT-Blob-IDs
+identisch mit Xiaomi, 3 abweichend. Diese Vergleichsquelle ist NICHT
+von Xiaomi offiziell bestätigt.
+
+4) NICHT ÜBERSPRINGEN
+- OEM-WALT nicht einfach nur in kernel/sched/walt kopieren: core.c/fair.c/
+  sched.h, WALT-spezifische Schnittstellen, Kconfig und Treiberabhängigkeiten
+  müssen zur VERSION 5.4.274 adaptiert und kompiliert werden.
+- MIHW/MEMCG nicht ohne funktionalen Quell-/ABI-Abgleich einschalten.
+- Vendor .ko: ursprüngliche 218/218 Mismatches noch NICHT behoben.
+- P2 enthält NICHT automatisch die später auf Geräten bestätigten
+  Charger-, RPM24-, Awinic- oder RMNET-Fixes. Keine ältere P2-Image flashen.
+- Version nicht kosmetisch „Stock“ nennen; erst Quell- und Gerätegates.
+
+5) PRÜFUNGEN
+- 25 von 25 Offline-Unittests PASS, dokumentiert in TESTS_LOKAL.txt.
+- ECHTES Git-apply in isolierten TEST-FIXTURES PASS.
+- ORIGINAL P2-Evidence ZIP und Konfiguration mit SHA256 abgeglichen.
+- Grenze: Keine echte WALT-5.4.274-Integration, kein neuer Build oder Flash.
+
+Repo: nur LESEN. Bei späterer neuer YAML: vollständig Static Green Pass
+mit actionlint, Shell, Python, Pfaden, Action-Inputs, Regressionen und Hash.
