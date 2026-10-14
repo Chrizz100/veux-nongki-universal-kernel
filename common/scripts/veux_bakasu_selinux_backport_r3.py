@@ -301,6 +301,9 @@ INSERT = ANCHOR + '''        from veux_bakasu_selinux_backport_r3 import apply_s
         from veux_bakasu_context_hash_r3 import apply_context_hash_5_4
         context_hash_d726 = apply_context_hash_5_4(
             src, bundle / "resukisu", work / "BAKASU-CONTEXT-HASH-D726-R3.json")
+        from veux_bakasu_selinux54_policy_parity_r3 import apply_legacy_policy_parity
+        selinux54_parity_r3 = apply_legacy_policy_parity(
+            src, work / "BAKASU-SELINUX54-PARITY-R3.json")
 '''
 RESULT_ANCHOR='''        image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
 '''
@@ -308,6 +311,7 @@ RESULT_INSERT=RESULT_ANCHOR+'''        result['selinux_backport_r3'] = selinux_b
         result['unhook_guard_r1'] = unhook_guard_r1
         result['bakasu_sucompat_648'] = sucompat_648
         result['bakasu_context_hash_d726'] = context_hash_d726
+        result['selinux54_policy_parity_r3'] = selinux54_parity_r3
 '''
 
 def inject_worker(original: Path, destination: Path) -> dict:

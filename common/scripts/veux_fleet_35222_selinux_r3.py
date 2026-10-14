@@ -562,6 +562,23 @@ def check_src(repo: Path, root: Path, kernel: str) -> dict:
             'report': 'report/BAKASU-CONTEXT-HASH-D726-R3.json',
             'device_pass': False,
         }
+        # Restore the 35222 legacy backup-policy validation lost in the R4
+        # kernel-5.4-only unconditional stock-setprocattr fallback. No runtime
+        # handler replacement or SUSFS pin change, and no build in preflight.
+        from veux_bakasu_selinux54_policy_parity_r3 import apply_legacy_policy_parity
+        parity54_proof = apply_legacy_policy_parity(
+            src, root/'report/BAKASU-SELINUX54-PARITY-R3.json')
+        require(parity54_proof['policy_validation_before_stock_handler'] is True and
+                parity54_proof['stock_setprocattr_runtime_callback_retained'] is True and
+                parity54_proof['d726_hash_calls_preserved'] is True,
+                'SELINUX54_POLICY_PARITY_PROOF_INCOMPLETE')
+        status['selinux54_policy_parity_r3'] = {
+            'verified': True,
+            'input_sha256': parity54_proof['before_sha256'],
+            'output_sha256': parity54_proof['after_sha256'],
+            'report': 'report/BAKASU-SELINUX54-PARITY-R3.json',
+            'kernel_build': False, 'device_pass': False,
+        }
         status['source_preflight']=True
         status['device_fixes_verified']=True
         status['rpm24_source_verified']=True
