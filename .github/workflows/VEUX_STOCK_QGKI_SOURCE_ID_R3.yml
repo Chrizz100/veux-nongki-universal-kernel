@@ -1,0 +1,149 @@
+name: VEUX Stock QGKI R3 - Source Identity Audit (NO BUILD)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      verify_github_commits:
+        description: 'Recheck pinned Git blob hashes on GitHub (source-only; NO BUILD)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-stock-qgki-source-identity-r3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stock-source-identity-audit:
+    name: stock-headers-source-comparison-NO-FLASH
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      R3_ZIP: VEUX_STOCK_QGKI_SOURCE_ID_R3_MAIN.zip
+      R3_ZIP_SHA256: 3d21a15bc6584efbf38146878894c8f881dad9e8041522be2a7f19298b09426c
+      R1_ZIP: VEUX_STOCK_QGKI_274_IMPORT_R1_MAIN.zip
+      R1_ZIP_SHA256: 45d7cebf4496301c2f1b32a635d2e3eb5fa6d55559919b20135a560e3be86189
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout repository read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Validate both root ZIPs and independent actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$GITHUB_WORKSPACE/$R3_ZIP"
+          test -s "$GITHUB_WORKSPACE/$R1_ZIP"
+          printf '%s  %s\n' "$R3_ZIP_SHA256" "$GITHUB_WORKSPACE/$R3_ZIP" | sha256sum --check --status
+          printf '%s  %s\n' "$R1_ZIP_SHA256" "$GITHUB_WORKSPACE/$R1_ZIP" | sha256sum --check --status
+          test -f "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_QGKI_SOURCE_ID_R3.yml"
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 120 --silent --show-error \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            -o "$RUNNER_TEMP/actionlint_r3.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$RUNNER_TEMP/actionlint_r3.tar.gz" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/r3-actionlint"
+          tar -xzf "$RUNNER_TEMP/actionlint_r3.tar.gz" -C "$RUNNER_TEMP/r3-actionlint" actionlint
+          "$RUNNER_TEMP/r3-actionlint/actionlint" -oneline \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_QGKI_SOURCE_ID_R3.yml"
+          echo 'STOCK_R3_PACKAGE_SHA_AND_ACTIONLINT=PASS'
+
+      - name: Verify immutable R3 ZIP manifest and unpack only trusted scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,stat,zipfile
+          src=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/os.environ['R3_ZIP']
+          dst=pathlib.Path(os.environ['RUNNER_TEMP'])/'stock-id-r3-tools'
+          expected={'stock_identity_r3/manifest.json','stock_identity_r3/README.txt',
+                    'stock_identity_r3/audit_stock_source_r3.py',
+                    'stock_identity_r3/test_audit_stock_source_r3.py'}
+          with zipfile.ZipFile(src) as z:
+              infos=z.infolist()
+              names=[x.filename for x in infos]
+              if len(infos)!=4 or len(set(names))!=4 or set(names)!=expected:
+                  raise SystemExit('REFUSE_R3_ARCHIVE_SCOPE_DRIFT')
+              if z.testzip() is not None:raise SystemExit('REFUSE_R3_ARCHIVE_BAD_CRC')
+              man=json.loads(z.read('stock_identity_r3/manifest.json'))
+              if (man['stage']!='VEUX_STOCK_QGKI_SOURCE_ID_R3' or
+                  man['target_release']!='5.4.274-qgki-g82179e362f33' or
+                  man['flashable'] is not False or man['source_only'] is not True or
+                  man['repository_write'] is not False or man['kernel_build'] is not False or
+                  set(man['files'])!=expected-{'stock_identity_r3/manifest.json'}):
+                  raise SystemExit('REFUSE_R3_UNEXPECTED_MANIFEST')
+              for info in infos:
+                  path=pathlib.PurePosixPath(info.filename)
+                  kind=stat.S_IFMT(info.external_attr>>16)
+                  if (info.is_dir() or path.is_absolute() or '..' in path.parts or
+                      chr(92) in info.filename or kind not in (0,stat.S_IFREG) or
+                      info.file_size>150000):
+                      raise SystemExit('REFUSE_R3_UNSAFE_MEMBER')
+                  if info.filename in man['files']:
+                      h=hashlib.sha256(z.read(info.filename)).hexdigest()
+                      if h!=man['files'][info.filename]:raise SystemExit('REFUSE_R3_MEMBER_SHA')
+              dst.mkdir(parents=True,exist_ok=False)
+              for path in expected-{'stock_identity_r3/manifest.json'}:
+                  (dst/pathlib.PurePosixPath(path).name).write_bytes(z.read(path))
+          print('STOCK_R3_ARCHIVE_SCOPE_CRC_SHA=PASS')
+          PY
+
+      - name: Check Python syntax and 42 fail-closed regression cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/stock-id-r3-tools"
+          python3 -m py_compile "$tools/audit_stock_source_r3.py" "$tools/test_audit_stock_source_r3.py"
+          VEUX_R3_STOCK_ZIP="$GITHUB_WORKSPACE/$R1_ZIP" python3 -m unittest \
+            discover -s "$tools" -p 'test_*.py' -v
+          echo 'STOCK_R3_42_REGRESSION_CASES=PASS'
+
+      - name: Audit original stock headers against pinned Xiaomi Positron AOSP commits
+        shell: bash
+        env:
+          VERIFY_REMOTE: ${{ inputs.verify_github_commits }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/VEUX_STOCK_R3_REPORT"
+          args=()
+          if [[ "$VERIFY_REMOTE" == 'true' ]]; then args+=(--verify-remote); fi
+          python3 "$RUNNER_TEMP/stock-id-r3-tools/audit_stock_source_r3.py" \
+            --stock-zip "$GITHUB_WORKSPACE/$R1_ZIP" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/VEUX_STOCK_R3_REPORT/diagnostics" "${args[@]}"
+          python3 - <<'PY'
+          import json,os,pathlib
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'VEUX_STOCK_R3_REPORT/diagnostics/STOCK_SOURCE_IDENTITY_R3.json'
+          data=json.loads(p.read_text())
+          assert data['results']['header_reference_authenticated'] is True
+          assert data['results']['flash_approved'] is False
+          assert data['results']['module_abi_proven'] is False
+          assert data['gate']=='BLOCKED_MISSING_MATCHING_COMPLETE_STOCK_SOURCE_AND_ABI'
+          assert all(row['tested_headers']==13 for row in data['candidate_fingerprints'].values())
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('## VEUX 5.4.274: original Stock-source fingerprint audit\n')
+              f.write('Original Stock-Image: SHA256 `6e513b3652aa1de599c26b6aaeefef12dac569daf8648bbb67de99932782c50b`\n\n')
+              for name,v in data['candidate_fingerprints'].items():
+                  f.write(f'- {name} ({v["source_version"]}): {v["exact_header_matches"]}/13 exact matching original Stock header blobs\n')
+              f.write('\n- **NO stock-source identity proven. ABI unknown, NO BUILD, NO FLASH.**\n')
+              f.write('- Optional remote checks can be incomplete on API errors; see JSON.\n')
+          print('STOCK_R3_SOURCE_IDENTITY_REPORT=PASS; ABI_GATE=BLOCKED; FLASH=NO')
+          PY
+
+      - name: Publish reference-only source and ABI comparison
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-STOCK-QGKI-274-R3-SOURCE-ID-NO-BUILD-NO-FLASH
+          path: ${{ runner.temp }}/VEUX_STOCK_R3_REPORT/
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 6
