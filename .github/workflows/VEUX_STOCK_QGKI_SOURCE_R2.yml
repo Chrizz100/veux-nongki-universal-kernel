@@ -1,0 +1,109 @@
+name: VEUX Stock QGKI Source Bridge R2 (NO BUILD)
+
+'on':
+  workflow_dispatch:
+    inputs:
+      fetch_latest_official:
+        description: 'Also retrieve latest official BaKaSU, SUSFS 2.3, NoMount HEAD sources (NO APPLY)'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-stock-source-bridge-r2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    name: verified-updater-pins-and-optional-latest-sources
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      INPUT_ZIP: VEUX_STOCK_QGKI_SOURCE_R2_MAIN.zip
+      EXPECTED_ZIP_SHA: db0172fec53d8eaa94f70c34dc9f6abd0d9903247b978f80f57e5630fa767403
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      FETCH_LATEST: ${{ inputs.fetch_latest_official }}
+    steps:
+      - name: Checkout VEUX repo read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact archive hash and independent actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_ZIP_SHA" "$GITHUB_WORKSPACE/$INPUT_ZIP" | sha256sum --check --status
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 150 --silent --show-error \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/r2-lint"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/r2-lint" actionlint
+          "$RUNNER_TEMP/r2-lint/actionlint" -oneline \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_QGKI_SOURCE_R2.yml"
+          echo 'ROOT_ZIP_SHA_AND_ACTIONLINT=PASS'
+      - name: Verify scoped ZIP members CRC internal hashes and extract safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEXTRACT'
+          import hashlib,json,os,pathlib,stat,zipfile
+          src=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/os.environ['INPUT_ZIP']
+          dest=pathlib.Path(os.environ['RUNNER_TEMP'])/'VEUX_R2_TOOLS'
+          with zipfile.ZipFile(src) as z:
+              entries=z.infolist()
+              expected=['stock_source_r2/README.txt','stock_source_r2/manifest.json',
+                'stock_source_r2/stage_stock_upstreams_r2.py','stock_source_r2/test_stage_stock_upstreams_r2.py']
+              names=[x.filename for x in entries]
+              if len(names)!=4 or len(set(names))!=4 or set(names)!=set(expected):
+                  raise SystemExit('UNEXPECTED_R2_ZIP_MEMBERS')
+              if z.testzip() is not None:raise SystemExit('R2_ZIP_CRC_FAILURE')
+              man=json.loads(z.read('stock_source_r2/manifest.json'))
+              if (man.get('stage')!='VEUX_STOCK_QGKI_SOURCE_R2' or man.get('flashable') is not False
+                  or man.get('source_only') is not True or set(man['files'])!=set(expected)-{'stock_source_r2/manifest.json'}):
+                  raise SystemExit('UNEXPECTED_R2_MANIFEST')
+              for info in entries:
+                  pure=pathlib.PurePosixPath(info.filename)
+                  kind=stat.S_IFMT(info.external_attr>>16)
+                  if info.is_dir() or pure.is_absolute() or '..' in pure.parts or chr(92) in info.filename or kind not in (0,stat.S_IFREG) or info.file_size>150000:
+                      raise SystemExit('UNSAFE_R2_ZIP_MEMBER')
+                  if info.filename in man['files'] and hashlib.sha256(z.read(info.filename)).hexdigest()!=man['files'][info.filename]:
+                      raise SystemExit('R2_MANIFEST_SHA_MISMATCH')
+              for info in entries:
+                  p=dest/info.filename;p.parent.mkdir(parents=True,exist_ok=True)
+                  p.write_bytes(z.read(info.filename))
+          print('R2_ZIP_CRC_SCOPE_AND_MEMBER_SHA=PASS')
+          PYEXTRACT
+      - name: Validate source script and 38 regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/VEUX_R2_TOOLS/stock_source_r2"
+          python3 -m py_compile "$tools/stage_stock_upstreams_r2.py" "$tools/test_stage_stock_upstreams_r2.py"
+          python3 -m unittest discover -s "$tools" -p 'test_*.py' -v
+          echo 'R2_38_LOCAL_REGRESSIONS=PASS'
+      - name: Verify saved V4 pins and optionally fetch latest official source commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/VEUX_R2_OUTPUT"
+          args=()
+          if [[ "$FETCH_LATEST" == 'true' ]]; then args+=(--latest); fi
+          python3 "$RUNNER_TEMP/VEUX_R2_TOOLS/stock_source_r2/stage_stock_upstreams_r2.py" \
+            --repo "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/VEUX_R2_OUTPUT/source_snapshots" "${args[@]}"
+          test -s "$RUNNER_TEMP/VEUX_R2_OUTPUT/source_snapshots/STOCK_R2_PIN_REPORT.json"
+      - name: Publish R2 source snapshots and pin report (not flashable)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-STOCK-QGKI-R2-UPSTREAM-PINS-NO-FLASH
+          path: ${{ runner.temp }}/VEUX_R2_OUTPUT/
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 6
