@@ -1,0 +1,321 @@
+name: VEUX 5.4.274 P12 R1 WALT Structure Diagnostic - NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-stock274-p12-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  p12-diagnostic:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    env:
+      PACKAGE_NAME: VEUX_STOCK274_P11_R4_MAIN.zip
+      PACKAGE_SHA256: 46eef073d2418f0b64b66a0ff3ab33d788c485db3dcf8afa5cf56f89da27fb50
+      P11_TOOL_DIR: ${{ github.workspace }}/p11-tools
+      P12_TOOL_DIR: ${{ github.workspace }}/p11-tools/p12
+      P12_PACKAGE_NAME: VEUX_STOCK274_P12_R1_MAIN.zip
+      P12_PACKAGE_SHA256: 45737928cf03a75100e04d66b1f8f8b1c29fef50eeca32945f62f381cbeef675
+      P10_TOOL_DIR: ${{ github.workspace }}/p11-tools/p10
+      R4_TOOL_DIR: ${{ github.workspace }}/p11-tools/r4
+      P11_BUNDLES_DIR: ${{ github.workspace }}/p11-bundles
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout exact repo source read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: project
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact uploaded ZIP
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
+          test -f "project/$P12_PACKAGE_NAME" && test ! -L "project/$P12_PACKAGE_NAME"
+          printf '%s  %s\n' "$P12_PACKAGE_SHA256" "project/$P12_PACKAGE_NAME" | sha256sum -c -
+          if [[ -f "project/$PACKAGE_NAME" && ! -L "project/$PACKAGE_NAME" ]]; then
+            printf '%s  %s\n' "$PACKAGE_SHA256" "project/$PACKAGE_NAME" | sha256sum -c -
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+            echo 'P11_SOURCE_PACKAGE=WAITING_FOR_ZIP' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Static actionlint validation before any replay or build
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='project/.github/workflows/VEUX_STOCK274_P12_R1_WALT_DIAGNOSTIC.yml'
+          test -s "$workflow"
+          curl --fail --location --retry 3 --max-time 120 --silent --show-error \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-p11-actionlint"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/veux-p11-actionlint" actionlint
+          "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$workflow"
+          echo 'P11_ACTIONLINT=PASS'
+
+      - name: Unpack and SHA-authenticate source-only dependencies
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,stat,zipfile
+          base=pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          root=base/'project'/os.environ['PACKAGE_NAME']
+          tools=pathlib.Path(os.environ['P11_TOOL_DIR'])
+          bundles=pathlib.Path(os.environ['P11_BUNDLES_DIR'])
+          if tools.exists() or bundles.exists():raise SystemExit('P11_TOOL_DIRECTORY_ALREADY_EXISTS')
+          expected={'START_HIER.txt','P11_STATUS.json','P11_TESTS.log',
+                    'P10_MASTER_ORIGINAL.zip','P3_R4_SOURCE_REPLAY.zip',
+                    'p11_source_gate.py','p11_build_walt_off.sh','test_p11_source_gate.py',
+                    'test_p11_build_dryrun.py','P11_BUILDRUNNER_DRYRUN_TESTS.log'}
+          def load_valid(z,expected,manifest_name):
+              info=z.infolist();names=[x.filename for x in info]
+              if set(names)!=expected|{manifest_name} or len(names)!=len(set(names)):
+                  raise SystemExit('UNEXPECTED_ARCHIVE_MEMBERS')
+              if z.testzip():raise SystemExit('CRC_FAILURE')
+              for i in info:
+                  p=pathlib.PurePosixPath(i.filename)
+                  if p.is_absolute() or '..' in p.parts or '\\' in i.filename or i.is_dir() or stat.S_IFMT(i.external_attr>>16)==stat.S_IFLNK:
+                      raise SystemExit('UNSAFE_ARCHIVE_MEMBER '+i.filename)
+              manifest=json.loads(z.read(manifest_name))
+              hashes=manifest.get('files') if manifest_name=='manifest.json' and 'files' in manifest else manifest.get('sha256')
+              if set(hashes)!=expected:raise SystemExit('MANIFEST_SCOPE_DRIFT')
+              for n,digest in hashes.items():
+                  if hashlib.sha256(z.read(n)).hexdigest()!=digest:raise SystemExit('HASH_MISMATCH '+n)
+              return manifest
+          with zipfile.ZipFile(root) as z:
+              manifest=load_valid(z,expected,'manifest.json')
+              if manifest.get('kernel')!='5.4.274' or manifest.get('flashable') is not False:raise SystemExit('WRONG_STAGE')
+              tools.mkdir();bundles.mkdir()
+              for name in ('p11_source_gate.py','p11_build_walt_off.sh','test_p11_source_gate.py','test_p11_build_dryrun.py'):
+                  (tools/name).write_bytes(z.read(name))
+              nested={'P10_MASTER_ORIGINAL.zip':'VEUX_5_4_274_P10_WALT_KOMBI_PATCH_SAMMELPAKET.zip',
+                      'P3_R4_SOURCE_REPLAY.zip':'VEUX_STOCK274_P3_GATE_R4.zip'}
+              for old,new in nested.items():(bundles/new).write_bytes(z.read(old))
+          for nested_file,out_folder in [(bundles/'VEUX_STOCK274_P3_GATE_R4.zip',tools/'r4'),
+                                         (bundles/'VEUX_5_4_274_P10_WALT_KOMBI_PATCH_SAMMELPAKET.zip',tools/'p10')]:
+              with zipfile.ZipFile(nested_file) as zi:
+                  if zi.testzip():raise SystemExit('NESTED_CRC_FAILURE')
+                  for item in zi.infolist():
+                      p=pathlib.PurePosixPath(item.filename)
+                      if p.is_absolute() or '..' in p.parts or '\\' in item.filename or stat.S_IFMT(item.external_attr>>16)==stat.S_IFLNK:
+                          raise SystemExit('NESTED_UNSAFE_PATH')
+                  zi.extractall(out_folder)
+          for path in tools.rglob('*.py'):compile(path.read_bytes(),str(path),'exec')
+          print('P11_NESTED_PACKAGE_AND_PYTHON=PASS')
+          PY
+
+      - name: SHA-authenticate and unpack P12 port tools
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,stat,zipfile
+          root=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project'/os.environ['P12_PACKAGE_NAME']
+          target=pathlib.Path(os.environ['P12_TOOL_DIR'])
+          expected={'prepare_p12_walt_structs.py','test_prepare_p12_walt_structs.py',
+                    'diagnose_p12_walt.sh','START_HIER.txt'}
+          if target.exists():raise SystemExit('P12_TOOLS_ALREADY_EXIST')
+          with zipfile.ZipFile(root) as z:
+              names=[x.filename for x in z.infolist()]
+              if len(names)!=5 or set(names)!=expected|{'manifest.json'} or len(set(names))!=len(names):
+                  raise SystemExit('P12_ARCHIVE_SCOPE_DRIFT')
+              if z.testzip():raise SystemExit('P12_ARCHIVE_CRC_FAILURE')
+              for i in z.infolist():
+                  p=pathlib.PurePosixPath(i.filename)
+                  if i.is_dir() or p.is_absolute() or '..' in p.parts or '\\' in i.filename or stat.S_IFMT(i.external_attr>>16)==stat.S_IFLNK or i.file_size>200000:
+                      raise SystemExit('UNSAFE_P12_MEMBER '+i.filename)
+              manifest=json.loads(z.read('manifest.json'))
+              assert manifest['kernel']=='5.4.274' and manifest['flashable'] is False
+              assert manifest['stage']=='P12_R1_WALT_STRUCTURE_DIAGNOSTIC_ONLY'
+              assert set(manifest['files'])==expected
+              for n,h in manifest['files'].items():
+                  if hashlib.sha256(z.read(n)).hexdigest()!=h:raise SystemExit('P12_SHA_MISMATCH '+n)
+              target.mkdir(parents=True)
+              for n in expected:(target/n).write_bytes(z.read(n))
+          for f in target.glob('*.py'):compile(f.read_bytes(),str(f),'exec')
+          print('P12_ZIP_SCOPE_SYMLINK_CRC_SHA_AND_PYTHON=PASS')
+          PY
+          bash -n "$P12_TOOL_DIR/diagnose_p12_walt.sh"
+
+      - name: Source patch regressions before remote checkout
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s "$P11_TOOL_DIR" -p test_p11_source_gate.py -v
+          python3 -m unittest discover -s "$P10_TOOL_DIR" -p test_compose_p10_source.py -v
+          python3 -m unittest discover -s "$R4_TOOL_DIR" -p test_stage_stock274.py -v
+          python3 project/common/stock274/source_only_r2/test_prepare_stock274_p3.py
+          echo 'P11_SOURCE_REGRESSIONS=PASS'
+
+      - name: P12 structural change and negative-case regressions
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s "$P12_TOOL_DIR" -p test_prepare_p12_walt_structs.py -v
+          python3 -m py_compile "$P12_TOOL_DIR/prepare_p12_walt_structs.py" "$P12_TOOL_DIR/test_prepare_p12_walt_structs.py"
+          bash -n "$P12_TOOL_DIR/diagnose_p12_walt.sh"
+          echo 'P12_LOCAL_TESTS=PASS'
+
+      - name: Buildrunner fault-injection tests group A (1-6)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          cd "$P11_TOOL_DIR"
+          timeout 120 python3 -m unittest -v \
+            test_p11_build_dryrun.P11BuildDryRun.test_01_success_walt_off_unflashable \
+            test_p11_build_dryrun.P11BuildDryRun.test_02_wrong_kernel_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_03_walt_enabled_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_04_mismatched_source_tree_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_05_compiler_failure_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_06_no_image_fails
+          echo 'P11_BUILDRUNNER_TEST_GROUP_A=PASS'
+
+      - name: Buildrunner fault-injection tests group B (7-12)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          cd "$P11_TOOL_DIR"
+          timeout 120 python3 -m unittest -v \
+            test_p11_build_dryrun.P11BuildDryRun.test_07_no_dtb_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_08_no_system_map_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_09_no_vmlinux_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_10_no_config_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_11_wrong_arm64_image_header_fails \
+            test_p11_build_dryrun.P11BuildDryRun.test_12_wrong_fdt_dtb_header_fails
+          echo 'P11_BUILDRUNNER_TEST_GROUP_B=PASS'
+
+      - name: Checkout pinned P2-v5 historical recipe
+        if: ${{ steps.package.outputs.present == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Chrizz100/veux-resukisu-builder
+          ref: e58a67835f266620d4fdb86d816295e401a8858d
+          fetch-depth: 1
+          path: historical
+          persist-credentials: false
+
+      - name: Checkout pinned Positron vendor ancestor (will become exactly 5.4.274)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          fetch-depth: 0
+          path: kernel
+          persist-credentials: false
+
+      - name: Install YAML parser for exact P2 reconstruction
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! python3 -c 'import yaml; assert hasattr(yaml,"safe_load")'; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends python3-yaml
+          fi
+          python3 -c 'import yaml; print("P11_YAML_PARSER=PASS")'
+
+      - name: Reproduce proven P3 stock-near source without building
+        if: ${{ steps.package.outputs.present == 'true' }}
+        timeout-minutes: 75
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$R4_TOOL_DIR/stage_stock274.py"
+          test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json"
+
+      - name: Compose P10 patch on exact P3 and freeze source
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python3 "$P11_TOOL_DIR/p11_source_gate.py" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --p10-tools "$P10_TOOL_DIR" \
+            --p3-result "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json" \
+            --output "$RUNNER_TEMP/VEUX_274_P11_PREP"
+          test -s "$RUNNER_TEMP/VEUX_274_P11_PREP/P11_PREP_REPORT.json"
+
+      - name: Stage P12 structure patch on exact P11 R4 tree (no source write)
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 "$P12_TOOL_DIR/prepare_p12_walt_structs.py" \
+            --source "$GITHUB_WORKSPACE/kernel" \
+            --output "$RUNNER_TEMP/VEUX_274_P12_PORT"
+          test -s "$RUNNER_TEMP/VEUX_274_P12_PORT/P12_PREP_REPORT.json"
+          test -s "$RUNNER_TEMP/VEUX_274_P12_PORT/P11_TO_P12_WALT_STRUCTS_ONLY.patch"
+          echo 'P12_SOURCE_PATCH_STAGED=PASS; WALT_ON_COMPILATION=NOT_YET_RUN'
+
+      - name: Install exact historical clang-r416183b and C build tools
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates cpio curl flex git libelf-dev \
+            libncurses-dev libssl-dev patch python3 python-is-python3 rsync xz-utils zstd
+          export P11_TOOLCHAIN_DIR="$GITHUB_WORKSPACE/toolchains/clang-r416183b"
+          mkdir -p "$P11_TOOLCHAIN_DIR"
+          curl --fail --location --retry 4 --connect-timeout 30 --max-time 360 \
+            'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/aa2e4a514a6c85eebcc4a27149eaf9244e951a1e/clang-r416183b.tar.gz' \
+            --output "$RUNNER_TEMP/clang-r416183b.tar.gz"
+          tar -xzf "$RUNNER_TEMP/clang-r416183b.tar.gz" -C "$P11_TOOLCHAIN_DIR"
+          "$P11_TOOLCHAIN_DIR/bin/clang" --version | grep -F 'r416183b'
+          echo "P11_TOOLCHAIN_DIR=$P11_TOOLCHAIN_DIR" >> "$GITHUB_ENV"
+          echo "$P11_TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Apply P12 changes in temporary checkout and probe WALT Y objects ONLY
+        if: ${{ steps.package.outputs.present == 'true' }}
+        shell: bash
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          bash "$P12_TOOL_DIR/diagnose_p12_walt.sh"
+          test -s "$RUNNER_TEMP/VEUX_274_P12_EVIDENCE/P12_BUILD_STATUS.json"
+          echo 'P12_DIAGNOSTIC_DATA_COLLECTED=PASS; FULL_WALT_Y_KERNEL_BUILD=NOT_RUN'
+
+      - name: Publish P12 source and compiler diagnostics (NO FLASH)
+        if: ${{ always() && steps.package.outputs.present == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-5.4.274-P12-R1-WALT-STRUCTURE-PROBE-NO-FLASH
+          path: |
+            ${{ runner.temp }}/VEUX_274_P3_OUTPUT/
+            ${{ runner.temp }}/VEUX_274_P11_PREP/
+            ${{ runner.temp }}/VEUX_274_P12_PORT/
+            ${{ runner.temp }}/VEUX_274_P12_EVIDENCE/
+          if-no-files-found: warn
+          retention-days: 14
