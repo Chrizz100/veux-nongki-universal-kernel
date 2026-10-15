@@ -1,0 +1,181 @@
+name: VEUX Stock QGKI 274 R1 - Import (NO BUILD)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fetch_latest_sources:
+        description: 'Also stage latest official BaKaSU, SUSFS 2.3 and NoMount SOURCE snapshots (no kernel patch)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-stock-qgki-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import-stock-evidence:
+    name: verified-stock-qgki-reference-only
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PACKAGE_NAME: VEUX_STOCK_QGKI_274_IMPORT_R1_MAIN.zip
+      PACKAGE_SHA256: 45d7cebf4496301c2f1b32a635d2e3eb5fa6d55559919b20135a560e3be86189
+      STOCK_RELEASE: 5.4.274-qgki-g82179e362f33
+      PREFIX: stock-qgki/5.4.274-qgki-g82179e362f33
+      GIT_TERMINAL_PROMPT: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+
+    steps:
+      - name: Checkout repo contents read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact root ZIP SHA and independent actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/$PACKAGE_NAME"
+          printf '%s  %s\n' "$PACKAGE_SHA256" "$GITHUB_WORKSPACE/$PACKAGE_NAME" | sha256sum --check --status
+          test -f "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_QGKI_274_IMPORT_R1.yml"
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 150 \
+            --silent --show-error \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            -o "$RUNNER_TEMP/actionlint_1.7.12.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$RUNNER_TEMP/actionlint_1.7.12.tar.gz" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/veux-r1-actionlint"
+          tar -xzf "$RUNNER_TEMP/actionlint_1.7.12.tar.gz" \
+            -C "$RUNNER_TEMP/veux-r1-actionlint" actionlint
+          "$RUNNER_TEMP/veux-r1-actionlint/actionlint" -oneline \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_QGKI_274_IMPORT_R1.yml"
+          echo 'ROOT_ZIP_SHA256_AND_ACTIONLINT=PASS'
+
+      - name: Verify ZIP paths, CRC and every internal SHA before extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/VEUX_QGKI_R1_SOURCE"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, stat, zipfile
+          root=pathlib.Path(os.environ['GITHUB_WORKSPACE'])
+          inp=root/os.environ['PACKAGE_NAME']
+          dst=pathlib.Path(os.environ['RUNNER_TEMP'])/'VEUX_QGKI_R1_SOURCE'
+          prefix=os.environ['PREFIX']
+          with zipfile.ZipFile(inp) as z:
+              infolist=z.infolist()
+              names=[i.filename for i in infolist]
+              if not names or len(names)>36 or len(set(names))!=len(names):
+                  raise SystemExit('REFUSE_ARCHIVE_ENTRY_COUNT_OR_DUPLICATES')
+              if z.testzip() is not None:raise SystemExit('REFUSE_ARCHIVE_CRC_FAILURE')
+              expected_manifest=prefix+'/RELEASE_MANIFEST.json'
+              if expected_manifest not in names:raise SystemExit('RELEASE_MANIFEST_NOT_FOUND')
+              manifest=json.loads(z.read(expected_manifest))
+              if (manifest['root']!=prefix or manifest['stage']!='STOCK_QGKI_5_4_274_IMPORT_R1'
+                  or manifest['stock_image_in_package'] is not False
+                  or manifest['flashable'] is not False
+                  or manifest['repository_write'] is not False
+                  or manifest['stock_kernel_source_complete'] is not False):
+                  raise SystemExit('REFUSE_UNEXPECTED_RELEASE_SCOPE')
+              expected=manifest['files']
+              if set(names)!=set(expected)|{expected_manifest}:
+                  raise SystemExit('REFUSE_ZIP_EXTRA_OR_MISSING_FILES')
+              total=0
+              for i in infolist:
+                  name=i.filename
+                  parts=pathlib.PurePosixPath(name)
+                  kind=stat.S_IFMT(i.external_attr>>16)
+                  if (parts.is_absolute() or '..' in parts.parts or '\\' in name or
+                      not name.startswith(prefix+'/') or i.is_dir() or
+                      kind not in (0,stat.S_IFREG) or i.file_size>6_000_000):
+                      raise SystemExit('REFUSE_UNSAFE_MEMBER '+name)
+                  total+=i.file_size
+                  if total>15_000_000:raise SystemExit('REFUSE_ARCHIVE_BOMB')
+                  data=z.read(name)
+                  if name!=expected_manifest and hashlib.sha256(data).hexdigest()!=expected[name]:
+                      raise SystemExit('REFUSE_INTERNAL_SHA_DRIFT '+name)
+              for name in names:
+                  dest=dst/name
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(z.read(name))
+          print('ZIP_SCOPE_CRC_MEMBER_SHA256=PASS')
+          PY
+
+      - name: Validate extracted scripts and 48 source-regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/VEUX_QGKI_R1_SOURCE/$PREFIX/tools"
+          python3 -m py_compile \
+            "$tools/stock_import.py" "$tools/stage_latest_upstreams.py" \
+            "$tools/test_stock_import.py" "$tools/test_stage_latest_upstreams.py"
+          python3 -m unittest discover -s "$tools" -p 'test_*.py' -v
+          echo 'STOCK_QGKI_48_REGRESSION_TESTS=PASS'
+
+      - name: Import exact stock config, headers and vDSO into isolated runner folders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/VEUX_QGKI_R1_SOURCE/$PREFIX/tools/stock_import.py" \
+            --source-root "$RUNNER_TEMP/VEUX_QGKI_R1_SOURCE/$PREFIX" \
+            --output-dir "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED"
+          test -s "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED/VEUX_STOCK_IMPORT_REPORT.json"
+          test -f "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED/stock-qgki/$STOCK_RELEASE/kheaders/include/generated/utsrelease.h"
+          echo 'STOCK_QGKI_DIRECTORY_IMPORT=PASS'
+
+      - name: Create reproducible reference directory artifact (not a flash ZIP)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD"
+          tar --create --xz --sort=name --mtime='@0' --numeric-owner \
+            --owner=0 --group=0 \
+            --file="$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/VEUX_STOCK_QGKI_PREPARED_TREE.tar.xz" \
+            --directory="$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED" stock-qgki
+          cp "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED/VEUX_STOCK_IMPORT_REPORT.json" "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/"
+          cp "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED/VEUX_STOCK_INTEGRATION_STATUS.json" "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/"
+          cp "$RUNNER_TEMP/VEUX_QGKI_R1_PREPARED/README_IMPORT.txt" "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/"
+          sha256sum "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/VEUX_STOCK_QGKI_PREPARED_TREE.tar.xz" \
+            > "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/PREPARED_TREE_SHA256.txt"
+          {
+            echo '## VEUX Stock QGKI Import'
+            echo ''
+            echo '- Stock reference: **5.4.274-qgki-g82179e362f33**'
+            echo '- Extracted header entries: **9405**'
+            echo '- Reference import: **PASS**'
+            echo '- Full matching stock source tree: **MISSING**'
+            echo '- BaKaSU / SUSFS 2.3 / NoMount: **NOT INTEGRATED**'
+            echo '- Kernel build, vendor ABI and device test: **NOT RUN**'
+            echo '- Flash approval: **NO**'
+            echo '- No writes to GitHub main; directories exist in the runner and download artifact only.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo 'PREPARED_SOURCE_REFERENCE_ARCHIVE=PASS'
+
+      - name: Optionally resolve and archive CURRENT upstream source commits (NO APPLY)
+        if: ${{ inputs.fetch_latest_sources == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/VEUX_QGKI_R1_SOURCE/$PREFIX/tools/stage_latest_upstreams.py" \
+            --output-dir "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/upstream_source_snapshots"
+          test -s "$RUNNER_TEMP/VEUX_QGKI_R1_DOWNLOAD/upstream_source_snapshots/SOURCE_SNAPSHOTS.json"
+          {
+            echo ''
+            echo '- Optional latest upstream source snapshots: **downloaded and SHA-locked in artifact**'
+            echo '- These sources are not yet ported to Linux 5.4.274.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish stock reference and diagnostics as nonflashable artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-STOCK-QGKI-274-R1-REFERENCE-NO-FLASH
+          path: ${{ runner.temp }}/VEUX_QGKI_R1_DOWNLOAD/
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 0
