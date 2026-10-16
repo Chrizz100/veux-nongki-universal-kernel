@@ -1,0 +1,144 @@
+name: VEUX STOCK OEM source comparison 134 to 274 R1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-stock-oem-upstream-r1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-only-review:
+    name: Source staging only - no compile or flash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      SOURCE_BUNDLE: VEUX_STOCK_UPSTREAM_R1_MAIN.zip
+      SOURCE_BUNDLE_SHA256: 19830945fdfca37c6f37d77e5e34f7a6f557cb341e463bf06e13db3b1344eda6
+      XIAOMI_COMMIT: 61397e524093d1ccb94769b5460825e2eaf8871e
+      ANDROID_BASE_COMMIT: 6852b6e8e791f941de654abfdbc2996813dc5058
+      ANDROID_TARGET_COMMIT: 181edea14ae07024cc87699f3cd49116e6f8fbb3
+    steps:
+      - name: Checkout user-owned repo read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Actionlint 1.7.12 verified preflight for this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --show-error --silent --retry 3 --retry-all-errors \
+            --connect-timeout 20 --max-time 180 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
+          "$RUNNER_TEMP/actionlint-bin/actionlint" \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_UPSTREAM_R1.yml"
+          echo 'ACTIONLINT_CHECK_PASSED'
+
+      - name: Verify main ZIP and securely unpack into temporary location
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$GITHUB_WORKSPACE/$SOURCE_BUNDLE"
+          test -f "$bundle" || { echo "MISSING_ROOT_ZIP: $SOURCE_BUNDLE" >&2; exit 1; }
+          printf '%s  %s\n' "$SOURCE_BUNDLE_SHA256" "$bundle" | sha256sum --check --status
+          export BUNDLE_PATH="$bundle"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+
+          archive = Path(os.environ['BUNDLE_PATH'])
+          dest = Path(os.environ['RUNNER_TEMP']) / 'veux-stock-r1'
+          dest.mkdir(parents=True, exist_ok=True)
+          with ZipFile(archive) as z:
+              for info in z.infolist():
+                  path = PurePosixPath(info.filename)
+                  if (path.is_absolute() or '..' in path.parts or
+                          not info.filename.startswith('stock_upstream_r1/') or
+                          ((info.external_attr >> 16) & 0o170000) == 0o120000):
+                      raise SystemExit(f'UNSAFE_ZIP_ENTRY: {info.filename}')
+              z.extractall(dest)
+          expected = dest / 'stock_upstream_r1' / 'scripts' / 'prepare_upstream.py'
+          if not expected.is_file():
+              raise SystemExit('NO_UPSTREAM_SCRIPT_IN_BUNDLE')
+          print('Verified and unpacked source-only bundle')
+          PY
+
+      - name: Offline regression tests (no kernel build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/veux-stock-r1/stock_upstream_r1"
+          python3 -m unittest discover -s "$bundle/tests" -v
+          python3 -m py_compile "$bundle/scripts/prepare_upstream.py"
+
+      - name: Read pinned original Xiaomi VEUX 5.4.134 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-stock-sources"
+          git clone --quiet --depth 1 --single-branch --branch veux-r-oss \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
+            "$RUNNER_TEMP/veux-stock-sources/xiaomi"
+          actual="$(git -C "$RUNNER_TEMP/veux-stock-sources/xiaomi" rev-parse HEAD)"
+          test "$actual" = "$XIAOMI_COMMIT" || {
+            echo "XIAOMI_SOURCE_DRIFT: $actual" >&2
+            exit 1
+          }
+
+      - name: Read pinned Android Common 5.4.134 and 5.4.274 tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          common="$RUNNER_TEMP/veux-stock-sources/android-common"
+          mkdir -p "$common"
+          git -C "$common" init --quiet
+          git -C "$common" remote add origin https://github.com/aosp-mirror/kernel_common.git
+          git -C "$common" fetch --quiet --depth=1 origin tag android11-5.4.134_r00
+          git -C "$common" fetch --quiet --depth=1 origin tag android11-5.4.274_r00
+          observed134="$(git -C "$common" rev-parse 'refs/tags/android11-5.4.134_r00^{commit}')"
+          observed274="$(git -C "$common" rev-parse 'refs/tags/android11-5.4.274_r00^{commit}')"
+          test "$observed134" = "$ANDROID_BASE_COMMIT" || {
+            echo "AOSP_134_PIN_DRIFT: $observed134" >&2
+            exit 1
+          }
+          test "$observed274" = "$ANDROID_TARGET_COMMIT" || {
+            echo "AOSP_274_PIN_DRIFT: $observed274" >&2
+            exit 1
+          }
+
+      - name: Stage only identical-preimage source updates; record blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/veux-stock-r1/stock_upstream_r1"
+          output="$RUNNER_TEMP/veux-stock-r1-results"
+          mkdir -p "$output"
+          python3 "$bundle/scripts/prepare_upstream.py" \
+            --manifest "$bundle/manifest.json" \
+            --xiaomi "$RUNNER_TEMP/veux-stock-sources/xiaomi" \
+            --aosp "$RUNNER_TEMP/veux-stock-sources/android-common" \
+            --out "$output"
+          echo 'SOURCE-ONLY STAGING FINISHED; NOT A KERNEL COMPILE PASS.'
+
+      - name: Upload source-only report and safe partial patch
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: VEUX_STOCK_UPSTREAM_R1_SOURCE_ONLY
+          path: ${{ runner.temp }}/veux-stock-r1-results/
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 14
