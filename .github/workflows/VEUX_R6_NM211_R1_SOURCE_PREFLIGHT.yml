@@ -1,0 +1,204 @@
+name: VEUX R6 NoMount 2.1.1 R1 - Source Only - NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r6-nm211-source-only-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  VEUX_EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  VEUX_MAIN_ZIP: VEUX_R6_NM211_R1_MAIN.zip
+  VEUX_MAIN_SHA256: 3d38e81f3c1e9b9abad57fc1aaf7e77e315af939bd9af0691667ab3d9d03a5f7
+
+jobs:
+  source_only:
+    name: Pinned R6 source and NoMount211 preflight - no kernel compile
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact main commit read only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify checkout and immutable main ZIP before running any code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$VEUX_EXPECTED_REPOSITORY"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -f "$VEUX_MAIN_ZIP"
+          test ! -L "$VEUX_MAIN_ZIP"
+          printf '%s  %s\n' "$VEUX_MAIN_SHA256" "$VEUX_MAIN_ZIP" | sha256sum --check --status
+          echo 'MAIN_ZIP_IDENTITY=PASS'
+
+      - name: Verify workflow with official checksum-pinned actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/r6-nm211-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/r6-nm211-actionlint" actionlint
+          "$RUNNER_TEMP/r6-nm211-actionlint/actionlint" -oneline \
+            .github/workflows/VEUX_R6_NM211_R1_SOURCE_PREFLIGHT.yml
+          echo 'ACTIONLINT_R1=PASS'
+
+      - name: Safely extract hash-checked source-only payload OUTSIDE checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          arc=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['VEUX_MAIN_ZIP']
+          output=Path(os.environ['RUNNER_TEMP'])/'veux-r6-nm211-overlay'
+          if output.exists() or output.is_symlink():
+              raise SystemExit('UNEXPECTED_EXISTING_OVERLAY')
+          output.mkdir(parents=True)
+          expected={
+              'README_START_HIER_DE.txt',
+              'MANIFEST_SHA256.json',
+              'common/scripts/veux_r6_nomount211_preflight_r1.py',
+              'common/r6_nm211/pinned_nomount_7046c7ad_source.tar.gz',
+              'Tests/test_veux_r6_nomount211_preflight_r1.py',
+          }
+          with zipfile.ZipFile(arc) as z:
+              if z.testzip() is not None or set(z.namelist()) != expected:
+                  raise SystemExit('ZIP_CRC_OR_MEMBER_SCOPE_CHANGED')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if manifest.get('approved_for_flash') is not False or manifest.get('source_only') is not True:
+                  raise SystemExit('UNSAFE_PACKAGE_MANIFEST')
+              if manifest.get('reference_run') != 38530535344:
+                  raise SystemExit('WRONG_R6_RUN')
+              if set(manifest.get('files',{})) != expected-{'MANIFEST_SHA256.json'}:
+                  raise SystemExit('MANIFEST_FILE_SCOPE_CHANGED')
+              for info in z.infolist():
+                  name=PurePosixPath(info.filename)
+                  if name.is_absolute() or '..' in name.parts or '\\' in info.filename:
+                      raise SystemExit('UNSAFE_ARCHIVE_PATH')
+                  if not stat.S_ISREG(info.external_attr >> 16) and (info.external_attr >> 16):
+                      raise SystemExit('UNSAFE_ARCHIVE_FILE_KIND')
+                  data=z.read(info.filename)
+                  if info.filename != 'MANIFEST_SHA256.json':
+                      if hashlib.sha256(data).hexdigest() != manifest['files'][info.filename]:
+                          raise SystemExit('MEMBER_HASH_MISMATCH '+info.filename)
+                  target=output.joinpath(*name.parts)
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  if target.exists() or target.is_symlink():
+                      raise SystemExit('DUPLICATE_MEMBER_DESTINATION')
+                  target.write_bytes(data)
+          print('OVERLAY_SOURCE_ONLY_IDENTITY=PASS; EXTRACTED_OUTSIDE_CHECKOUT')
+          PY
+          echo "NM211_OVERLAY=$RUNNER_TEMP/veux-r6-nm211-overlay" >> "$GITHUB_ENV"
+
+      - name: Offline Python syntax, pinned source and negative regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ast,os
+          from pathlib import Path
+          root=Path(os.environ['NM211_OVERLAY'])
+          for rel in ('common/scripts/veux_r6_nomount211_preflight_r1.py',
+                      'Tests/test_veux_r6_nomount211_preflight_r1.py'):
+              ast.parse((root/rel).read_text(),filename=rel)
+          print('PYTHON_AST_R1=PASS')
+          PY
+          python3 -m unittest discover -s "$NM211_OVERLAY/Tests" \
+            -p 'test_veux_r6_nomount211_preflight_r1.py' -v
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'SOURCE_ONLY_REGRESSION_R1=PASS'
+
+      - name: Prepare existing proven R6 source dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f common/scripts/veux_fleet_35222_selinux_r3.py
+          test -f common/scripts/veux_update_engine.py
+          test -f common/scripts/veux_susfs_54_port_probe_r3.py
+          test -f common/scripts/veux_bakasu_official_selinux_r6.py
+          test -f common/scripts/veux_source_transport.py
+          test -f common/contracts/CURRENT_BUILD.json
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex \
+            git jq libelf-dev libncurses-dev libssl-dev perl python3 \
+            python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-nm211-venv"
+          "$RUNNER_TEMP/veux-nm211-venv/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          echo "NM211_PY=$RUNNER_TEMP/veux-nm211-venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Prepare immutable R6 donors with ONLY NoMount v2.1.1 changed in temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$NM211_PY" -u "$NM211_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+            prepare --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-r6-nm211-work" --kernel 5.4.274
+
+      - name: Check source integration, R6 repairs and SUSFS manual-review guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$NM211_PY" -u "$NM211_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+            preflight --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-r6-nm211-work" --kernel 5.4.274
+          "$NM211_PY" - <<'PY'
+          import json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'veux-r6-nm211-work'
+          proof=json.loads((root/'report/NOMOUNT211_R6_SOURCE_ONLY.json').read_text())
+          if proof.get('status')!='SOURCE_PREFLIGHT_ONLY_PASS':
+              raise SystemExit('SOURCE_PREFLIGHT_STATUS_NOT_PASS')
+          for field in ('kernel_built','device_pass','flash_permission','bakasu_or_susfs_upgraded'):
+              if proof.get(field) is not False:
+                  raise SystemExit('UNSAFE_SUCCESS_CLAIM_'+field)
+          if proof['candidate_nomount']!='7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3':
+              raise SystemExit('NOMOUNT_CANDIDATE_CHANGED')
+          if proof['nomount_stack_protector_review_required'] is not True:
+              raise SystemExit('STACK_REVIEW_WAS_SILENCED')
+          print('R6_NM211_SOURCE_GATE=PASS; SUSFS_SELINUX_PORT=NOT_APPROVED; DEVICE_PASS=NO')
+          PY
+
+      - name: Keep source-only audit logs, including failed preflight diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R6-NoMount211-R1-SOURCE-ONLY-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-r6-nm211-work/prepare.json
+            ${{ runner.temp }}/veux-r6-nm211-work/report/
+            ${{ runner.temp }}/veux-r6-nm211-work/source-audit/5.4.274/integration.json
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+
+      - name: Assert no kernel compile, repository write or automatic promotion
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'R6_SOURCE_REPOSITORY_UNCHANGED=PASS'
+          echo 'NO_KERNEL_BUILD=YES'
+          echo 'NO_AK3_OR_FLASH=YES'
+          echo 'NO_MAIN_PROMOTION=YES'
