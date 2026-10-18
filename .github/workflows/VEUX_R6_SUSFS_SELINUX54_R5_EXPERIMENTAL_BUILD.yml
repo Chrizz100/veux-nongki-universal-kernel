@@ -91,11 +91,13 @@ jobs:
           python3 "$RUNNER_TEMP/veux-r5-authenticated-bootstrap.py" \
             --main "$GITHUB_WORKSPACE/$VEUX_MAIN_ZIP" \
             --work "$RUNNER_TEMP/veux-r5-verified-overlay"
-          echo "R5_OVERLAY=$RUNNER_TEMP/veux-r5-verified-overlay/r5" >> "$GITHUB_ENV"
-          echo "R4_OVERLAY=$RUNNER_TEMP/veux-r5-verified-overlay/r4" >> "$GITHUB_ENV"
-          echo "NM211_R2_OVERLAY=$RUNNER_TEMP/veux-r5-verified-overlay/r2" >> "$GITHUB_ENV"
-          echo "R5_R4_SOURCE=$RUNNER_TEMP/veux-r5-verified-overlay/R4_COMPILED_REFERENCE_SELINUX.c" >> "$GITHUB_ENV"
-          echo "R5_D726_SOURCE=$RUNNER_TEMP/veux-r5-verified-overlay/D726_ORIGINAL_REFERENCE_SELINUX.c" >> "$GITHUB_ENV"
+          {
+            printf 'R5_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5-verified-overlay/r5"
+            printf 'R4_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5-verified-overlay/r4"
+            printf 'NM211_R2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5-verified-overlay/r2"
+            printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5-verified-overlay/R4_COMPILED_REFERENCE_SELINUX.c"
+            printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5-verified-overlay/D726_ORIGINAL_REFERENCE_SELINUX.c"
+          } >> "$GITHUB_ENV"
           echo 'R5_R4_R2_EVIDENCE_AND_PROTECTED_UNPACK=PASS'
 
       - name: Offline 122 R1 R2 R3 R4 R5 regression and negative tests
