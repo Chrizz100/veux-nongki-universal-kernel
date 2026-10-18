@@ -1,0 +1,217 @@
+name: VEUX 5.4 R5S1 - Official BakaSU sync-susfs f308 plus d726 - NO FLASH
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_build:
+        description: 'Experimental kernel compile; NO FLASH, keep R4/R5 untouched'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-sync-f308-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPOSITORY: Chrizz100/veux-nongki-universal-kernel
+  ROOT_ZIP: VEUX_SYNC_SUSFS_R5S1_MAIN.zip
+  ROOT_ZIP_SHA256: 038285dfa9a1ebc7f3c6b175f114e01f1542e976ada8139274857ae3c462288a
+
+jobs:
+  official_sync_r5s1:
+    name: Exact f308 plus newer d726 & R5 on VEUX 5.4 (NO FLASH)
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout exact source commit without persistent credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact read-only repository and cryptographic ZIP identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -f "$GITHUB_WORKSPACE/$ROOT_ZIP"
+          printf '%s  %s\n' "$ROOT_ZIP_SHA256" "$GITHUB_WORKSPACE/$ROOT_ZIP" | sha256sum --check --status
+          echo 'SYNC_R5S1_MAIN_SHA256=PASS'
+
+      - name: Verify this exact workflow with checksum-pinned actionlint and ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/veux-sync-r5s1-actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/veux-sync-r5s1-actionlint" actionlint
+          "$RUNNER_TEMP/veux-sync-r5s1-actionlint/actionlint" -oneline \
+            .github/workflows/VEUX_SYNC_SUSFS_R5S1_EXPERIMENTAL_BUILD.yml
+          echo 'SYNC_R5S1_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+      - name: Extract only independently hash-checked scripts outside repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,stat,zipfile
+          from pathlib import Path
+          f=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['ROOT_ZIP']
+          expected=os.environ['ROOT_ZIP_SHA256']
+          if hashlib.sha256(f.read_bytes()).hexdigest()!=expected:
+              raise SystemExit('SYNC_R5S1_OUTER_SHA_DRIFT')
+          with zipfile.ZipFile(f) as z:
+              if z.testzip() is not None:
+                  raise SystemExit('SYNC_R5S1_BAD_ZIP_CRC')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              item='common/scripts/veux_sync_susfs_r1_unpack.py'
+              raw=z.read(item)
+              if (m.get('schema')!=6 or m.get('approved_for_flash') is not False
+                  or hashlib.sha256(raw).hexdigest()!=m['files'][item]):
+                  raise SystemExit('SYNC_R5S1_BOOTSTRAP_NOT_AUTHENTIC')
+          dest=Path(os.environ['RUNNER_TEMP'])/'veux-sync-r5s1-unpack-verified.py'
+          if dest.exists():raise SystemExit('SYNC_R5S1_BOOTSTRAP_DEST_EXISTS')
+          dest.write_bytes(raw)
+          PY
+          python3 "$RUNNER_TEMP/veux-sync-r5s1-unpack-verified.py" \
+            --main "$GITHUB_WORKSPACE/$ROOT_ZIP" \
+            --work "$RUNNER_TEMP/veux-sync-r5s1-overlay"
+          {
+            printf 'SYNC_OVERLAY=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay"
+            printf 'R5_OVERLAY=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay/nested_r5_r4_r2/r5"
+            printf 'R4_OVERLAY=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay/nested_r5_r4_r2/r4"
+            printf 'NM211_R2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay/nested_r5_r4_r2/r2"
+            printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay/nested_r5_r4_r2/R4_COMPILED_REFERENCE_SELINUX.c"
+            printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-overlay/nested_r5_r4_r2/D726_ORIGINAL_REFERENCE_SELINUX.c"
+          } >> "$GITHUB_ENV"
+          echo 'SYNC_R5S1_OFFICIAL_SOURCE_R5_R4_R2_ARCHIVES=PASS'
+
+      - name: Offline R1-R5 and sync-susfs port regression and negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$SYNC_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+          python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p 'test_veux_r6_nomount211_preflight_r1.py' -v
+          python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p 'test_veux_r6_nomount211_build_r2.py' -v
+          python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p 'test_susfs_selinux54_r3.py' -v
+          python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p 'test_veux_r6_susfs_selinux54_build_r4.py' -v
+          python3 -m unittest discover -s "$R5_OVERLAY/Tests" -p 'test_veux_r5_susfs_selinux.py' -v
+          python3 -m unittest discover -s "$SYNC_OVERLAY/Tests" -p 'test_veux_sync_susfs_r1.py' -v
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'SYNC_R5S1_ALL_REGRESSIONS=PASS'
+
+      - name: Install unchanged pinned R6 build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for p in common/scripts/veux_fleet_35222_selinux_r3.py \
+            common/scripts/veux_bakasu_official_selinux_r6.py \
+            common/scripts/veux_update_engine.py \
+            common/scripts/veux_release_device.py \
+            common/scripts/veux_source_transport.py; do
+            test -f "$p"
+          done
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc binutils bison build-essential ca-certificates curl dwarves file flex \
+            git jq libelf-dev libncurses-dev libssl-dev perl python3 \
+            python3-venv python3-yaml rsync unzip zip xz-utils zstd
+          python3 -m venv "$RUNNER_TEMP/veux-sync-r5s1-venv"
+          "$RUNNER_TEMP/veux-sync-r5s1-venv/bin/python" -m pip install \
+            --disable-pip-version-check --retries 2 --timeout 30 \
+            ruamel.yaml==0.19.1 PyYAML==6.0.3
+          printf 'SYNC_PY=%s\n' "$RUNNER_TEMP/veux-sync-r5s1-venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Prepare pinned R6 donors with proven NoMount 2.1.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SYNC_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+            prepare --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-sync-r5s1-work" --kernel 5.4.274
+
+      - name: Verify real 5.4 source and SUSFS/SELinux compatibility boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SYNC_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+            preflight --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-sync-r5s1-work" --kernel 5.4.274
+          export PYTHONPATH="$SYNC_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+          "$SYNC_PY" -u "$SYNC_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py" \
+            audit --d726 "$SYNC_OVERLAY/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c" \
+            --reference "$SYNC_OVERLAY/common/sync/VEUX_SYNC_F308_D726_R5_HOOK.c"
+          echo 'SYNC_R5S1_SOURCE_SECURITY_AND_NOMOUNT_PREFLIGHT=PASS'
+
+      - name: Compile isolated official f308 plus d726 plus R5 on proven R6
+        if: ${{ inputs.enable_build == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$SYNC_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+          "$SYNC_PY" -u "$SYNC_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py" \
+            build --repo "$GITHUB_WORKSPACE" \
+            --work "$RUNNER_TEMP/veux-sync-r5s1-work" \
+            --reference "$SYNC_OVERLAY/common/sync/VEUX_SYNC_F308_D726_R5_HOOK.c" \
+            --jobs 4
+
+      - name: Independently require compiled kernel R4 ABI static boot and AK3 identity
+        if: ${{ inputs.enable_build == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SYNC_PY" -u "$SYNC_OVERLAY/common/scripts/veux_sync_susfs_r1_verify_result.py" \
+            --work "$RUNNER_TEMP/veux-sync-r5s1-work" \
+            --overlay "$SYNC_OVERLAY"
+
+      - name: Publish strict source and build diagnostics even if compilation failed
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R5S1-SYNC-SUSFS-AUDIT-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-sync-r5s1-overlay/ZIP_VALIDATION.json
+            ${{ runner.temp }}/veux-sync-r5s1-work/prepare.json
+            ${{ runner.temp }}/veux-sync-r5s1-work/report/
+            ${{ runner.temp }}/veux-sync-r5s1-work/builds/diagnostics/5.4.274/
+            ${{ runner.temp }}/veux-sync-r5s1-work/source-audit/5.4.274/integration.json
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 6
+
+      - name: Publish experimental kernel only after independent R4 ABI gate
+        if: ${{ success() && inputs.enable_build == true }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R5S1-SYNC-SUSFS-EXPERIMENTAL-NO-FLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-sync-r5s1-work/public/5.4.274/
+          if-no-files-found: error
+          retention-days: 21
+          compression-level: 0
+
+      - name: Prove source checkout unchanged and no flash or promotion
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'SYNC_R5S1_REPOSITORY_UNCHANGED=PASS'
+          echo 'SYNC_R5S1_UPSTREAM_5_4_UNSUPPORTED_NATIVE_HOOK=BLOCKED'
+          echo 'SYNC_R5S1_UPSTREAM_32BIT_522_NOT_INTEGRATED=YES'
+          echo 'SYNC_R5S1_NO_FLASH_OR_PROMOTION=YES'
