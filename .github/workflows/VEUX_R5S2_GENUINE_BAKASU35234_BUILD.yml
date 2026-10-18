@@ -67,7 +67,7 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP/veux-r5s2-actionlint" actionlint
           command -v shellcheck
           "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" -oneline \
-            .github/workflows/VEUX_VEUX_R5S2_GENUINE_BAKASU35234_BUILD.yml
+            .github/workflows/VEUX_R5S2_GENUINE_BAKASU35234_BUILD.yml
           echo 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'
 
       - name: Authenticate R5S2 archive and full original R5S1 nested CI chain
