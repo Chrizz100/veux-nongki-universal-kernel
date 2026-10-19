@@ -1,0 +1,667 @@
+name: VEUX SUSFS 5.4 P4 R4 Source Parity Gate - NO BUILD NO FLASH
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-susfs54-p4-source-only-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  P4_WORK: /tmp/veux-susfs54-p4-${{ github.run_id }}
+
+jobs:
+  p4_source_gate:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: P4 source parity R4 and P3 - 17 tests - NO KERNEL BUILD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - name: Checkout exact repository commit (no persisted credentials)
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: "Verify exact repo, HEAD and R4 main archive SHA"
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+        test "$GITHUB_REF" = 'refs/heads/main'
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        test -f VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip
+        printf '%s  %s\n' \
+          '8deeb75bdd09df49e48f384009268de03eb18555606a27f88074a2375195ade9' \
+          VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip | sha256sum --check --status
+        echo 'P4_R4_MAIN_SOURCE_IDENTITY=PASS'
+
+    - name: "Verify self with pinned actionlint and ShellCheck"
+      shell: bash
+      run: |
+        set -euo pipefail
+        f="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+        curl -fLSsS --retry 3 --max-time 120 \
+          'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+          -o "$f"
+        printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$f" | sha256sum --check --status
+        mkdir -p "$RUNNER_TEMP/veux-p4-actionlint"
+        tar -xzf "$f" -C "$RUNNER_TEMP/veux-p4-actionlint" actionlint
+        if ! command -v shellcheck >/dev/null 2>&1; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends shellcheck
+        fi
+        command -v shellcheck
+        "$RUNNER_TEMP/veux-p4-actionlint/actionlint" -oneline .github/workflows/VEUX_SUSFS54_P4_R4_SOURCE_GATE_NO_BUILD.yml
+        echo 'P4_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+    - name: "Authenticate immutable R4 and P3 artifact metadata"
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$P4_WORK/reports"
+        python3 - <<'PY_P4_AUTH'
+        import json,os,urllib.request
+        from pathlib import Path
+        repo=os.environ['GITHUB_REPOSITORY']
+        token=os.environ['GH_TOKEN']
+        expected={
+            12167285024: ('VEUX-R5S2-NMDEV8175-BAKASU35234-AUDIT-39207040902',
+                          39207040902, '73a8c2d9b9be945ea1c2a7f6893c8fb9c8c2d122',
+                          'sha256:f81f4f47e7c61ea87bee3ecf6e400476f5ffe7a77f9a872eed6e1f16b64080a8'),
+            12173591932: ('VEUX-SUSFS54-P3-R4-PREFLIGHT-SOURCE-39225149753',
+                          39225149753, '8915d0f97a6b88b76aef30732635c92ec762de7a',
+                          'sha256:eacc332f5154b2708560b2dd00a16df3c3847c113535e2132ee9f31ea5f841f0')
+        }
+        report={}
+        for aid,(name,run,sha,digest) in expected.items():
+            url=f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}'
+            req=urllib.request.Request(url,headers={
+                'Accept':'application/vnd.github+json',
+                'Authorization':'Bearer '+token,
+                'User-Agent':'veux-susfs54-p4-source-gate',
+                'X-GitHub-Api-Version':'2022-11-28'})
+            with urllib.request.urlopen(req,timeout=35) as response:
+                info=json.load(response)
+            workflow=info.get('workflow_run') or {}
+            if (info.get('id')!=aid or info.get('name')!=name or info.get('expired') is not False
+                or info.get('digest')!=digest or workflow.get('id')!=run
+                or workflow.get('head_sha')!=sha or workflow.get('head_branch')!='main'):
+                raise SystemExit('P4_UPSTREAM_ARTIFACT_PROVENANCE_MISMATCH:'+str(aid))
+            report[str(aid)]={'name':name,'run_id':run,'head_sha':sha,'digest':digest,'expired':False}
+        p=Path(os.environ['P4_WORK'])/'reports/UPSTREAM_ARTIFACT_PINS.json'
+        p.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
+        print('P4_R4_P3_ARTIFACT_METADATA_PINNED=PASS')
+        PY_P4_AUTH
+
+    - name: "Download and verify original R4/P3 artifact ZIPs"
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$P4_WORK/archives" "$P4_WORK/p3" "$P4_WORK/r4"
+        curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          'https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel/actions/artifacts/12173591932/zip' \
+          -o "$P4_WORK/archives/p3.zip"
+        curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          'https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel/actions/artifacts/12167285024/zip' \
+          -o "$P4_WORK/archives/r4.zip"
+        printf '%s  %s\n' 'eacc332f5154b2708560b2dd00a16df3c3847c113535e2132ee9f31ea5f841f0' "$P4_WORK/archives/p3.zip" | sha256sum --check --status
+        printf '%s  %s\n' 'f81f4f47e7c61ea87bee3ecf6e400476f5ffe7a77f9a872eed6e1f16b64080a8' "$P4_WORK/archives/r4.zip" | sha256sum --check --status
+        python3 - <<'PY_P4_EXTRACT'
+        import os,stat,zipfile
+        from pathlib import Path,PurePosixPath
+        root=Path(os.environ['P4_WORK'])
+        for name in ('p3','r4'):
+            archive=root/'archives'/f'{name}.zip'
+            target=root/name
+            with zipfile.ZipFile(archive) as z:
+                if z.testzip() is not None:
+                    raise SystemExit('P4_BAD_ARCHIVE_CRC:'+name)
+                seen=set()
+                for item in z.infolist():
+                    rel=PurePosixPath(item.filename)
+                    if (not item.filename or '\\' in item.filename or rel.is_absolute() or '..' in rel.parts
+                        or item.filename in seen or stat.S_IFMT(item.external_attr>>16)==stat.S_IFLNK):
+                        raise SystemExit('P4_UNSAFE_ARCHIVE_PATH:'+name)
+                    seen.add(item.filename)
+                    out=target.joinpath(*rel.parts)
+                    if item.is_dir():
+                        out.mkdir(parents=True,exist_ok=True)
+                    else:
+                        out.parent.mkdir(parents=True,exist_ok=True)
+                        out.write_bytes(z.read(item))
+            print('P4_ARCHIVE_EXTRACTED='+name+'; ENTRIES='+str(len(seen)))
+        PY_P4_EXTRACT
+        test -f "$P4_WORK/p3/SOURCE_AUDIT_P3.json"
+        test -f "$P4_WORK/r4/veux-r5s2-work/report/SUSFS_BAKASU_54_PARITY_8175.json"
+        echo 'P4_ORIGINAL_ARTIFACT_BYTES=PASS'
+
+    - name: "Materialize embedded P4 gate and tests with SHA protection"
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$P4_WORK/checks"
+        cat > "$P4_WORK/checks/check_5_4_backend.py" <<'PY_P4_GATE'
+        #!/usr/bin/env python3
+        """VEUX SUSFS 5.10→5.4 source-only compatibility and release gate.
+
+        Never patches a kernel and never declares a flash approval. Requires exact
+        P3 preflight sources and the R4 CI audit, and blocks final integration until
+        compiled source provenance and upstream runtime parity have been demonstrated.
+        """
+        from __future__ import annotations
+
+        import argparse
+        import hashlib
+        import json
+        import re
+        import sys
+        import zipfile
+        from pathlib import Path
+
+        P3_SHA = '8915d0f97a6b88b76aef30732635c92ec762de7a'
+        R4_SHA = '73a8c2d9b9be945ea1c2a7f6893c8fb9c8c2d122'
+        R4_RUN = 39207040902
+        SUSFS_BASE = '5326e21a7eb232f9e21debdd5164e99bee3d1e2f'
+        SUSFS_HEAD = 'c1a8ccbb36f8e7d2cf9c28194fa8f2745dc767c1'
+        NOMOUNT_PIN = '8175c9dcfbb333bfb1d14603c65c370687c5aa5b'
+        KERNEL_FILES = (
+            'Makefile', 'fs/namespace.c', 'fs/statfs.c', 'fs/susfs.c',
+            'include/linux/susfs.h', 'include/linux/susfs_def.h',
+            'security/selinux/hooks.c', 'security/selinux/selinuxfs.c',
+            'KernelSU/kernel/feature/selinux_hide.c',
+        )
+        R4_PARITY = 'veux-r5s2-work/report/SUSFS_BAKASU_54_PARITY_8175.json'
+        R4_PROBE = 'veux-r5s2-work/report/SUSFS_54_PORT_PROBE_R1.json'
+        R4_NOMOUNT = 'veux-r5s2-work/report/NOMOUNT_DEV_8175_COMPILED.json'
+        R4_RESULT = 'veux-r5s2-work/builds/diagnostics/5.4.274/RESULT.json'
+        R4_FINAL_BAKASU_ENTRY = 'evidence/BAKASU_R5S1_COMPILED_SELINUX_REFERENCE.c'
+        R4_FINAL_BAKASU_EXPECTED = '78231ad073f1437804cd6b340dfd7273f5d25591c43ebb69f443cabacdfa8b78'
+        R4_MAIN_SHA256 = '8deeb75bdd09df49e48f384009268de03eb18555606a27f88074a2375195ade9'
+
+        class Blocked(RuntimeError):
+            pass
+
+        def require(condition: bool, detail: str) -> None:
+            if not condition:
+                raise Blocked(detail)
+
+        def sha256(b: bytes) -> str:
+            return hashlib.sha256(b).hexdigest()
+
+        def load_json(data: bytes, label: str) -> dict:
+            try:
+                doc = json.loads(data)
+            except (ValueError, UnicodeDecodeError) as ex:
+                raise Blocked('INVALID_JSON:' + label) from ex
+            require(isinstance(doc, dict), 'INVALID_JSON_OBJECT:' + label)
+            return doc
+
+        def safe_file(base: Path, relative: str) -> Path:
+            # Both the path and all its parents must be regular directories, never symlinks.
+            require(not relative.startswith('/') and '..' not in Path(relative).parts,
+                    'PATH_ESCAPE:' + relative)
+            path = base
+            for chunk in Path(relative).parts:
+                path = path / chunk
+                require(not path.is_symlink(), 'SYMLINK_REJECTED:' + relative)
+            require(path.is_file(), 'MISSING_SOURCE:' + relative)
+            return path
+
+        def exact_feature(code: str, name: str, *tokens: str) -> None:
+            pattern = r'\b(?:static\s+)?(?:ssize_t|int|void|bool)\s+' + re.escape(name) + r'\s*\('
+            require(re.search(pattern, code) is not None, 'MISSING_LEGACY_BACKEND:' + name)
+            for token in tokens:
+                require(token in code, 'MISSING_LEGACY_SEMANTIC:' + name + ':' + token)
+
+        def review(source: Path, audit_zip: Path, r4_main_zip: Path) -> dict:
+            source = Path(source).absolute()
+            audit_zip = Path(audit_zip).absolute()
+            r4_main_zip = Path(r4_main_zip).absolute()
+            require(source.is_dir() and not source.is_symlink(), 'SOURCE_EXPORT_DIRECTORY_MISSING')
+            meta = load_json(safe_file(source, 'SOURCE_AUDIT_P3.json').read_bytes(), 'SOURCE_AUDIT_P3')
+            require(meta.get('source_origin') == 'PREFLIGHT_NOT_FINAL_BUILD', 'SOURCE_ORIGIN_MISMATCH')
+            require(meta.get('kernel') == '5.4.274', 'KERNEL_VERSION_MISMATCH')
+            require(meta.get('git_commit') == P3_SHA, 'P3_SHA_MISMATCH')
+            require(meta.get('r4_known_good_commit') == R4_SHA and meta.get('r4_known_good_run') == R4_RUN,
+                    'R4_PROVENANCE_MISMATCH')
+            require(meta.get('source_writes') is False and meta.get('flash_approved') is False,
+                    'SOURCE_ONLY_PROMISE_VIOLATED')
+            require(meta.get('bakasu35234_final_composition_proven') is False,
+                    'P3_FINAL_COMPOSED_PROVEN_CLAIM_INVALID')
+            require(meta.get('nomount8175_final_composition_proven') is False,
+                    'P3_NOMOUNT_FINAL_PROVEN_CLAIM_INVALID')
+            required = meta.get('files')
+            require(isinstance(required, dict) and set(required) == set(KERNEL_FILES),
+                    'P3_FILE_MANIFEST_MISMATCH')
+            raw: dict[str, bytes] = {}
+            for name in KERNEL_FILES:
+                dat = safe_file(source, 'kernel/' + name).read_bytes()
+                require(sha256(dat) == required[name]['sha256'] and len(dat) == required[name]['bytes'],
+                        'P3_HASH_DRIFT:' + name)
+                raw[name] = dat
+
+            mk = raw['Makefile'].decode('utf-8')
+            vals = dict(re.findall(r'^\s*(VERSION|PATCHLEVEL|SUBLEVEL)\s*=\s*([0-9]+)\s*$',mk,re.M))
+            require(vals == {'VERSION':'5','PATCHLEVEL':'4','SUBLEVEL':'274'}, 'ACTUAL_MAKEFILE_VERSION_MISMATCH')
+            ns = raw['fs/namespace.c'].decode('utf-8')
+            for sig in ('is_mnt_ksu_unshared = false', 'is_mnt_ksu_unshared = true',
+                        'if (unlikely(is_mnt_ksu_unshared))', 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT'):
+                require(sig in ns, 'CLONE_MNT_GUARD_MISSING:'+sig)
+            fs = raw['fs/statfs.c'].decode('utf-8')
+            require('statfs_by_dentry_wrapper' in fs and 'calculate_f_flags_wrapper' in fs,
+                    'STATFS_5_4_WRAPPERS_MISSING')
+            kernel_hooks = raw['security/selinux/hooks.c'].decode('utf-8')
+            kernel_fs = raw['security/selinux/selinuxfs.c'].decode('utf-8')
+            feature = raw['KernelSU/kernel/feature/selinux_hide.c'].decode('utf-8')
+            require('static int selinux_setprocattr(const char *name, void *value, size_t size)' in kernel_hooks,
+                    'KERNEL_5_4_SETPROCATTR_SIGNATURE_CHANGED')
+            for symbol in ('fake_state','fake_status_initialize_key','ksu_selinux_hide_running'):
+                require(symbol not in kernel_hooks and symbol not in kernel_fs,
+                        'NATIVE_510_HOOK_COLLISION:' + symbol)
+            require('fake_state' not in feature, 'P3_FAKE_STATE_BACKEND_CHANGED')
+            require('#ifndef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE' in feature,
+                    'LEGACY_BACKEND_GUARD_ABSENT')
+            for fn, tokens in (
+                ('my_write_context', ('orig_context_write', 'backup_policydb', 'backup_sidtab')),
+                ('my_write_access', ('orig_access_write', 'backup_policydb', 'backup_sidtab')),
+                ('my_sel_open_handle_status', ('orig_sel_open_handle_status', 'fake_status')),
+                ('ksu_handle_selinux_setprocattr', ('ksu_orig_setprocattr', 'backup_policydb', 'backup_sidtab')),
+            ):
+                # Some BakaSU methods use version-specific prototypes, so only require
+                # an exact function name and the shared semantic markers.
+                require(re.search(r'\b' + re.escape(fn) + r'\s*\(',feature) is not None,
+                        'MISSING_LEGACY_BACKEND:' + fn)
+                for token in tokens:
+                    require(token in feature, 'MISSING_LEGACY_BACKEND_CONTRACT:' + fn + ':' + token)
+            require('hook_selinux_status_open();' in feature and
+                    'ksu_selinux_hide_unhook();' in feature and
+                    'ksu_patch_text' in feature, 'LEGACY_HOOK_LIFECYCLE_INCOMPLETE')
+
+            with zipfile.ZipFile(audit_zip) as zipped:
+                require(zipped.testzip() is None, 'R4_AUDIT_ZIP_CRC_FAILED')
+                for path in (R4_PARITY,R4_PROBE,R4_NOMOUNT,R4_RESULT):
+                    require(path in zipped.namelist(), 'R4_AUDIT_REQUIRED_EVIDENCE_MISSING:'+path)
+                parity = load_json(zipped.read(R4_PARITY),'R4_PARITY')
+                probe = load_json(zipped.read(R4_PROBE),'R4_PROBE')
+                nm = load_json(zipped.read(R4_NOMOUNT),'R4_NOMOUNT')
+                result = load_json(zipped.read(R4_RESULT),'R4_RESULT')
+            require(parity.get('result') == 'SOURCE_PARITY_PASS_DEVICE_UNTESTED', 'R4_PARITY_NOT_PASS')
+            checks = parity.get('checks')
+            require(isinstance(checks,list) and checks and all(x.get('result') == 'PASS' for x in checks),
+                    'R4_PARITY_CHECK_FAILED')
+            require(probe.get('baseline_kernel')=='5.4.274' and probe.get('baseline_susfs_pin')==SUSFS_BASE,
+                    'R4_SUSFS_BASELINE_MISMATCH')
+            h=probe.get('host_5_4') or {}
+            missing=set(x.get('path') for x in h.get('findings',[]) if x.get('result')=='UPSTREAM_GKI_BASE_CHANGED')
+            require(missing=={'security/selinux/hooks.c','security/selinux/selinuxfs.c'} and
+                    h.get('host_paths_requiring_manual_port') == 2,
+                    'NEW_510_HOOK_SCOPE_MISMATCH')
+            require(nm.get('dev_commit')==NOMOUNT_PIN and nm.get('source_parity_gate_passed') is True,
+                    'R4_NOMOUNT_COMPILED_EVIDENCE_MISSING')
+            require(result.get('kernel')=='5.4.274' and all(result.get(k) is True for k in ('compile','package','static_boot')),
+                    'R4_KERNEL_BUILD_NOT_PROVEN')
+            require(result.get('device') is False,'R4_DEVICE_STATE_CHANGED')
+            # R4's independently checked final assembled BakaSU source has a
+            # different SHA-256 than P3's preflight source. Do not conflate them.
+            found=[x for x in checks if x.get('check')=='BASELINE_SHA256_KernelSU/kernel/feature/selinux_hide.c']
+            require(len(found)==1,'R4_COMPOSED_BAKASU_SHA_MISSING')
+            m=re.search(r'actual=([0-9a-f]{64})\s+expected=([0-9a-f]{64})',found[0].get('detail',''))
+            require(m is not None and m.group(1)==m.group(2),'R4_COMPOSED_BAKASU_SHA_BROKEN')
+            r4_final_bakasu_hash=m.group(1)
+            r4_preflight_bakasu_hash=required['KernelSU/kernel/feature/selinux_hide.c']['sha256']
+            require(r4_final_bakasu_hash!=r4_preflight_bakasu_hash,
+                    'EXPECTED_P3_VS_R4_SOURCE_DIFFERENCE_NOT_PRESENT_RECHECK')
+            require(sha256(r4_main_zip.read_bytes()) == R4_MAIN_SHA256,
+                    'R4_MAIN_ZIP_SHA256_MISMATCH')
+            with zipfile.ZipFile(r4_main_zip) as z:
+                require(z.testzip() is None, 'R4_MAIN_ZIP_CRC_FAILED')
+                require(R4_FINAL_BAKASU_ENTRY in z.namelist(), 'R4_COMPILED_BAKASU_SOURCE_MISSING')
+                final_bakasu = z.read(R4_FINAL_BAKASU_ENTRY)
+            require(sha256(final_bakasu) == r4_final_bakasu_hash == R4_FINAL_BAKASU_EXPECTED,
+                    'R4_COMPILED_BAKASU_SOURCE_IDENTITY_MISMATCH')
+            assembled = final_bakasu.decode('utf-8')
+            require('#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)' in assembled and
+                    '#error BakaSU does NOT support susfs selinux_hide feature in nongki' in assembled,
+                    'R4_5_4_NATIVE_510_PATH_UNGUARDED')
+            for func in ('my_write_context','my_write_access','ksu_handle_selinux_setprocattr'):
+                start = assembled.find(func+'(')
+                require(start > 0 and '!ksu_selinux_hide_running' in assembled[start:start+2300],
+                        'R4_LEGACY_RUNTIME_GUARD_MISSING:'+func)
+            start = assembled.find('my_sel_open_handle_status(')
+            require(start>0 and 'ksu_selinux_hide_running' in assembled[start:start+600],
+                    'R4_LEGACY_STATUS_RUNNING_GUARD_MISSING')
+            for func in ('my_write_context','my_write_access','my_sel_open_handle_status',
+                         'ksu_handle_selinux_setprocattr','hook_selinux_status_open'):
+                require(func+'(' in assembled,'R4_LEGACY_COMPILED_FUNCTION_MISSING:'+func)
+            for fname in ('security/selinux/hooks.c','security/selinux/selinuxfs.c'):
+                rows=[x for x in checks if x.get('check')=='BASELINE_SHA256_'+fname]
+                require(len(rows)==1 and ('actual='+required[fname]['sha256']) in rows[0].get('detail',''),
+                        'P3_VS_R4_ASSEMBLED_SELINUX_IDENTITY_MISMATCH:'+fname)
+            return {
+                'schema':1,
+                'decision':'NOT_READY_FOR_FINAL_BUILD',
+                'r4_run':R4_RUN,'r4_commit':R4_SHA,'p3_commit':P3_SHA,
+                'kernel':'5.4.274','susfs_core_pin_retained':SUSFS_BASE,
+                'susfs_510_comparison_head':SUSFS_HEAD,
+                'changed_upstream_paths':[ 'kernel_patches/50_add_susfs_in_gki-android13-5.10.patch',
+                                           'kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch'],
+                'upstream_core_changed':False,
+                'mount_clone_mnt': 'ALREADY_CORRECT',
+                '5_4_selinux_legacy_backend': 'R4_ASSEMBLED_SOURCE_IDENTITY_PASS_RUNTIME_UNTESTED',
+                'native_510_fake_state': 'COMPILE_TIME_BLOCKED_FOR_NON_GKI_5_4',
+                'legacy_5_4_methods':['my_write_context','my_write_access',
+                                       'my_sel_open_handle_status','ksu_handle_selinux_setprocattr'],
+                'pending_manual_port':['security/selinux/hooks.c','security/selinux/selinuxfs.c'],
+                'compiled_bakasu_sha256':r4_final_bakasu_hash,
+                'p3_preflight_bakasu_sha256':r4_preflight_bakasu_hash,
+                'final_composed_selinux_3_files_proven':True,
+                'r4_main_zip_sha256':R4_MAIN_SHA256,
+                'native_510_patch_safe_to_apply':False,
+                'kernel_sources_mutated':False,
+                'brene_changed':False,'flash_approved':False,'device_tested':False,
+                'next_gate':'Assess the 5.10 hook deltas against the compiled 5.4 legacy BakaSU backend; validate runtime equivalence without adding duplicate SELinux hooks before final build'
+            }
+
+        def main() -> int:
+            ap=argparse.ArgumentParser(description=__doc__)
+            ap.add_argument('--p3-export', type=Path, required=True)
+            ap.add_argument('--r4-audit', type=Path, required=True)
+            ap.add_argument('--r4-main-zip', type=Path, required=True)
+            ap.add_argument('--output', type=Path, required=True)
+            args=ap.parse_args()
+            try:
+                report=review(args.p3_export,args.r4_audit,args.r4_main_zip)
+            except (Blocked,OSError,zipfile.BadZipFile,KeyError,TypeError) as ex:
+                print('SOURCE_GATE_BLOCKED: ' + str(ex),file=sys.stderr)
+                return 2
+            require(report['decision']=='NOT_READY_FOR_FINAL_BUILD', 'UNEXPECTED_FINAL_BUILD_PERMISSION')
+            args.output.parent.mkdir(parents=True,exist_ok=True)
+            args.output.write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+            print('P4_PRE_FINAL_SOURCE_GATE=PASS; FINAL_BUILD=BLOCKED; NO_FLASH=YES')
+            return 0
+
+        if __name__=='__main__':
+            raise SystemExit(main())
+        PY_P4_GATE
+        cat > "$P4_WORK/checks/test_p4_backend.py" <<'PY_P4_TESTS'
+        #!/usr/bin/env python3
+        """P4 source-only regression + adversarial tests; no kernel compile."""
+        import hashlib
+        import json
+        import shutil
+        import sys
+        import subprocess
+        import tempfile
+        import unittest
+        import zipfile
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).parent))
+        import check_5_4_backend as gate
+
+        ROOT=Path(__file__).resolve().parents[3]
+        # Run with explicit fixture paths to avoid leaking personal locations into the repo.
+        import os
+        P3=Path(os.environ.get('VEUX_P4_P3_EXPORT',ROOT/'p3'))
+        AUDIT=Path(os.environ.get('VEUX_P4_R4_AUDIT',ROOT/'VEUX_R4_12167285024.zip'))
+        MAIN=Path(os.environ.get('VEUX_P4_R4_MAIN',ROOT/'VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip'))
+
+        class RealSources(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                if not (P3/'SOURCE_AUDIT_P3.json').is_file() or not AUDIT.is_file() or not MAIN.is_file():
+                    raise RuntimeError('P4 fixtures missing: set VEUX_P4_P3_EXPORT, VEUX_P4_R4_AUDIT, VEUX_P4_R4_MAIN')
+
+            def test_actual_p3_r4_passes_without_promotion(self):
+                result=gate.review(P3,AUDIT,MAIN)
+                self.assertEqual(result['5_4_selinux_legacy_backend'],
+                                 'R4_ASSEMBLED_SOURCE_IDENTITY_PASS_RUNTIME_UNTESTED')
+                self.assertTrue(result['final_composed_selinux_3_files_proven'])
+                self.assertEqual(result['mount_clone_mnt'],'ALREADY_CORRECT')
+                self.assertFalse(result['flash_approved'])
+                self.assertFalse(result['native_510_patch_safe_to_apply'])
+                self.assertFalse(result['kernel_sources_mutated'])
+                self.assertEqual(result['decision'],'NOT_READY_FOR_FINAL_BUILD')
+
+            def test_inputs_never_written(self):
+                allnames=['SOURCE_AUDIT_P3.json'] + ['kernel/'+x for x in gate.KERNEL_FILES]
+                before={n:hashlib.sha256((P3/n).read_bytes()).hexdigest() for n in allnames}
+                gate.review(P3,AUDIT,MAIN)
+                after={n:hashlib.sha256((P3/n).read_bytes()).hexdigest() for n in allnames}
+                self.assertEqual(before,after)
+
+        class TamperResistance(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                if not (P3/'SOURCE_AUDIT_P3.json').is_file() or not AUDIT.is_file() or not MAIN.is_file():
+                    raise RuntimeError('P4 GitHub artifacts missing: specify fixture paths explicitly')
+
+            def setUp(self):
+                self.tmp=tempfile.TemporaryDirectory()
+                self.addCleanup(self.tmp.cleanup)
+                self.root=Path(self.tmp.name)
+                self.src=self.root/'p3'
+                shutil.copytree(P3,self.src)
+
+            def blocked(self, needle, main=None, audit=None):
+                with self.assertRaisesRegex(gate.Blocked,needle):
+                    gate.review(self.src,audit or AUDIT,main or MAIN)
+
+            def modify_file(self,path,text,update_manifest=True):
+                f=self.src/'kernel'/path
+                f.write_text(text)
+                if update_manifest:
+                    mpath=self.src/'SOURCE_AUDIT_P3.json'
+                    m=json.loads(mpath.read_text())
+                    b=f.read_bytes()
+                    m['files'][path]={'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+                    mpath.write_text(json.dumps(m))
+
+            def test_reject_wrong_p3_source_commit(self):
+                p=self.src/'SOURCE_AUDIT_P3.json';m=json.loads(p.read_text());m['git_commit']='0'*40;p.write_text(json.dumps(m))
+                self.blocked('P3_SHA_MISMATCH')
+
+            def test_reject_wrong_r4_provenance(self):
+                p=self.src/'SOURCE_AUDIT_P3.json';m=json.loads(p.read_text());m['r4_known_good_run']=0;p.write_text(json.dumps(m))
+                self.blocked('R4_PROVENANCE_MISMATCH')
+
+            def test_reject_missing_file(self):
+                (self.src/'kernel/security/selinux/hooks.c').unlink()
+                self.blocked('MISSING_SOURCE:kernel/security/selinux/hooks.c')
+
+            def test_reject_symlink_to_external_file(self):
+                f=self.src/'kernel/security/selinux/hooks.c';f.unlink();f.symlink_to(P3/'kernel/security/selinux/hooks.c')
+                self.blocked('SYMLINK_REJECTED:kernel/security/selinux/hooks.c')
+
+            def test_reject_source_mutation_even_if_parseable(self):
+                f=self.src/'kernel/fs/namespace.c';f.write_bytes(f.read_bytes()+b'\n// non-canonical\n')
+                self.blocked('P3_HASH_DRIFT:fs/namespace.c')
+
+            def test_reject_unknown_kernel_even_with_rehashed_manifest(self):
+                old=(self.src/'kernel/Makefile').read_text()
+                self.modify_file('Makefile',old.replace('SUBLEVEL = 274','SUBLEVEL = 275',1))
+                self.blocked('ACTUAL_MAKEFILE_VERSION_MISMATCH')
+
+            def test_reject_native_510_hook_collision(self):
+                old=(self.src/'kernel/security/selinux/hooks.c').read_text()
+                self.modify_file('security/selinux/hooks.c',old+'\nstruct selinux_state fake_state;\n')
+                self.blocked('NATIVE_510_HOOK_COLLISION:fake_state')
+
+            def test_reject_missing_legacy_methods(self):
+                old=(self.src/'kernel/KernelSU/kernel/feature/selinux_hide.c').read_text()
+                self.modify_file('KernelSU/kernel/feature/selinux_hide.c',old.replace('my_sel_open_handle_status','deleted_sel_open',1))
+                self.blocked('MISSING_LEGACY_BACKEND:my_sel_open_handle_status')
+
+            def test_reject_corrupt_r4_audit(self):
+                f=self.root/'bad.zip';f.write_bytes(b'bad zip')
+                with self.assertRaises((zipfile.BadZipFile,gate.Blocked)):
+                    gate.review(self.src,f,MAIN)
+
+            def test_reject_wrong_r4_main_zip(self):
+                f=self.root/'bad.zip';f.write_bytes(b'not this R4 archive')
+                self.blocked('R4_MAIN_ZIP_SHA256_MISMATCH',main=f)
+
+            def test_reject_r4_zip_with_substituted_compiled_source(self):
+                f=self.root/'modified.zip'
+                with zipfile.ZipFile(MAIN) as orig, zipfile.ZipFile(f,'w',compression=zipfile.ZIP_DEFLATED) as out:
+                    for item in orig.infolist():
+                        content=orig.read(item)
+                        if item.filename==gate.R4_FINAL_BAKASU_ENTRY:
+                            content+=b'\n/* NOT AUTHENTIC */\n'
+                        out.writestr(item.filename,content)
+                self.blocked('R4_MAIN_ZIP_SHA256_MISMATCH',main=f)
+
+            def test_reject_fake_final_compiled_claim_in_p3(self):
+                p=self.src/'SOURCE_AUDIT_P3.json';m=json.loads(p.read_text());m['bakasu35234_final_composition_proven']=True;p.write_text(json.dumps(m))
+                self.blocked('P3_FINAL_COMPOSED_PROVEN_CLAIM_INVALID')
+
+
+        class CompiledNonGkiGuard(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                if not MAIN.is_file():
+                    raise RuntimeError('R4 source ZIP fixture missing')
+                with zipfile.ZipFile(MAIN) as z:
+                    cls.compiled=z.read(gate.R4_FINAL_BAKASU_ENTRY).decode()
+                lines=cls.compiled.splitlines()
+                begin=next(i for i,l in enumerate(lines) if l.strip()=='#ifdef KSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE')
+                # Exactly this prefix contains the intentionally enforced non-GKI block.
+                cls.guard='\n'.join(lines[begin:begin+11])+'\n'
+                if '#error BakaSU does NOT support' not in cls.guard:
+                    raise AssertionError('compiled R4 guard moved: review source before running tests')
+
+            def preprocess(self,version,compat):
+                import shutil
+                tool=shutil.which('clang') or shutil.which('cpp')
+                if not tool:
+                    self.skipTest('C preprocessor unavailable')
+                defs=['-DKERNEL_VERSION(a,b,c)=(((a)<<16)+((b)<<8)+(c))',
+                      '-DLINUX_VERSION_CODE='+str(((version[0]<<16)+(version[1]<<8)+version[2]))]
+                if compat: defs.append('-DKSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE=1')
+                args=[tool,'-E','-P','-x','c',*defs,'-'] if tool.endswith('clang') else [tool,'-E','-P',*defs,'-']
+                return subprocess.run(args,input=self.guard,encoding='utf8',capture_output=True,timeout=10)
+
+            def test_kernel54_legacy_path_preprocesses(self):
+                p=self.preprocess((5,4,274),compat=False)
+                self.assertEqual(p.returncode,0,p.stderr)
+
+            def test_kernel54_duplicate_native_hook_stops(self):
+                p=self.preprocess((5,4,274),compat=True)
+                self.assertNotEqual(p.returncode,0)
+                self.assertIn('BakaSU does NOT support',p.stderr)
+
+            def test_kernel510_native_hook_guard_is_not_rejected(self):
+                p=self.preprocess((5,10,0),compat=True)
+                self.assertEqual(p.returncode,0,p.stderr)
+
+        if __name__=='__main__':
+            unittest.main(verbosity=2)
+        PY_P4_TESTS
+        printf '%s  %s\n' '2ba61506de4fce092d7ab858999623164a892bfbaa9438a16af5d137b173648d' "$P4_WORK/checks/check_5_4_backend.py" | sha256sum --check --status
+        printf '%s  %s\n' 'c9b0fc1feac6266ae3c7a025aa95975b5b082495dbeaf3fbbdd19d146d35ca7b' "$P4_WORK/checks/test_p4_backend.py" | sha256sum --check --status
+        python3 -m py_compile "$P4_WORK/checks/check_5_4_backend.py" "$P4_WORK/checks/test_p4_backend.py"
+        echo 'P4_EMBEDDED_CHECKER_AND_TESTS=PASS'
+
+    - name: "P4 validate read-only R4 SELinux backend and run all 17 tests"
+      shell: bash
+      run: |
+        set -euo pipefail
+        export VEUX_P4_P3_EXPORT="$P4_WORK/p3"
+        export VEUX_P4_R4_AUDIT="$P4_WORK/archives/r4.zip"
+        export VEUX_P4_R4_MAIN="$GITHUB_WORKSPACE/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip"
+        python3 "$P4_WORK/checks/check_5_4_backend.py" \
+          --p3-export "$VEUX_P4_P3_EXPORT" \
+          --r4-audit "$VEUX_P4_R4_AUDIT" \
+          --r4-main-zip "$VEUX_P4_R4_MAIN" \
+          --output "$P4_WORK/reports/P4_SOURCE_GATE.json"
+        python3 -m unittest discover -s "$P4_WORK/checks" -p test_p4_backend.py -v \
+          > "$P4_WORK/reports/P4_TESTS.log" 2>&1 || {
+            cat "$P4_WORK/reports/P4_TESTS.log"
+            exit 1
+          }
+        cat "$P4_WORK/reports/P4_TESTS.log"
+        python3 - <<'PY_P4_ASSERT'
+        import json,os,re
+        from pathlib import Path
+        p=Path(os.environ['P4_WORK'])/'reports'
+        r=json.loads((p/'P4_SOURCE_GATE.json').read_text())
+        s=(p/'P4_TESTS.log').read_text()
+        if not (re.search(r'Ran 17 tests in ',s) and '\nOK\n' in s and 'skipped=' not in s):
+            raise SystemExit('P4_TEST_COUNT_OR_SKIPPED_CHECK_FAILED')
+        if (r.get('decision')!='NOT_READY_FOR_FINAL_BUILD' or r.get('native_510_patch_safe_to_apply') is not False
+            or r.get('flash_approved') is not False or r.get('device_tested') is not False
+            or r.get('kernel_sources_mutated') is not False or r.get('brene_changed') is not False
+            or r.get('final_composed_selinux_3_files_proven') is not True):
+            raise SystemExit('P4_RELEASE_SAFETY_CONTRACT_FAILED')
+        print('P4_17_HOST_TESTS_AND_NO_FINAL_BUILD=PASS')
+        PY_P4_ASSERT
+
+    - name: "Independently ShellCheck every bash run block"
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY_P4_SHELLCHECK'
+        from pathlib import Path
+        import subprocess
+        path=Path('.github/workflows/VEUX_SUSFS54_P4_R4_SOURCE_GATE_NO_BUILD.yml')
+        lines=path.read_text().splitlines()
+        blocks=[]
+        i=0
+        while i<len(lines):
+            if lines[i]=='      run: |':
+                i+=1
+                block=[]
+                while i<len(lines) and (lines[i].startswith('        ') or lines[i]==''):
+                    block.append(lines[i][8:] if lines[i].startswith('        ') else '')
+                    i+=1
+                blocks.append('\n'.join(block)+'\n')
+            else:
+                i+=1
+        if len(blocks)!=8:
+            raise SystemExit('P4_SHELLCHECK_EXPECTED_8_RUN_BLOCKS:'+str(len(blocks)))
+        for n,s in enumerate(blocks,1):
+            p=subprocess.run(['shellcheck','--severity=warning','--shell=bash','-'],input=s,text=True,capture_output=True)
+            if p.returncode:
+                print(p.stdout,p.stderr)
+                raise SystemExit('P4_SHELLCHECK_FAILED_BLOCK:'+str(n))
+        print('P4_INDEPENDENT_SHELLCHECK=PASS; RUN_BLOCKS='+str(len(blocks)))
+        PY_P4_SHELLCHECK
+
+    - name: Upload P4 source-only audit (even when blocked)
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-SUSFS54-P4-SOURCE-ONLY-${{ github.run_id }}
+        path: ${{ env.P4_WORK }}/reports/
+        if-no-files-found: warn
+        retention-days: 14
+        compression-level: 6
+
+    - name: "Final guard: repository untouched, no build or flash"
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'P4_REPOSITORY_UNCHANGED=YES; KERNEL_BUILD=NO; NO_FLASH=YES'
