@@ -1,0 +1,1128 @@
+# VEUX P6: read-only control-flow models, no KernelSU/SUSFS/NoMount/BReNE changes.
+# Data: pinned R4 / P3 / P4 artifacts; upstream SUSFS 5.10 patch blobs.
+# SUCCESS means pinned-source guided bounded models passed; NOT a device, runtime or final-build PASS.
+name: VEUX SUSFS 5.4 P6 Bounded SELinux Behavior - NO BUILD NO FLASH
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: veux-susfs54-p6-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  P6_WORK: /tmp/veux-susfs54-p6-${{ github.run_id }}
+  SUSFS_510_PIN: c1a8ccbb36f8e7d2cf9c28194fa8f2745dc767c1
+
+jobs:
+  p5_source_audit:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: P6 pinned R4 SELinux models - 224 cases - no kernel build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify repository and exact green R4 overlay (no write)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "$EXPECTED_REPO" ]; then exit 1; fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then exit 1; fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then exit 1; fi
+          printf '%s  %s\n' '8deeb75bdd09df49e48f384009268de03eb18555606a27f88074a2375195ade9' \
+            "$GITHUB_WORKSPACE/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip" | sha256sum --check --status
+          mkdir -p "$P6_WORK/reports" "$P6_WORK/archives" "$P6_WORK/upstream" "$P6_WORK/checks" "$P6_WORK/fixtures"
+          echo 'P6_REPO_AND_R4_MAIN_PIN=PASS'
+      - name: Self-verify YAML with pinned actionlint and ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="$P6_WORK/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl -fLSsS --retry 3 --max-time 120 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' -o "$f"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$f" | sha256sum --check --status
+          tar -xzf "$f" -C "$P6_WORK/checks" actionlint
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends shellcheck
+          fi
+          command -v shellcheck
+          "$P6_WORK/checks/actionlint" -oneline .github/workflows/VEUX_SUSFS54_P6_BOUNDED_BEHAVIOR_NO_KERNEL.yml
+          echo 'P6_ACTIONLINT_SHELLCHECK=PASS'
+      - name: Authenticate pinned R4 P3 P4 P5 artifact metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_P5_AUTH'
+          import json,os,urllib.request
+          from pathlib import Path
+          expected={
+              12167285024:('VEUX-R5S2-NMDEV8175-BAKASU35234-AUDIT-39207040902',39207040902,'73a8c2d9b9be945ea1c2a7f6893c8fb9c8c2d122','sha256:f81f4f47e7c61ea87bee3ecf6e400476f5ffe7a77f9a872eed6e1f16b64080a8'),
+              12173591932:('VEUX-SUSFS54-P3-R4-PREFLIGHT-SOURCE-39225149753',39225149753,'8915d0f97a6b88b76aef30732635c92ec762de7a','sha256:eacc332f5154b2708560b2dd00a16df3c3847c113535e2132ee9f31ea5f841f0'),
+              12178300926:('VEUX-SUSFS54-P4-SOURCE-ONLY-39232161365',39232161365,'90638016d58743736e18290d0bb4c7ad5a318e72','sha256:695e692846d27a22c110746f02f82c3b13bcb2db30a12d682a82f0ec904d8cdd'),
+              12179547827:('VEUX-SUSFS54-P5-READONLY-39237651862',39237651862,'955e82ed6c3a173c23ba2a3b40ee6fbe694301ea','sha256:27391ecc8200a1df809c64d1d222242bdf5d12e97c05017f2ee719ab8313d22f'),
+          }
+          result={}
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          for aid,(name,run,sha,digest) in expected.items():
+              url=f'https://api.github.com/repos/{repo}/actions/artifacts/{aid}'
+              req=urllib.request.Request(url,headers={'Accept':'application/vnd.github+json','Authorization':'Bearer '+token,'User-Agent':'veux-susfs54-p6','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(req,timeout=40) as resp:
+                  obj=json.load(resp)
+              wr=obj.get('workflow_run') or {}
+              if (obj.get('id')!=aid or obj.get('name')!=name or obj.get('expired') is not False or obj.get('digest')!=digest or wr.get('id')!=run or wr.get('head_sha')!=sha or wr.get('head_branch')!='main'):
+                  raise SystemExit('P6_ARTIFACT_META_MISMATCH:'+str(aid))
+              result[str(aid)]={'name':name,'run':run,'sha':sha,'digest':digest}
+          out=Path(os.environ['P6_WORK'])/'reports/ARTIFACT_METADATA.json'
+          out.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print('P6_ARTIFACT_METADATA=PASS; PINNED=4')
+          PY_P5_AUTH
+      - name: Download exact archived evidence and latest pinned SUSFS patch files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api='https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel/actions/artifacts'
+          for pair in '12167285024:r4_audit' '12173591932:p3' '12178300926:p4' '12179547827:p5'; do
+            id="${pair%%:*}"
+            name="${pair#*:}"
+            curl -fLSsS --retry 3 --max-time 120 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$api/$id/zip" -o "$P6_WORK/archives/$name.zip"
+          done
+          printf '%s  %s\n' 'f81f4f47e7c61ea87bee3ecf6e400476f5ffe7a77f9a872eed6e1f16b64080a8' "$P6_WORK/archives/r4_audit.zip" | sha256sum --check --status
+          printf '%s  %s\n' 'eacc332f5154b2708560b2dd00a16df3c3847c113535e2132ee9f31ea5f841f0' "$P6_WORK/archives/p3.zip" | sha256sum --check --status
+          printf '%s  %s\n' '695e692846d27a22c110746f02f82c3b13bcb2db30a12d682a82f0ec904d8cdd' "$P6_WORK/archives/p4.zip" | sha256sum --check --status
+          printf '%s  %s\n' '27391ecc8200a1df809c64d1d222242bdf5d12e97c05017f2ee719ab8313d22f' "$P6_WORK/archives/p5.zip" | sha256sum --check --status
+          base="https://raw.githubusercontent.com/ShirkNeko/susfs4ksu/$SUSFS_510_PIN/kernel_patches"
+          curl -fLSsS --retry 3 --max-time 90 "$base/50_add_susfs_in_gki-android13-5.10.patch" -o "$P6_WORK/upstream/host.patch"
+          curl -fLSsS --retry 3 --max-time 90 "$base/KernelSU/10_enable_susfs_for_ksu.patch" -o "$P6_WORK/upstream/ksu.patch"
+          test "$(git hash-object "$P6_WORK/upstream/host.patch")" = '3bcfe2e098a07a271c90688eaf3217d58f850546'
+          test "$(git hash-object "$P6_WORK/upstream/ksu.patch")" = 'b7a5278e38096c77cacb7bbdd988ae2987ab0dec'
+          echo 'P6_ORIGINAL_ARTIFACTS_AND_SUSFS510_PATCHES_PINNED=PASS'
+      - name: Create SHA-pinned P5 functional evaluator and 18 negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$P6_WORK/checks/p5_source_audit.py" <<'PY_P5_GATE'
+          #!/usr/bin/env python3
+          """VEUX SUSFS P5: read-only functional-source review (no compile or flash).
+
+          Pinned sources: green R4 compiled BakaSU, P3 preflight 5.4 SELinux,
+          P4 identity gate, and the 2026-10-18 SUSFS 5.10 *patch* references.
+          This is NOT a runtime-equivalence proof or a patch applier.
+          """
+          import argparse
+          import hashlib
+          import json
+          import re
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          EXPECTED = {
+              'p3_zip': 'eacc332f5154b2708560b2dd00a16df3c3847c113535e2132ee9f31ea5f841f0',
+              'p4_zip': '695e692846d27a22c110746f02f82c3b13bcb2db30a12d682a82f0ec904d8cdd',
+              'r4_audit_zip': 'f81f4f47e7c61ea87bee3ecf6e400476f5ffe7a77f9a872eed6e1f16b64080a8',
+              'r4_main_zip': '8deeb75bdd09df49e48f384009268de03eb18555606a27f88074a2375195ade9',
+              'r4_bakasu': '78231ad073f1437804cd6b340dfd7273f5d25591c43ebb69f443cabacdfa8b78',
+              'p3_bakasu': 'e4299d4db52b3e761413928d733076dc497104cee0cd5ab27e165364cd773c5c',
+              'p3_hooks': '57a84c1b0f41d108e9557314c0039e5bfd6fc4b15aa60532711d32e551cc2992',
+              'p3_selinuxfs': '16533ae84611ddc908759231a06ac09722cbeda3cba7ebc361baa1ee462729a1',
+              'p3_namespace': 'a5dd3990f0ebc3ac3442e387226ffd03b9a23a47ca648ec8646f710a1ab6ba4d',
+              'susfs_host_git_blob': '3bcfe2e098a07a271c90688eaf3217d58f850546',
+              'susfs_ksu_git_blob': 'b7a5278e38096c77cacb7bbdd988ae2987ab0dec',
+          }
+          R4 = '73a8c2d9b9be945ea1c2a7f6893c8fb9c8c2d122'
+          P3 = '8915d0f97a6b88b76aef30732635c92ec762de7a'
+          SUSFS510 = 'c1a8ccbb36f8e7d2cf9c28194fa8f2745dc767c1'
+
+
+          class GateBlocked(RuntimeError):
+              pass
+
+
+          def require(predicate, reason):
+              if not predicate:
+                  raise GateBlocked(reason)
+
+
+          def sha256(raw):
+              return hashlib.sha256(raw).hexdigest()
+
+
+          def blob_sha1(raw):
+              return hashlib.sha1(b'blob ' + str(len(raw)).encode('ascii') + b'\x00' + raw).hexdigest()
+
+
+          def read_file(path, expected, name):
+              p = Path(path)
+              require(p.is_file() and not p.is_symlink(), name + '_MISSING_OR_SYMLINK')
+              raw = p.read_bytes()
+              require(sha256(raw) == expected, name + '_SHA256_MISMATCH')
+              return raw
+
+
+          def read_archive(path, expected, name):
+              raw = read_file(path, expected, name)
+              z = zipfile.ZipFile(Path(path))
+              require(z.testzip() is None, name + '_ZIP_CRC_FAILED')
+              require(len(z.namelist()) == len(set(z.namelist())), name + '_DUPLICATE_ENTRY')
+              return z
+
+
+          def take(z, name, digest=None):
+              require(name in z.namelist(), 'ARCHIVE_MISSING:' + name)
+              row = z.getinfo(name)
+              require(not (row.external_attr >> 16) & 0o170000 == 0o120000, 'ZIP_SYMLINK:' + name)
+              raw = z.read(name)
+              if digest is not None:
+                  require(sha256(raw) == digest, 'SOURCE_HASH_MISMATCH:' + name)
+              return raw
+
+
+          def load_json(raw, name):
+              try:
+                  return json.loads(raw)
+              except (ValueError, UnicodeError, TypeError) as exc:
+                  raise GateBlocked(name + '_JSON_INVALID') from exc
+
+
+          def section(patch, file):
+              name = 'diff --git a/' + file + ' b/' + file
+              idx = patch.find(name)
+              require(idx >= 0, 'UPSTREAM_SECTION_MISSING:' + file)
+              stop = patch.find('\ndiff --git ', idx + len(name))
+              return patch[idx:stop if stop > 0 else None]
+
+
+          def expect_tokens(text, tokens, label):
+              for token in tokens:
+                  require(token in text, label + '_MISSING_TOKEN:' + token)
+
+
+          def function_segment(source, start_token, end_token):
+              start = source.find(start_token)
+              require(start >= 0, 'LEGACY_FUNCTION_MISSING:' + start_token)
+              end = source.find(end_token, start + len(start_token))
+              require(end > start, 'LEGACY_FUNCTION_BOUNDARY_MISSING:' + start_token)
+              return source[start:end]
+
+
+          def review(p3, p4, r4_audit, r4_main, host_raw, ksu_raw, *, official_upstream=True):
+              """Review fully pinned source inputs. Unit fixtures use official_upstream=False;
+              production CLI never exposes a way to skip upstream Git blob identity."""
+              if official_upstream:
+                  require(blob_sha1(host_raw) == EXPECTED['susfs_host_git_blob'], 'SUSFS_510_HOST_BLOB_MISMATCH')
+                  require(blob_sha1(ksu_raw) == EXPECTED['susfs_ksu_git_blob'], 'SUSFS_510_BAKASU_BLOB_MISMATCH')
+              host = host_raw.decode('utf-8')
+              ksu = ksu_raw.decode('utf-8')
+              h = section(host, 'security/selinux/hooks.c')
+              fs = section(host, 'security/selinux/selinuxfs.c')
+              k = section(ksu, 'kernel/feature/selinux_hide.c')
+
+              expect_tokens(h, ['+extern struct selinux_state fake_state;', '+extern bool ksu_selinux_hide_running',
+                                'bool should_check_current', 'security_context_to_sid(&fake_state',
+                                'security_context_to_sid(&selinux_state'], 'UPSTREAM_SETPROCATTR')
+              expect_tokens(fs, ['sel_open_handle_status', 'current_uid().val >= 10000',
+                                 'ksu_selinux_hide_running', 'mutex_lock(&selinux_state.status_lock)',
+                                 'filp->private_data = data;', 'initialize_fake_status();',
+                                 'sel_write_context', 'security_context_to_sid(&fake_state',
+                                 'security_sid_to_context(&fake_state', 'sel_write_access',
+                                 'security_context_str_to_sid(&fake_state',
+                                 'security_compute_av_user(&fake_state'], 'UPSTREAM_SELINUXFS')
+              require(fs.count('security_context_str_to_sid(&fake_state') == 2,
+                      'UPSTREAM_SELINUXFS_TWO_CONTEXT_SIDS_REQUIRED')
+              expect_tokens(k, ['+struct selinux_state fake_state;',
+                                '-static int my_sel_open_handle_status',
+                                '-struct ksu_lsm_hook selinux_setprocattr_hook',
+                                '+void ksu_selinux_hide_handle_second_stage()',
+                                'fake_status_initialize_key'], 'UPSTREAM_BAKASU_ARCHITECTURE')
+
+              manifest = load_json(take(p3, 'SOURCE_AUDIT_P3.json'), 'P3')
+              p4report = load_json(take(p4, 'P4_SOURCE_GATE.json'), 'P4')
+              parity = load_json(take(r4_audit, 'veux-r5s2-work/report/SUSFS_BAKASU_54_PARITY_8175.json'), 'R4_PARITY')
+              build = load_json(take(r4_audit, 'veux-r5s2-work/builds/diagnostics/5.4.274/RESULT.json'), 'R4_RESULT')
+              require(manifest.get('git_commit') == P3 and manifest.get('r4_known_good_commit') == R4,
+                      'P3_PROVENANCE_DRIFT')
+              require(manifest.get('source_origin') == 'PREFLIGHT_NOT_FINAL_BUILD' and
+                      manifest.get('kernel_compiled') is False and manifest.get('kernel') == '5.4.274',
+                      'P3_ORIGIN_NOT_PREFLIGHT')
+              require(p4report.get('r4_commit') == R4 and p4report.get('p3_commit') == P3 and
+                      p4report.get('compiled_bakasu_sha256') == EXPECTED['r4_bakasu'] and
+                      p4report.get('susfs_510_comparison_head') == SUSFS510 and
+                      p4report.get('decision') == 'NOT_READY_FOR_FINAL_BUILD' and
+                      p4report.get('flash_approved') is False,
+                      'P4_PIN_OR_SAFETY_STATE_DRIFT')
+              require(p4report.get('final_composed_selinux_3_files_proven') is True and
+                      p4report.get('mount_clone_mnt') == 'ALREADY_CORRECT',
+                      'P4_SOURCE_PROOFS_MISSING')
+              require(parity.get('result') == 'SOURCE_PARITY_PASS_DEVICE_UNTESTED' and
+                      isinstance(parity.get('checks'), list) and
+                      len(parity['checks']) >= 14 and
+                      all(c.get('result') == 'PASS' for c in parity['checks']),
+                      'R4_PARITY_NOT_ALL_PASS')
+              require(build.get('kernel') == '5.4.274' and
+                      all(build.get(m) is True for m in ('compile', 'package', 'static_boot')) and
+                      build.get('device') is False,
+                      'R4_COMPILED_REFERENCE_NOT_PROVEN')
+              compiled = take(r4_main, 'evidence/BAKASU_R5S1_COMPILED_SELINUX_REFERENCE.c', EXPECTED['r4_bakasu']).decode()
+              preflight = take(p3, 'kernel/KernelSU/kernel/feature/selinux_hide.c', EXPECTED['p3_bakasu']).decode()
+              host_hooks = take(p3, 'kernel/security/selinux/hooks.c', EXPECTED['p3_hooks']).decode()
+              host_selinuxfs = take(p3, 'kernel/security/selinux/selinuxfs.c', EXPECTED['p3_selinuxfs']).decode()
+              namespace = take(p3, 'kernel/fs/namespace.c', EXPECTED['p3_namespace']).decode()
+              require('static struct selinux_state fake_state;' not in host_hooks and
+                      'extern struct selinux_state fake_state;' not in host_hooks and
+                      'extern struct selinux_state fake_state;' not in host_selinuxfs and
+                      'fake_status_initialize_key' not in host_selinuxfs,
+                      'DUPLICATE_NATIVE_510_HOST_HOOKS')
+              require('is_mnt_ksu_unshared' in namespace and 'CL_COPY_MNT_NS' in namespace,
+                      'CLONEMNT_MISSING')
+              require(compiled != preflight and sha256(compiled.encode()) != sha256(preflight.encode()),
+                      'PREFLIGHT_FALSELY_IDENTICAL_TO_COMPILED')
+              expect_tokens(compiled, [
+                  '#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)',
+                  '#error BakaSU does NOT support susfs selinux_hide feature in nongki',
+                  'static ssize_t my_write_context', 'static ssize_t my_write_access',
+                  'static int my_sel_open_handle_status',
+                  'ksu_handle_selinux_setprocattr', 'ksu_selinux_hide_unhook', 'ksu_patch_text',
+              ], 'LEGACY_R4')
+              ctx = function_segment(compiled, 'static ssize_t my_write_context', 'static ssize_t my_write_access')
+              acc = function_segment(compiled, 'static ssize_t my_write_access', 'static inline u32 cred_sid')
+              proc = function_segment(compiled, 'int __nocfi ksu_handle_selinux_setprocattr', 'static int my_sel_open_handle_status')
+              status = function_segment(compiled, 'static int my_sel_open_handle_status', 'static void hook_selinux_status_open')
+              expect_tokens(ctx, ['< 10000 || !ksu_selinux_hide_running', 'orig_context_write(',
+                                  'ksu_security_context_to_sid(', 'ksu_security_sid_to_context('], 'CONTEXT_LEGACY')
+              expect_tokens(acc, ['< 10000 || !ksu_selinux_hide_running', 'orig_access_write(',
+                                  'ksu_security_context_to_sid(', 'ksu_security_compute_av_user(',
+                                  'avd.seqno = 1;'], 'ACCESS_LEGACY')
+              expect_tokens(proc, ['< 10000 || !ksu_selinux_hide_running', 'if (strcmp(name, "current"))',
+                                   'if (error2 || error)', 'prepare_creds()', 'commit_creds(new)',
+                                   'call_orig:', 'ksu_orig_setprocattr'], 'SETPROCATTR_LEGACY')
+              expect_tokens(status, ['>= 10000 && ksu_selinux_hide_running', 'mutex_lock(ksu_selinux_status_lock)',
+                                     'filp->private_data = data;', 'orig_sel_open_handle_status(',
+                                     'initialize_fake_status();'], 'STATUS_LEGACY')
+
+              cases = [
+                  {'feature':'selinux_status', 'legacy':'my_sel_open_handle_status', 'native':'sel_open_handle_status',
+                   'source_result':'SAME_UID_RUNNING_INTENT_DIFFERENT_HOOK_AND_LOCK_LIFECYCLE',
+                   'runtime_parity_proven':False},
+                  {'feature':'context_check', 'legacy':'my_write_context', 'native':'sel_write_context',
+                   'source_result':'SAME_UID_RUNNING_INTENT_DIFFERENT_POLICY_API_AND_REDIRECT',
+                   'runtime_parity_proven':False},
+                  {'feature':'access_compute', 'legacy':'my_write_access', 'native':'sel_write_access',
+                   'source_result':'LEGACY_FORCES_AVD_SEQNO_1_NATIVE_USES_FAKE_POLICY_RESULT',
+                   'runtime_parity_proven':False},
+                  {'feature':'setprocattr', 'legacy':'ksu_handle_selinux_setprocattr', 'native':'selinux_setprocattr',
+                   'source_result':'LEGACY_INTERCEPT_AND_CRED_COMMIT_NATIVE_FAKE_SID_PRECHECK_PLUS_STOCK_PATH',
+                   'runtime_parity_proven':False},
+                  {'feature':'hook_lifecycle', 'legacy':'ksu_patch_text + ksu_selinux_hide_unhook',
+                   'native':'direct SUSFS SELinux hooks and fake_state',
+                   'source_result':'DIFFERENT_INSTALL_UNINSTALL_PATHS; DUPLICATE_HOOKS_MUST_NOT_BE_COMBINED',
+                   'runtime_parity_proven':False},
+              ]
+              return {
+                  'schema': 1, 'mode':'P5_SOURCE_FUNCTIONAL_INTENT_ONLY',
+                  'result':'SOURCE_FUNCTIONAL_DELTA_MAPPED_WITH_UNPROVEN_RUNTIME_PARITY',
+                  'kernel':'5.4.274', 'bakasu':'35234', 'nomount_dev':'8175c9dc',
+                  'susfs_core_pin':'5326e21a7eb232f9e21debdd5164e99bee3d1e2f',
+                  'susfs_510_head':SUSFS510, 'r4_commit':R4, 'p3_commit':P3,
+                  'p4_known_identity_pass':True,
+                  'r4_compiled_selinux_sha256':EXPECTED['r4_bakasu'],
+                  'preflight_is_not_final_assembled_kernel':True,
+                  'native_510_patch_applied':False,
+                  'source_changes':False, 'brene_changed':False, 'build_triggered':False,
+                  'device_tested':False, 'final_build_approved':False, 'flash_approved':False,
+                  'functional_equivalence_proven':False,
+                  'differential_observations':cases,
+                  'decision':'RETAIN_WORKING_5_4_BACKEND; MANUAL_RUNTIME_OR_EMULATED_BEHAVIOR_PROOFS_REQUIRED_BEFORE_PORT',
+                  'next':'Run isolated, bounded behavior-model tests for SELinux status, context, access and setprocattr error paths; do not combine native 5.10 and legacy 5.4 hooks without implementation-specific proof.'
+              }
+
+
+          def main(argv=None):
+              ap=argparse.ArgumentParser(description=__doc__)
+              for arg in ('p3-zip','p4-zip','r4-audit-zip','r4-main-zip','susfs-host-patch','susfs-ksu-patch','output'):
+                  ap.add_argument('--'+arg,required=True,type=Path)
+              ns=ap.parse_args(argv)
+              try:
+                  with read_archive(ns.p3_zip, EXPECTED['p3_zip'], 'P3') as p3, \
+                       read_archive(ns.p4_zip, EXPECTED['p4_zip'], 'P4') as p4, \
+                       read_archive(ns.r4_audit_zip, EXPECTED['r4_audit_zip'], 'R4_AUDIT') as audit, \
+                       read_archive(ns.r4_main_zip, EXPECTED['r4_main_zip'], 'R4_MAIN') as mainzip:
+                      result=review(p3,p4,audit,mainzip,
+                                    Path(ns.susfs_host_patch).read_bytes(),
+                                    Path(ns.susfs_ksu_patch).read_bytes())
+                  ns.output.parent.mkdir(exist_ok=True,parents=True)
+                  ns.output.write_text(json.dumps(result,sort_keys=True,indent=2)+'\n')
+                  print('P5_READ_ONLY_FUNCTIONAL_SOURCE_AUDIT=PASS; 5_DIFFERENCES=DOCUMENTED; '
+                        'KERNEL_BUILD=NO; RUNTIME_PARITY=UNPROVEN; FINAL_BUILD=BLOCKED; NO_FLASH=YES')
+                  return 0
+              except (GateBlocked, OSError, zipfile.BadZipFile, UnicodeError, ValueError) as exc:
+                  print('P5_SOURCE_AUDIT_BLOCKED:'+str(exc),file=sys.stderr)
+                  return 1
+
+
+          if __name__ == '__main__':
+              raise SystemExit(main())
+          PY_P5_GATE
+          cat > "$P6_WORK/checks/test_p5_source_audit.py" <<'PY_P5_TESTS'
+          #!/usr/bin/env python3
+          """P5 tests use real R4/P3/P4 ZIPs plus synthetic 5.10 patch excerpts.
+          Production CLI separately enforces exact upstream Git blob identities.
+          """
+          import io
+          import json
+          import os
+          import sys
+          import tempfile
+          import unittest
+          import zipfile
+          from pathlib import Path
+          from unittest.mock import patch
+
+          sys.path.insert(0,str(Path(__file__).resolve().parent))
+          import p5_source_audit as gate
+
+          HOST_FIXTURE = r'''diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
+          @@ -10,2 +10,5 @@
+          +extern struct selinux_state fake_state;
+          +extern bool ksu_selinux_hide_running __read_mostly;
+          +bool should_check_current = (likely(!strcmp(name, "current") && current_uid().val >= 10000 && ksu_selinux_hide_running));
+          +int fake_error = security_context_to_sid(&fake_state, value, size, &tmp_sid, GFP_KERNEL);
+           error = security_context_to_sid(&selinux_state, value, size, &sid, GFP_KERNEL);
+          diff --git a/security/selinux/selinuxfs.c b/security/selinux/selinuxfs.c
+          @@ -30,2 +30,8 @@
+           static int sel_open_handle_status(struct inode *inode, struct file *filp)
+          +if (likely(current_uid().val >= 10000 && ksu_selinux_hide_running)) {
+          +  mutex_lock(&selinux_state.status_lock);
+          +  filp->private_data = data;
+          +}
+          +if (!fake_status) initialize_fake_status();
+           static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
+          +length = security_context_to_sid(&fake_state, buf, size, &sid, GFP_KERNEL);
+          +length = security_sid_to_context(&fake_state, sid, &canon, &len);
+           static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
+          +length = security_context_str_to_sid(&fake_state, scon, &ssid, GFP_KERNEL);
+          +length = security_context_str_to_sid(&fake_state, tcon, &tsid, GFP_KERNEL);
+          +security_compute_av_user(&fake_state, ssid, tsid, tclass, &avd);
+          '''.encode()
+          KSU_FIXTURE = r'''diff --git a/kernel/feature/selinux_hide.c b/kernel/feature/selinux_hide.c
+          @@ -1,3 +1,3 @@
+          +struct selinux_state fake_state;
+          -static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
+          -struct ksu_lsm_hook selinux_setprocattr_hook
+          +void ksu_selinux_hide_handle_second_stage()
+          +static_key_disable(&fake_status_initialize_key.key);
+          '''.encode()
+
+
+          def rewrite(z, changes):
+              buf=io.BytesIO()
+              with zipfile.ZipFile(buf,'w',compression=zipfile.ZIP_DEFLATED) as t:
+                  for p in z.namelist():
+                      t.writestr(p,changes.get(p,z.read(p)))
+              buf.seek(0)
+              return zipfile.ZipFile(buf)
+
+
+          class P5Tests(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  root=Path(os.environ.get('VEUX_P5_FIXTURES','/mnt/data'))
+                  cls.root=root
+                  cls.p3=zipfile.ZipFile(root/'VEUX_SUSFS54_P3_RUN39225149753_ORIGINAL.zip')
+                  cls.p4=zipfile.ZipFile(root/'VEUX_SUSFS54_P4_RUN39232161365_AUDIT.zip')
+                  cls.audit=zipfile.ZipFile(root/'VEUX_R4_12167285024.zip')
+                  cls.main=zipfile.ZipFile(root/'VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip')
+
+              @classmethod
+              def tearDownClass(cls):
+                  for x in (cls.p3,cls.p4,cls.audit,cls.main):x.close()
+
+              def review(self, p3=None,p4=None,audit=None,main=None,host=None,ksu=None):
+                  return gate.review(p3 or self.p3,p4 or self.p4,audit or self.audit,
+                      main or self.main,HOST_FIXTURE if host is None else host,
+                      KSU_FIXTURE if ksu is None else ksu,official_upstream=False)
+
+              def check_blocked(self,needle,**changes):
+                  with self.assertRaisesRegex(gate.GateBlocked,needle):
+                      self.review(**changes)
+
+              def test_01_genuine_r4_p3_p4_sources_source_review_passes(self):
+                  report=self.review()
+                  self.assertEqual(report['result'],'SOURCE_FUNCTIONAL_DELTA_MAPPED_WITH_UNPROVEN_RUNTIME_PARITY')
+                  self.assertEqual(len(report['differential_observations']),5)
+                  self.assertFalse(report['functional_equivalence_proven'])
+                  self.assertFalse(report['final_build_approved'])
+                  self.assertFalse(report['source_changes'])
+
+              def test_02_explicit_sequence_number_difference(self):
+                  self.assertIn('AVD_SEQNO_1',self.review()['differential_observations'][2]['source_result'])
+
+              def test_03_reject_modified_p3_hooks(self):
+                  f='kernel/security/selinux/hooks.c'
+                  with rewrite(self.p3,{f:self.p3.read(f)+b'\n/* stray write */'}) as z:
+                      self.check_blocked('SOURCE_HASH_MISMATCH',p3=z)
+
+              def test_04_reject_modified_p3_selinuxfs(self):
+                  f='kernel/security/selinux/selinuxfs.c'
+                  with rewrite(self.p3,{f:self.p3.read(f)+b'\n/* new hook */'}) as z:
+                      self.check_blocked('SOURCE_HASH_MISMATCH',p3=z)
+
+              def test_05_reject_false_p3_provenance(self):
+                  f='SOURCE_AUDIT_P3.json'; j=json.loads(self.p3.read(f));j['git_commit']='0'*40
+                  with rewrite(self.p3,{f:json.dumps(j).encode()}) as z:
+                      self.check_blocked('P3_PROVENANCE_DRIFT',p3=z)
+
+              def test_06_reject_false_p4_decision(self):
+                  f='P4_SOURCE_GATE.json';j=json.loads(self.p4.read(f));j['decision']='READY_FOR_FINAL_BUILD'
+                  with rewrite(self.p4,{f:json.dumps(j).encode()}) as z:
+                      self.check_blocked('P4_PIN_OR_SAFETY_STATE_DRIFT',p4=z)
+
+              def test_07_reject_r4_bakasu_modified_bytes(self):
+                  f='evidence/BAKASU_R5S1_COMPILED_SELINUX_REFERENCE.c'
+                  with rewrite(self.main,{f:self.main.read(f).replace(b'ksu_selinux_hide_running',b'ksu_selinux_hide_enabl_d')}) as z:
+                      self.check_blocked('SOURCE_HASH_MISMATCH',main=z)
+
+              def test_08_reject_missing_r4_audit_proof(self):
+                  f='veux-r5s2-work/report/SUSFS_BAKASU_54_PARITY_8175.json'
+                  with rewrite(self.audit,{f:json.dumps({'result':'FAIL'}).encode()}) as z:
+                      self.check_blocked('R4_PARITY_NOT_ALL_PASS',audit=z)
+
+              def test_09_reject_wrong_5_10_host_semantics(self):
+                  self.check_blocked('UPSTREAM_SELINUXFS_MISSING_TOKEN',host=HOST_FIXTURE.replace(b'initialize_fake_status();',b'initialize_later();'))
+
+              def test_10_reject_missing_sid_conversion(self):
+                  self.check_blocked('UPSTREAM_SELINUXFS_TWO_CONTEXT_SIDS_REQUIRED',host=HOST_FIXTURE.replace(
+                      b'security_context_str_to_sid(&fake_state, tcon',b'security_context_str_to_sid(&selinux_state, tcon'))
+
+              def test_11_reject_5_10_upstream_ksu_hook_collision_contract(self):
+                  self.check_blocked('UPSTREAM_BAKASU_ARCHITECTURE_MISSING_TOKEN',ksu=KSU_FIXTURE.replace(
+                      b'-static int my_sel_open_handle_status',b'+static int my_sel_open_handle_status'))
+
+              def test_12_upstream_git_blob_pin_enforced(self):
+                  with self.assertRaisesRegex(gate.GateBlocked,'SUSFS_510_HOST_BLOB_MISMATCH'):
+                      gate.review(self.p3,self.p4,self.audit,self.main,HOST_FIXTURE,KSU_FIXTURE)
+
+              def test_13_reject_wrong_p4_source_proof(self):
+                  f='P4_SOURCE_GATE.json';j=json.loads(self.p4.read(f));j['mount_clone_mnt']='PATCH_REQUIRED'
+                  with rewrite(self.p4,{f:json.dumps(j).encode()}) as z:
+                      self.check_blocked('P4_SOURCE_PROOFS_MISSING',p4=z)
+
+              def test_14_reject_no_actual_r4_compile(self):
+                  f='veux-r5s2-work/builds/diagnostics/5.4.274/RESULT.json'
+                  j=json.loads(self.audit.read(f));j['compile']=False
+                  with rewrite(self.audit,{f:json.dumps(j).encode()}) as z:
+                      self.check_blocked('R4_COMPILED_REFERENCE_NOT_PROVEN',audit=z)
+
+              def test_15_reject_source_masked_duplicate_native_hooks(self):
+                  f='kernel/security/selinux/hooks.c'
+                  bad=self.p3.read(f)+b'\nextern struct selinux_state fake_state;\n'
+                  # Pin check must catch the mutation before duplicate-native logic.
+                  with rewrite(self.p3,{f:bad}) as z:
+                      self.check_blocked('SOURCE_HASH_MISMATCH',p3=z)
+
+              def test_16_read_only_zip_inputs_after_review(self):
+                  paths=[self.root/n for n in ('VEUX_SUSFS54_P3_RUN39225149753_ORIGINAL.zip','VEUX_SUSFS54_P4_RUN39232161365_AUDIT.zip','VEUX_R4_12167285024.zip','VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip')]
+                  before=[gate.sha256(p.read_bytes()) for p in paths]
+                  self.review()
+                  self.assertEqual(before,[gate.sha256(p.read_bytes()) for p in paths])
+
+              def test_17_reject_unknown_zip_sha_even_when_zip_valid(self):
+                  with tempfile.TemporaryDirectory() as t:
+                      p=Path(t)/'wrong.zip'
+                      p.write_bytes((self.root/'VEUX_SUSFS54_P3_RUN39225149753_ORIGINAL.zip').read_bytes()+b'X')
+                      with self.assertRaisesRegex(gate.GateBlocked,'P3_SHA256_MISMATCH'):
+                          gate.read_archive(p,gate.EXPECTED['p3_zip'],'P3')
+
+              def test_18_upstream_pins_are_git_blob_sha1_not_partial_hash(self):
+                  self.assertEqual(len(gate.EXPECTED['susfs_host_git_blob']),40)
+                  self.assertEqual(len(gate.EXPECTED['susfs_ksu_git_blob']),40)
+                  self.assertEqual(gate.blob_sha1(b'abc'), 'f2ba8f84ab5c1bce84a7b441cb1959cfc7093b7f')
+
+
+          if __name__=='__main__':
+              unittest.main()
+          PY_P5_TESTS
+          printf '%s  %s\n' '2b3bee234ea600aa73e0860a715ffbb0bdf9ec271798e1f3e3267ca5ba6cda90' "$P6_WORK/checks/p5_source_audit.py" | sha256sum --check --status
+          printf '%s  %s\n' '69c115045fe4c0d7061a3f4ca062d56861a55668a6d2fe5c3410f727f7a8b8b7' "$P6_WORK/checks/test_p5_source_audit.py" | sha256sum --check --status
+          python3 -m py_compile "$P6_WORK/checks/p5_source_audit.py" "$P6_WORK/checks/test_p5_source_audit.py"
+          echo 'P5_EMBEDDED_CHECKER_TESTS_HASH_AND_AST=PASS'
+      - name: Run P5 functional source audit and controlled negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$P6_WORK/archives/p3.zip" "$P6_WORK/fixtures/VEUX_SUSFS54_P3_RUN39225149753_ORIGINAL.zip"
+          cp "$P6_WORK/archives/p4.zip" "$P6_WORK/fixtures/VEUX_SUSFS54_P4_RUN39232161365_AUDIT.zip"
+          cp "$P6_WORK/archives/r4_audit.zip" "$P6_WORK/fixtures/VEUX_R4_12167285024.zip"
+          cp "$GITHUB_WORKSPACE/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip" "$P6_WORK/fixtures/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip"
+          python3 "$P6_WORK/checks/p5_source_audit.py" \
+            --p3-zip "$P6_WORK/archives/p3.zip" \
+            --p4-zip "$P6_WORK/archives/p4.zip" \
+            --r4-audit-zip "$P6_WORK/archives/r4_audit.zip" \
+            --r4-main-zip "$GITHUB_WORKSPACE/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip" \
+            --susfs-host-patch "$P6_WORK/upstream/host.patch" \
+            --susfs-ksu-patch "$P6_WORK/upstream/ksu.patch" \
+            --output "$P6_WORK/reports/P5_FUNCTIONAL_SOURCE_AUDIT.json"
+          VEUX_P5_FIXTURES="$P6_WORK/fixtures" python3 -m unittest discover \
+            -s "$P6_WORK/checks" -p test_p5_source_audit.py -v \
+            > "$P6_WORK/reports/P5_TESTS.log" 2>&1 || { cat "$P6_WORK/reports/P5_TESTS.log"; exit 1; }
+          cat "$P6_WORK/reports/P5_TESTS.log"
+          python3 - <<'PY_P5_SUMMARY'
+          import json,os
+          from pathlib import Path
+          root=Path(os.environ['P6_WORK'])/'reports'
+          report=json.loads((root/'P5_FUNCTIONAL_SOURCE_AUDIT.json').read_text())
+          log=(root/'P5_TESTS.log').read_text()
+          if ('Ran 18 tests' not in log or '\nOK\n' not in log or 'skipped' in log.lower() or
+              len(report['differential_observations'])!=5 or report['final_build_approved'] is not False or
+              report['functional_equivalence_proven'] is not False or report['source_changes'] is not False):
+              raise SystemExit('P5_NO_BUILD_AND_18_TESTS_GATE_FAILED')
+          lines=['# VEUX SUSFS 5.4 P5 – funktionaler Quellenvergleich','',
+                 'Source-only; kein Kernel-Build, kein Flash.','',
+                 '| Bereich | Befund |','|---|---|']
+          for row in report['differential_observations']:
+              lines.append('| '+row['feature']+' | '+row['source_result'].replace('_',' ')+' |')
+          lines+=['', '**Bewertung:** Runtime-Paritaet NICHT nachgewiesen; native 5.10-Hooks NICHT integrieren.',
+                  '', 'R4 5.4.274 + BakaSU 35234 + SUSFS 2.3 + NoMount 8175 bleibt unveraendert.',
+                  '', 'P5-Testprotokoll: 18/18 PASS; alle Quell- und Upstream-Pins sind geprueft.']
+          (root/'P5_BERICHT_DE.md').write_text('\n'.join(lines)+'\n')
+          print('P5_5_FUNCTIONAL_DIFFERENCES_AND_18_HOST_TESTS=PASS; RUNTIME_PARITY=UNPROVEN')
+          PY_P5_SUMMARY
+      - name: Materialize pinned P6 model and 44 negative/branch tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$P6_WORK/checks/p6_behavior_model.py" <<'PY_P6_GATE'
+          #!/usr/bin/env python3
+          """VEUX P6: pinned-source guided, bounded deterministic models, no kernel execution.
+          
+          A model outcome is NOT equivalent to executing kernel C, proving SELinux safety,
+          or establishing device/runtime or Flash-PASS. Never modify source trees.
+          """
+          import argparse
+          import hashlib
+          import itertools
+          import json
+          import sys
+          import zipfile
+          from pathlib import Path
+          
+          import p5_source_audit as p5
+          
+          P5_ARCHIVE_SHA256 = '27391ecc8200a1df809c64d1d222242bdf5d12e97c05017f2ee719ab8313d22f'
+          LEGACY_FILE = 'evidence/BAKASU_R5S1_COMPILED_SELINUX_REFERENCE.c'
+          
+          class GateBlocked(ValueError):
+              pass
+          
+          
+          def check(cond, reason):
+              if not cond:
+                  raise GateBlocked(reason)
+          
+          
+          def section(text, start, end, *, copies=1):
+              check(text.count(start) == copies, 'SOURCE_ANCHOR_COUNT_DRIFT:'+start)
+              i=text.index(start); j=text.find(end,i+len(start))
+              check(j > i, 'SOURCE_END_ANCHOR_MISSING:'+end)
+              return text[i:j]
+          
+          
+          def contains_all(text, anchors, label):
+              for anchor in anchors:
+                  check(anchor in text,'SOURCE_SEMANTICS_DRIFT:'+label+':'+anchor)
+          
+          
+          def _elig(uid, running):
+              return uid >= 10000 and running
+          
+          
+          def model_status(uid, running, fake_ready, stock_rc):
+              if _elig(uid, running) and fake_ready:
+                  return ('fake_status', 0)
+              return ('stock_status', stock_rc)
+          
+          
+          def model_context(uid, running, permission_rc, convert_rc, canonical_rc, canonical_len, limit=4096):
+              if not _elig(uid,running): return ('stock_handoff', None)
+              if permission_rc: return ('permission',permission_rc)
+              if convert_rc: return ('backup_policy_sid',convert_rc)
+              if canonical_rc: return ('backup_policy_context',canonical_rc)
+              if canonical_len > limit: return ('too_long',-34)
+              return ('context_length',canonical_len)
+          
+          
+          def model_access(uid, running, permission_rc, first_sid_rc, second_sid_rc, computed_seqno, native=False):
+              if not _elig(uid,running): return ('stock_handoff',None)
+              if permission_rc: return ('permission',permission_rc)
+              if first_sid_rc: return ('source_sid',first_sid_rc)
+              if second_sid_rc: return ('target_sid',second_sid_rc)
+              return ('avd_seqno',computed_seqno if native else 1)
+          
+          
+          def model_setprocattr(uid, running, name, backup_rc, real_rc, permission_rc, can_alloc,
+                                sid, bounded_rc=0, dyntransition_rc=0, ptrace_rc=0, native=False):
+              if not _elig(uid,running) or name != 'current':
+                  return ('stock_handoff', None)
+              if native:
+                  # This is ONLY the new 5.10 fake-policy precheck followed by the stock path.
+                  if backup_rc: return ('fake_policy_reject',backup_rc)
+                  if real_rc: return ('stock_policy_reject',real_rc)
+                  return ('stock_continuation',None)
+              if permission_rc: return ('legacy_permission',permission_rc)
+              if backup_rc: return ('legacy_backup_policy',backup_rc)
+              if not can_alloc: return ('legacy_allocation',-12)
+              if sid == 0: return ('legacy_no_sid',-22)
+              if bounded_rc: return ('legacy_bounded',bounded_rc)
+              if dyntransition_rc: return ('legacy_dynamic',dyntransition_rc)
+              if ptrace_rc: return ('legacy_ptrace',ptrace_rc)
+              return ('legacy_commit_creds',0)
+          
+          
+          def model_toggle(state, enable, install_rc=0):
+              # Local source's ksu_selinux_hide_enabled assignment precedes enable attempt.
+              enabled,running=state
+              enabled=bool(enable)
+              if enabled and not running:
+                  if install_rc:
+                      return (enabled,False),install_rc
+                  running=True
+              elif not enabled and running:
+                  running=False
+              return (enabled,running),0
+          
+          
+          def verify_source_anchors(legacy, hostpatch, ksuppatch):
+              # This is structural evidence, NOT an AST/C compiler proof.
+              ctx=section(legacy,'static ssize_t my_write_context','static ssize_t my_write_access')
+              acc=section(legacy,'static ssize_t my_write_access','static inline u32 cred_sid')
+              proc=section(legacy,'int __nocfi ksu_handle_selinux_setprocattr','static int my_sel_open_handle_status',copies=2)
+              status=section(legacy,'static int my_sel_open_handle_status','static void hook_selinux_status_open')
+              life=section(legacy,'static int selinux_hide_feature_set','static const struct ksu_feature_handler selinux_hide_handler')
+              unhook=section(legacy,'static void ksu_selinux_hide_unhook()','static int ksu_selinux_hide_enable()')
+              phase2=section(legacy,'void ksu_selinux_hide_handle_second_stage()','void ksu_selinux_hide_handle_post_fs_data()')
+              postfs=section(legacy,'void ksu_selinux_hide_handle_post_fs_data()','void __init ksu_selinux_hide_init()')
+              h=p5.section(hostpatch,'security/selinux/hooks.c')
+              sf=p5.section(hostpatch,'security/selinux/selinuxfs.c')
+              k=p5.section(ksuppatch,'kernel/feature/selinux_hide.c')
+              contains_all(ctx,['orig_context_write(file, buf, size)','ksu_avc_has_perm_compat(',
+                                'ksu_security_context_to_sid(', 'ksu_security_sid_to_context(',
+                                'length = -ERANGE;', 'if (len > SIMPLE_TRANSACTION_LIMIT)'], 'legacy_context')
+              contains_all(acc,['orig_access_write(file, buf, size)','ksu_avc_has_perm_compat(',
+                                'ksu_security_context_to_sid(', 'ksu_security_compute_av_user(',
+                                'avd.seqno = 1;', 'if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)'], 'legacy_access')
+              contains_all(proc,['if (strcmp(name, "current"))', 'if (error2 || error)',
+                                 'return error2 ?: error;', 'prepare_creds()',
+                                 'if (sid == 0)', 'ksu_security_bounded_transition_compat(',
+                                 'PROCESS__DYNTRANSITION','PROCESS__PTRACE','commit_creds(new);',
+                                 'abort_creds(new);', 'call_orig:', 'ksu_orig_setprocattr'], 'legacy_proc')
+              contains_all(status,['ksu_get_uid_t(current_uid()) >= 10000', 'ksu_selinux_hide_running',
+                                   'mutex_lock(ksu_selinux_status_lock);','mutex_unlock(ksu_selinux_status_lock);',
+                                   'filp->private_data = data;', 'orig_sel_open_handle_status(inode, filp)',
+                                   'initialize_fake_status();'],'legacy_status')
+              contains_all(life,['ksu_selinux_hide_enabled = enable;', 'ret = ksu_selinux_hide_enable();',
+                                 'if (!ret)', 'ksu_selinux_hide_running = true;',
+                                 'ksu_selinux_hide_disable();','ksu_selinux_hide_running = false;'], 'legacy_lifecycle')
+              contains_all(unhook,['ksu_patch_text(context_write, &orig_context_write',
+                                   'ksu_patch_text(access_write, &orig_access_write',
+                                   'ksu_orig_setprocattr = NULL;'], 'legacy_unhook')
+              contains_all(phase2,['initialize_fake_status();','if (fake_status)',
+                                   'fake_status_initialize_key'], 'legacy_second_stage')
+              contains_all(postfs,['if (!fake_status)', 'fake_status_initialize_key'], 'legacy_postfs')
+              contains_all(h,['should_check_current','security_context_to_sid(&fake_state',
+                              'security_context_to_sid(&selinux_state'], 'native_proc')
+              contains_all(sf,['sel_open_handle_status','mutex_lock(&selinux_state.status_lock);',
+                               'security_context_to_sid(&fake_state','security_sid_to_context(&fake_state',
+                               'security_context_str_to_sid(&fake_state','security_compute_av_user(&fake_state',
+                               'initialize_fake_status();'], 'native_selinuxfs')
+              check(sf.count('security_context_str_to_sid(&fake_state') == 2,
+                    'NATIVE_FAKE_SID_CALL_COUNT_DRIFT')
+              contains_all(k,['-static int my_sel_open_handle_status',
+                              '-struct ksu_lsm_hook selinux_setprocattr_hook',
+                              '+void ksu_selinux_hide_handle_second_stage()'], 'native_ksu_architecture')
+              return {'legacy_context':True,'legacy_access':True,'legacy_setprocattr':True,
+                      'legacy_status':True,'legacy_lifecycle':True,
+                      'legacy_second_stage':True,'legacy_post_fs_data':True,
+                      'native_context':True,'native_access':True,'native_setprocattr':True,
+                      'native_status':True,'native_ksu_architecture':True}
+          
+          
+          def scenarios():
+              entries=[]
+              # Matrix enumerates possible control-flow branches, not observed device behavior.
+              for uid, running, fake, rc in itertools.product((0,9999,10000,12000),(False,True),(False,True),(0,-12)):
+                  actual=model_status(uid,running,fake,rc)
+                  expected='fake_status' if _elig(uid,running) and fake else 'stock_status'
+                  check(actual[0]==expected,'STATUS_MODEL_INCONSISTENT')
+                  entries.append({'group':'status','uid':uid,'running':running,'fake':fake,'stock_rc':rc,'model':actual[0]})
+              access_difference=0
+              for uid,running,seq,permission in itertools.product((0,9999,10000,12000),(False,True),(0,1,3,100),(0,-13)):
+                  old=model_access(uid,running,permission,0,0,seq)
+                  new=model_access(uid,running,permission,0,0,seq,native=True)
+                  mismatched=old!=new
+                  if mismatched: access_difference+=1
+                  entries.append({'group':'access','uid':uid,'running':running,'computed_seq':seq,
+                                  'permission_rc':permission,'legacy':old[0],
+                                  'seqno_model_difference':mismatched})
+              proc_difference=0
+              for uid,running,name,fake_rc,real_rc in itertools.product((0,9999,10000,12000),(False,True),('current','exec'),(0,-22),(0,-22)):
+                  old=model_setprocattr(uid,running,name,fake_rc,real_rc,0,True,123)
+                  new=model_setprocattr(uid,running,name,fake_rc,real_rc,0,True,123,native=True)
+                  mismatched=(old[0]!=new[0] and _elig(uid,running) and name=='current')
+                  if mismatched:proc_difference+=1
+                  entries.append({'group':'setprocattr','uid':uid,'running':running,'name':name,
+                                  'fake_rc':fake_rc,'stock_rc':real_rc,
+                                  'different_paths':mismatched})
+              ctx_failures=0
+              for uid,running,permission,conversion,too_big in itertools.product((0,9999,10000,12000),(False,True),(0,-13),(0,-22),(False,True)):
+                  x=model_context(uid,running,permission,conversion,0,4097 if too_big else 33)
+                  if x[0] not in ('stock_handoff','context_length'): ctx_failures+=1
+                  entries.append({'group':'context','uid':uid,'running':running,'permission':permission,
+                                  'conversion':conversion,'too_big':too_big,'model':x[0]})
+              return entries,access_difference,proc_difference,ctx_failures
+          
+          
+          def evaluate(mainzip,p5_zip,p5_json,host_bytes,ksu_bytes):
+              check(p5_json.get('result')=='SOURCE_FUNCTIONAL_DELTA_MAPPED_WITH_UNPROVEN_RUNTIME_PARITY' and
+                    p5_json.get('functional_equivalence_proven') is False and
+                    p5_json.get('final_build_approved') is False and
+                    p5_json.get('source_changes') is False and
+                    p5_json.get('susfs_510_head')==p5.SUSFS510,
+                    'P5_BASELINE_CONTRACT_DRIFT')
+              check(p5.blob_sha1(host_bytes)==p5.EXPECTED['susfs_host_git_blob'] and
+                    p5.blob_sha1(ksu_bytes)==p5.EXPECTED['susfs_ksu_git_blob'],
+                    'SUSFS_UPSTREAM_GIT_BLOB_MISMATCH')
+              legacy=p5.take(mainzip,LEGACY_FILE,p5.EXPECTED['r4_bakasu']).decode()
+              hosts=host_bytes.decode()
+              ksus=ksu_bytes.decode()
+              anchors=verify_source_anchors(legacy,hosts,ksus)
+              with p5_zip as z:
+                  check(z.testzip() is None, 'P5_ARCHIVE_CORRUPT')
+                  old=p5.load_json(p5.take(z,'P5_FUNCTIONAL_SOURCE_AUDIT.json'),'P5_ARCHIVED_JSON')
+                  check(old==p5_json,'P5_ARCHIVED_REPORT_MISMATCH')
+              rows,access_delta,proc_delta,context_errors=scenarios()
+              check(len(rows)==224, 'P6_SCENARIO_COUNT_DRIFT')
+              check(access_delta>0 and proc_delta>0, 'MODEL_EXPECTED_DIFFERENCES_MISSING')
+              return {'schema':1,'mode':'P6_BOUNDED_CONTROL_FLOW_MODEL_NOT_KERNEL_EXECUTION',
+                      'result':'P6_MODELS_AND_SOURCE_ANCHORS_VERIFIED_RUNTIME_UNPROVEN',
+                      'kernel':'5.4.274','r4_commit':p5.R4,'p3_commit':p5.P3,
+                      'susfs_510_head':p5.SUSFS510,'bakasu':'35234','nomount_dev':'8175c9dc',
+                      'source_contracts':anchors,
+                      'model_scenarios':{'total':len(rows),'status':32,'access':64,'setprocattr':64,'context':64,
+                                         'access_seqno_differences':access_delta,
+                                         'setprocattr_path_differences':proc_delta,
+                                         'context_error_paths':context_errors},
+                      'source_changes':False,'kernel_build':False,'device_tested':False,
+                      'runtime_equivalence_proven':False,'safe_to_apply_native_510_patches':False,
+                      'final_build_approved':False,'flash_approved':False,'brene_changed':False,
+                      'limitations':['Control-flow models are inferred from pinned source anchors, not compiled code',
+                                     'Kernel-side lock ordering, policy memory lifetime and races are unverified',
+                                     'SELinux sequence/AVC outcomes and setprocattr transitions require real target tests',
+                                     'P3 preflight export is not byte-identical to the complete final R4 source'],
+                      'decision':'KEEP_R4_INTACT; FOLLOW_WITH_SEPARATE_NONFLASH_COMPILATION_ONLY_AFTER_IMPLEMENTATION_REVIEW'}
+          
+          
+          def main(args=None):
+              ap=argparse.ArgumentParser()
+              for name in ('r4-main','p5-zip','p5-json','host','ksu','output'):
+                  ap.add_argument('--'+name,required=True,type=Path)
+              ns=ap.parse_args(args)
+              try:
+                  p5.read_file(ns.p5_zip,P5_ARCHIVE_SHA256,'P5_ARTIFACT')
+                  with zipfile.ZipFile(ns.r4_main) as mainzip, zipfile.ZipFile(ns.p5_zip) as p5zip:
+                      check(mainzip.testzip() is None,'R4_MAIN_CORRUPT')
+                      p5.read_file(ns.r4_main,p5.EXPECTED['r4_main_zip'],'R4_MAIN')
+                      report=evaluate(mainzip,p5zip,json.loads(ns.p5_json.read_text()),
+                                      ns.host.read_bytes(),ns.ksu.read_bytes())
+                  ns.output.parent.mkdir(parents=True,exist_ok=True)
+                  ns.output.write_text(json.dumps(report,sort_keys=True,indent=2)+'\n')
+                  print('P6_SOURCE_GUIDED_BEHAVIOR_MODELS=PASS; SCENARIOS=224; '
+                        'KERNEL_BUILD=NO; RUNTIME_PARITY=UNPROVEN; FINAL_BUILD=BLOCKED; FLASH=NO')
+                  return 0
+              except (GateBlocked,p5.GateBlocked,ValueError,UnicodeError,FileNotFoundError,zipfile.BadZipFile) as exc:
+                  print('P6_GUARD_BLOCKED:'+str(exc),file=sys.stderr)
+                  return 1
+          
+          if __name__=='__main__':
+              raise SystemExit(main())
+          PY_P6_GATE
+          printf '%s  %s\n' '4985989785e1f4969411c7f36cdbfab86733fcd07e7ed714af7f48d667158ea3' "$P6_WORK/checks/p6_behavior_model.py" | sha256sum --check --status
+          cat > "$P6_WORK/checks/test_p6_behavior_model.py" <<'PY_P6_TESTS'
+          #!/usr/bin/env python3
+          """P6 negative and model tests. Upstream snippet mocks are NOT full upstream patch evidence."""
+          import io
+          import json
+          import os
+          import sys
+          import tempfile
+          import unittest
+          import zipfile
+          import hashlib
+          from pathlib import Path
+          from unittest.mock import patch
+          
+          sys.path.insert(0,str(Path(__file__).resolve().parent))
+          import p5_source_audit as p5
+          import p6_behavior_model as p6
+          from test_p5_source_audit import HOST_FIXTURE, KSU_FIXTURE
+          
+          class ModelTests(unittest.TestCase):
+              def test_01_stock_uid_0(self):
+                  self.assertEqual(p6.model_status(0,True,True,-12),('stock_status',-12))
+              def test_02_stock_uid_9999(self):
+                  self.assertEqual(p6.model_status(9999,True,True,0)[0],'stock_status')
+              def test_03_fake_uid_10000(self):
+                  self.assertEqual(p6.model_status(10000,True,True,-12),('fake_status',0))
+              def test_04_fake_not_initialized(self):
+                  self.assertEqual(p6.model_status(10000,True,False,-12),('stock_status',-12))
+              def test_05_running_false(self):
+                  self.assertEqual(p6.model_status(20000,False,True,0)[0],'stock_status')
+              def test_06_context_nonapp_handoff(self):
+                  self.assertEqual(p6.model_context(9999,True,-13,-22,0,90)[0],'stock_handoff')
+              def test_07_context_permission_denied(self):
+                  self.assertEqual(p6.model_context(10000,True,-13,0,0,40),('permission',-13))
+              def test_08_context_sid_error(self):
+                  self.assertEqual(p6.model_context(10000,True,0,-22,0,40),('backup_policy_sid',-22))
+              def test_09_context_canonical_error(self):
+                  self.assertEqual(p6.model_context(10000,True,0,0,-5,40),('backup_policy_context',-5))
+              def test_10_context_erange(self):
+                  self.assertEqual(p6.model_context(10000,True,0,0,0,4097),('too_long',-34))
+              def test_11_context_len_success(self):
+                  self.assertEqual(p6.model_context(10000,True,0,0,0,30),('context_length',30))
+              def test_12_access_stock(self):
+                  self.assertEqual(p6.model_access(12000,False,0,0,0,35)[0],'stock_handoff')
+              def test_13_access_permission_error(self):
+                  self.assertEqual(p6.model_access(12000,True,-13,0,0,35),('permission',-13))
+              def test_14_access_source_sid_error(self):
+                  self.assertEqual(p6.model_access(12000,True,0,-22,0,35),('source_sid',-22))
+              def test_15_access_target_sid_error(self):
+                  self.assertEqual(p6.model_access(12000,True,0,0,-22,35),('target_sid',-22))
+              def test_16_access_seqno_mismatch(self):
+                  self.assertEqual(p6.model_access(12000,True,0,0,0,8),('avd_seqno',1))
+                  self.assertEqual(p6.model_access(12000,True,0,0,0,8,native=True),('avd_seqno',8))
+              def test_17_access_seqno_same_only_for_one(self):
+                  self.assertEqual(p6.model_access(12000,True,0,0,0,1),p6.model_access(12000,True,0,0,0,1,native=True))
+              def test_18_proc_noncurrent_handoff(self):
+                  self.assertEqual(p6.model_setprocattr(12000,True,'exec',0,0,0,True,3)[0],'stock_handoff')
+              def test_19_proc_nonapp_handoff(self):
+                  self.assertEqual(p6.model_setprocattr(9999,True,'current',0,0,0,True,3)[0],'stock_handoff')
+              def test_20_proc_permission_failure(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,-13,True,3),('legacy_permission',-13))
+              def test_21_proc_backup_invalid(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',-22,0,0,True,3),('legacy_backup_policy',-22))
+              def test_22_proc_enomem(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,False,3),('legacy_allocation',-12))
+              def test_23_proc_no_sid(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,True,0),('legacy_no_sid',-22))
+              def test_24_proc_bounded_denied(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,True,3,bounded_rc=-13),('legacy_bounded',-13))
+              def test_25_proc_dynamic_denied(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,True,3,dyntransition_rc=-13),('legacy_dynamic',-13))
+              def test_26_proc_ptrace_denied(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,True,3,ptrace_rc=-13),('legacy_ptrace',-13))
+              def test_27_proc_legacy_commit_model(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,0,0,True,3),('legacy_commit_creds',0))
+              def test_28_proc_fake_valid_stock_invalid_disagreement(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,-22,0,True,3,native=True),('stock_policy_reject',-22))
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',0,-22,0,True,3),('legacy_commit_creds',0))
+              def test_29_proc_native_fake_invalid(self):
+                  self.assertEqual(p6.model_setprocattr(10000,True,'current',-22,0,0,True,3,native=True),('fake_policy_reject',-22))
+              def test_30_lifecycle_enable_success_and_disable(self):
+                  new,rc=p6.model_toggle((False,False),True);self.assertEqual((new,rc),((True,True),0))
+                  new,rc=p6.model_toggle(new,False);self.assertEqual((new,rc),((False,False),0))
+              def test_31_lifecycle_failure_does_not_mark_running(self):
+                  new,rc=p6.model_toggle((False,False),True,install_rc=-38)
+                  self.assertEqual((new,rc),((True,False),-38))
+              def test_32_lifecycle_double_enable(self):
+                  self.assertEqual(p6.model_toggle((True,True),True,install_rc=-38),((True,True),0))
+              def test_33_scenario_counts(self):
+                  rows,a,p,c=p6.scenarios()
+                  self.assertEqual(len(rows),224)
+                  self.assertEqual({x:sum(z['group']==x for z in rows) for x in ('status','access','setprocattr','context')},
+                                   {'status':32,'access':64,'setprocattr':64,'context':64})
+                  self.assertEqual(a,6)
+                  self.assertTrue(p>0)
+                  self.assertTrue(c>0)
+          
+          
+          class ProvenanceTests(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  base=Path(os.environ.get('VEUX_P6_FIXTURES','/mnt/data'))
+                  cls.r4=zipfile.ZipFile(base/'VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip')
+                  cls.p5zip=base/'VEUX_P5_RUN39237651862_AUDIT.zip'
+                  cls.p5=json.loads(zipfile.ZipFile(cls.p5zip).read('P5_FUNCTIONAL_SOURCE_AUDIT.json'))
+                  cls.legacy=cls.r4.read(p6.LEGACY_FILE).decode()
+          
+              @classmethod
+              def tearDownClass(cls):cls.r4.close()
+          
+              def test_34_real_r4_legacy_anchors(self):
+                  # With the authentic kernel source from the green R4 overlay.
+                  hooks=p6.verify_source_anchors(self.legacy,HOST_FIXTURE.decode(),KSU_FIXTURE.decode())
+                  self.assertEqual(len(hooks),12)
+                  self.assertTrue(all(hooks.values()))
+          
+              def test_35_reject_missing_original_status_hook(self):
+                  with self.assertRaisesRegex(p6.GateBlocked,'SOURCE_SEMANTICS_DRIFT:legacy_status'):
+                      p6.verify_source_anchors(self.legacy.replace('mutex_lock(ksu_selinux_status_lock);','missing_mutex_here;'),
+                                               HOST_FIXTURE.decode(), KSU_FIXTURE.decode())
+          
+              def test_36_reject_removed_orig_context_fallback(self):
+                  with self.assertRaisesRegex(p6.GateBlocked,'SOURCE_SEMANTICS_DRIFT:legacy_context'):
+                      p6.verify_source_anchors(self.legacy.replace('orig_context_write(file, buf, size)','no_context_fallback()'),
+                                               HOST_FIXTURE.decode(),KSU_FIXTURE.decode())
+          
+              def test_37_reject_missing_native_context_check(self):
+                  with self.assertRaisesRegex(p6.GateBlocked,'SOURCE_SEMANTICS_DRIFT:native_proc'):
+                      p6.verify_source_anchors(self.legacy,HOST_FIXTURE.decode().replace('security_context_to_sid(&fake_state','security_context_to_sid(&real_state'),
+                                               KSU_FIXTURE.decode())
+          
+              def test_38_reject_missing_native_status_lock(self):
+                  with self.assertRaisesRegex(p6.GateBlocked,'SOURCE_SEMANTICS_DRIFT:native_selinuxfs'):
+                      p6.verify_source_anchors(self.legacy,HOST_FIXTURE.decode().replace('mutex_lock(&selinux_state.status_lock);','unlocked_status;'),
+                                               KSU_FIXTURE.decode())
+          
+              def test_39_reject_p5_contract_false_claim(self):
+                  x=dict(self.p5);x['functional_equivalence_proven']=True
+                  with self.assertRaisesRegex(p6.GateBlocked,'P5_BASELINE_CONTRACT_DRIFT'):
+                      p6.evaluate(self.r4,zipfile.ZipFile(self.p5zip),x,HOST_FIXTURE,KSU_FIXTURE)
+          
+              def test_40_reject_upstream_git_blob_mismatch(self):
+                  with self.assertRaisesRegex(p6.GateBlocked,'SUSFS_UPSTREAM_GIT_BLOB_MISMATCH'):
+                      p6.evaluate(self.r4,zipfile.ZipFile(self.p5zip),self.p5,HOST_FIXTURE,KSU_FIXTURE)
+          
+              def test_41_local_bounded_model_uses_authentic_archives(self):
+                  # Only fake upstream blob hashes in this dedicated UNIT TEST; production pins immutable.
+                  pins={'susfs_host_git_blob':p5.blob_sha1(HOST_FIXTURE),
+                        'susfs_ksu_git_blob':p5.blob_sha1(KSU_FIXTURE)}
+                  with patch.dict(p5.EXPECTED,pins):
+                      z=zipfile.ZipFile(self.p5zip)
+                      report=p6.evaluate(self.r4,z,self.p5,HOST_FIXTURE,KSU_FIXTURE)
+                  self.assertEqual(report['model_scenarios']['total'],224)
+                  self.assertFalse(report['runtime_equivalence_proven'])
+                  self.assertFalse(report['final_build_approved'])
+                  self.assertFalse(report['source_changes'])
+          
+              def test_42_report_missing_original_reference_rejected(self):
+                  with self.assertRaisesRegex(p5.GateBlocked,'ARCHIVE_MISSING'):
+                      p5.take(self.r4,'evidence/not-a-file.c')
+          
+              def test_43_p5_zip_sha256(self):
+                  self.assertEqual(hashlib.sha256(self.p5zip.read_bytes()).hexdigest(),p6.P5_ARCHIVE_SHA256)
+          
+              def test_44_source_explicitly_nonGKI_5_4(self):
+                  self.assertIn('does NOT support susfs selinux_hide feature in nongki',self.legacy)
+          
+          if __name__=='__main__':unittest.main()
+          PY_P6_TESTS
+          printf '%s  %s\n' '1741ee3e60afc6404c9993be6d532b945d4c47f43d79245ecc767bfc0fce18be' "$P6_WORK/checks/test_p6_behavior_model.py" | sha256sum --check --status
+          python3 -m py_compile "$P6_WORK/checks/p6_behavior_model.py" "$P6_WORK/checks/test_p6_behavior_model.py"
+          echo 'P6_INLINE_SCRIPTS_HASH_AND_AST=PASS'
+      - name: Run bounded P6 behavior models on authenticated sources (NO BUILD)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$P6_WORK/archives/p5.zip" "$P6_WORK/fixtures/VEUX_P5_RUN39237651862_AUDIT.zip"
+          python3 "$P6_WORK/checks/p6_behavior_model.py" \
+            --r4-main "$GITHUB_WORKSPACE/VEUX_NOMOUNT_DEV_8175_R4_MAIN.zip" \
+            --p5-zip "$P6_WORK/archives/p5.zip" \
+            --p5-json "$P6_WORK/reports/P5_FUNCTIONAL_SOURCE_AUDIT.json" \
+            --host "$P6_WORK/upstream/host.patch" \
+            --ksu "$P6_WORK/upstream/ksu.patch" \
+            --output "$P6_WORK/reports/P6_BOUNDED_BEHAVIOR.json"
+          VEUX_P6_FIXTURES="$P6_WORK/fixtures" python3 -m unittest discover \
+            -s "$P6_WORK/checks" -p test_p6_behavior_model.py -v \
+            > "$P6_WORK/reports/P6_TESTS.log" 2>&1 || { cat "$P6_WORK/reports/P6_TESTS.log"; exit 1; }
+          cat "$P6_WORK/reports/P6_TESTS.log"
+          python3 - <<'PY_P6_SUMMARY'
+          import json,os
+          from pathlib import Path
+          root=Path(os.environ['P6_WORK'])/'reports'
+          p=json.loads((root/'P6_BOUNDED_BEHAVIOR.json').read_text())
+          s=(root/'P6_TESTS.log').read_text()
+          groups=p.get('model_scenarios',{})
+          if ('Ran 44 tests' not in s or '\nOK\n' not in s or 'skipped' in s.lower()
+              or p.get('result')!='P6_MODELS_AND_SOURCE_ANCHORS_VERIFIED_RUNTIME_UNPROVEN'
+              or groups.get('total')!=224 or len(p.get('source_contracts',{}))!=12
+              or any(p.get(k) is not False for k in ('source_changes','kernel_build','device_tested',
+                               'runtime_equivalence_proven','safe_to_apply_native_510_patches',
+                               'final_build_approved','flash_approved','brene_changed'))):
+              raise SystemExit('P6_SAFETY_OR_TEST_COUNT_BLOCKED')
+          summary=[
+            '# P6 – Isolierte SELinux-Verhaltensmodelle (Linux 5.4.274)', '',
+            'Authentifizierte Quellen: R4 + P3 + P4 + P5 und SUSFS-5.10-Patches.', '',
+            'P5: 18/18 Quelltests. P6: 44/44 Modelle/Negativtests.',
+            '224 modellierte Kontrollflussfaelle; kein Kernelcode ausgefuehrt.', '',
+            f"Access-seqno Modelldifferenzen: {groups['access_seqno_differences']}",
+            f"Setprocattr-Modellpfad-Differenzen: {groups['setprocattr_path_differences']}", '',
+            '**Runtime-Paritaet, Device-PASS, Final Build, Flash: NICHT freigegeben.**',
+            'BReNE, NoMount und BakaSU-Quellen unveraendert.'
+          ]
+          (root/'P6_BERICHT_DE.md').write_text('\n'.join(summary)+'\n')
+          print('P6_44_TESTS_AND_224_BOUNDED_MODELS=PASS; RUNTIME_PARITY=UNPROVEN; NO_BUILD=YES; NO_FLASH=YES')
+          PY_P6_SUMMARY
+      - name: Independently ShellCheck all P6 YAML bash run blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_P5_SC'
+          from pathlib import Path
+          import subprocess
+          path=Path('.github/workflows/VEUX_SUSFS54_P6_BOUNDED_BEHAVIOR_NO_KERNEL.yml')
+          lines=path.read_text().splitlines()
+          blocks=[];i=0
+          while i<len(lines):
+              if lines[i]=='        run: |':
+                  i+=1;block=[]
+                  while i<len(lines) and (lines[i].startswith('          ') or lines[i]==''):
+                      block.append(lines[i][10:] if lines[i].startswith('          ') else '')
+                      i+=1
+                  blocks.append('\n'.join(block)+'\n')
+              else:
+                  i+=1
+          if len(blocks)!=10:
+              raise SystemExit('P6_SHELLCHECK_RUN_BLOCK_COUNT_DRIFT:'+str(len(blocks)))
+          for n,script in enumerate(blocks,1):
+              p=subprocess.run(['shellcheck','--severity=warning','--shell=bash','-'],input=script,text=True,capture_output=True)
+              if p.returncode:
+                  print(p.stdout,p.stderr)
+                  raise SystemExit('P6_SHELLCHECK_FAILED_RUN_BLOCK_'+str(n))
+          print('P6_INDEPENDENT_SHELLCHECK=PASS; BLOCKS='+str(len(blocks)))
+          PY_P5_SC
+      - name: Upload P6 source models and audits, even if blocked
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-SUSFS54-P6-BEHAVIOR-MODELS-${{ github.run_id }}
+          path: ${{ env.P6_WORK }}/reports/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+      - name: Assert repository unchanged and never build or flash
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'P6_REPOSITORY_UNCHANGED=YES; BUILD=NO; FLASH=NO; FINAL_BUILD=BLOCKED'
