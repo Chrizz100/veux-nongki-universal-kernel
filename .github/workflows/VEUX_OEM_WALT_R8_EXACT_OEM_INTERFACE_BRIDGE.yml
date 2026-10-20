@@ -1,0 +1,259 @@
+# VEUX WALT R8 exact source only; R6/R7 source authenticated; NO KERNEL BUILD, NO FLASH
+name: VEUX OEM WALT R8 Exact OEM Source Interface Bridge – NO BUILD
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-oem-walt-r8-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  p11-exact-source:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PACKAGE_NAME: VEUX_STOCK274_P11_R4_MAIN.zip
+      PACKAGE_SHA256: 46eef073d2418f0b64b66a0ff3ab33d788c485db3dcf8afa5cf56f89da27fb50
+      P11_TOOL_DIR: ${{ github.workspace }}/p11-tools
+      P10_TOOL_DIR: ${{ github.workspace }}/p11-tools/p10
+      R4_TOOL_DIR: ${{ github.workspace }}/p11-tools/r4
+      P11_BUNDLES_DIR: ${{ github.workspace }}/p11-bundles
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      R6_PACKAGE_NAME: VEUX_OEM_WALT_ABI_R6_MAIN.zip
+      R6_PACKAGE_SHA256: 8c9963b23b5fce2b358c4151df83a58d68ed4b7c4884392bee871f02f65e6be2
+      R6_DIR: ${{ github.workspace }}/veux-oem-walt-r6
+      R6_OUT: ${{ github.workspace }}/veux-oem-walt-r6-source-only
+      R7_PACKAGE_NAME: VEUX_OEM_WALT_R7_R2_PRECOMPILE_AUDIT_MAIN.zip
+      R7_PACKAGE_SHA256: 84d2aea348a8181eadc712a8c4e9b1e66836650fb179e5632d403ff2f27dd051
+      R7_DIR: ${{ github.workspace }}/veux-oem-walt-r7-tools
+      R7_OUT: ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit
+      R8_PACKAGE_NAME: VEUX_OEM_WALT_R8_SOURCE_BRIDGE_MAIN.zip
+      R8_PACKAGE_SHA256: e4d5c314d5ba8b090b3168175b35a80a254723c593240e2fbefcf52bf6e6ff43
+      R8_DIR: ${{ github.workspace }}/veux-oem-walt-r8-tools
+      R8_OUT: ${{ github.workspace }}/veux-oem-walt-r8-source-only
+    steps:
+    - name: Checkout exact repo source read-only
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: project
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
+      id: package
+      shell: bash
+      run: "set -euo pipefail\ntest \"$GITHUB_REPOSITORY\" = 'Chrizz100/veux-nongki-universal-kernel'\n test \"$GITHUB_REF\" = 'refs/heads/main'\n test \"$(git -C project rev-parse HEAD)\" = \"\
+        $GITHUB_SHA\"\n test -f \"project/$PACKAGE_NAME\" && test ! -L \"project/$PACKAGE_NAME\"\n test -f \"project/$R6_PACKAGE_NAME\" && test ! -L \"project/$R6_PACKAGE_NAME\"\n printf '%s \
+        \ %s\\n' \"$PACKAGE_SHA256\" \"project/$PACKAGE_NAME\" | sha256sum -c -\n printf '%s  %s\\n' \"$R6_PACKAGE_SHA256\" \"project/$R6_PACKAGE_NAME\" | sha256sum -c -\n echo 'present=true'\
+        \ >> \"$GITHUB_OUTPUT\"\n echo 'R6_ROOT_INPUTS=PASS'\n\ntest -f \"project/$R7_PACKAGE_NAME\" && test ! -L \"project/$R7_PACKAGE_NAME\"\nprintf '%s  %s\\n' \"$R7_PACKAGE_SHA256\" \"project/$R7_PACKAGE_NAME\"\
+        \ | sha256sum -c -\necho 'R7_ROOT_INPUT=PASS'\n"
+    - name: Pin actionlint 1.7.12 and validate R6 YAML before replay
+      if: ${{ steps.package.outputs.present == 'true' }}
+      shell: bash
+      run: "set -euo pipefail\nworkflow='project/.github/workflows/VEUX_OEM_WALT_ABI_R6_EXACT_P3_SOURCE_BRIDGE.yml'\ntest -s \"$workflow\"\ncurl --fail --location --retry 3 --max-time 120 --silent\
+        \ --show-error \\\n  'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \\\n  -o \"$RUNNER_TEMP/actionlint.tar.gz\"\nprintf '%s  %s\\\
+        n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \"$RUNNER_TEMP/actionlint.tar.gz\" | sha256sum -c -\nmkdir -p \"$RUNNER_TEMP/veux-p11-actionlint\"\ntar -xzf \"$RUNNER_TEMP/actionlint.tar.gz\"\
+        \ -C \"$RUNNER_TEMP/veux-p11-actionlint\" actionlint\n\"$RUNNER_TEMP/veux-p11-actionlint/actionlint\" -oneline \"$workflow\"\necho 'R6_ACTIONLINT=PASS'\n"
+    - name: Unpack and SHA-authenticate source-only dependencies
+      if: ${{ steps.package.outputs.present == 'true' }}
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nimport hashlib,json,os,pathlib,stat,zipfile\nbase=pathlib.Path(os.environ['GITHUB_WORKSPACE'])\nroot=base/'project'/os.environ['PACKAGE_NAME']\n\
+        tools=pathlib.Path(os.environ['P11_TOOL_DIR'])\nbundles=pathlib.Path(os.environ['P11_BUNDLES_DIR'])\nif tools.exists() or bundles.exists():raise SystemExit('P11_TOOL_DIRECTORY_ALREADY_EXISTS')\n\
+        expected={'START_HIER.txt','P11_STATUS.json','P11_TESTS.log',\n          'P10_MASTER_ORIGINAL.zip','P3_R4_SOURCE_REPLAY.zip',\n          'p11_source_gate.py','p11_build_walt_off.sh','test_p11_source_gate.py',\n\
+        \          'test_p11_build_dryrun.py','P11_BUILDRUNNER_DRYRUN_TESTS.log'}\ndef load_valid(z,expected,manifest_name):\n    info=z.infolist();names=[x.filename for x in info]\n    if set(names)!=expected|{manifest_name}\
+        \ or len(names)!=len(set(names)):\n        raise SystemExit('UNEXPECTED_ARCHIVE_MEMBERS')\n    if z.testzip():raise SystemExit('CRC_FAILURE')\n    for i in info:\n        p=pathlib.PurePosixPath(i.filename)\n\
+        \        if p.is_absolute() or '..' in p.parts or '\\\\' in i.filename or i.is_dir() or stat.S_IFMT(i.external_attr>>16)==stat.S_IFLNK:\n            raise SystemExit('UNSAFE_ARCHIVE_MEMBER\
+        \ '+i.filename)\n    manifest=json.loads(z.read(manifest_name))\n    hashes=manifest.get('files') if manifest_name=='manifest.json' and 'files' in manifest else manifest.get('sha256')\n\
+        \    if set(hashes)!=expected:raise SystemExit('MANIFEST_SCOPE_DRIFT')\n    for n,digest in hashes.items():\n        if hashlib.sha256(z.read(n)).hexdigest()!=digest:raise SystemExit('HASH_MISMATCH\
+        \ '+n)\n    return manifest\nwith zipfile.ZipFile(root) as z:\n    manifest=load_valid(z,expected,'manifest.json')\n    if manifest.get('kernel')!='5.4.274' or manifest.get('flashable')\
+        \ is not False:raise SystemExit('WRONG_STAGE')\n    tools.mkdir();bundles.mkdir()\n    for name in ('p11_source_gate.py','p11_build_walt_off.sh','test_p11_source_gate.py','test_p11_build_dryrun.py'):\n\
+        \        (tools/name).write_bytes(z.read(name))\n    nested={'P10_MASTER_ORIGINAL.zip':'VEUX_5_4_274_P10_WALT_KOMBI_PATCH_SAMMELPAKET.zip',\n            'P3_R4_SOURCE_REPLAY.zip':'VEUX_STOCK274_P3_GATE_R4.zip'}\n\
+        \    for old,new in nested.items():(bundles/new).write_bytes(z.read(old))\nfor nested_file,out_folder in [(bundles/'VEUX_STOCK274_P3_GATE_R4.zip',tools/'r4'),\n                       \
+        \        (bundles/'VEUX_5_4_274_P10_WALT_KOMBI_PATCH_SAMMELPAKET.zip',tools/'p10')]:\n    with zipfile.ZipFile(nested_file) as zi:\n        if zi.testzip():raise SystemExit('NESTED_CRC_FAILURE')\n\
+        \        for item in zi.infolist():\n            p=pathlib.PurePosixPath(item.filename)\n            if p.is_absolute() or '..' in p.parts or '\\\\' in item.filename or stat.S_IFMT(item.external_attr>>16)==stat.S_IFLNK:\n\
+        \                raise SystemExit('NESTED_UNSAFE_PATH')\n        zi.extractall(out_folder)\nfor path in tools.rglob('*.py'):compile(path.read_bytes(),str(path),'exec')\nprint('P11_NESTED_PACKAGE_AND_PYTHON=PASS')\n\
+        PY\n"
+    - name: Source patch regressions before remote checkout
+      if: ${{ steps.package.outputs.present == 'true' }}
+      shell: bash
+      run: 'set -euo pipefail
+
+        python3 -m unittest discover -s "$P11_TOOL_DIR" -p test_p11_source_gate.py -v
+
+        python3 -m unittest discover -s "$P10_TOOL_DIR" -p test_compose_p10_source.py -v
+
+        python3 -m unittest discover -s "$R4_TOOL_DIR" -p test_stage_stock274.py -v
+
+        python3 project/common/stock274/source_only_r2/test_prepare_stock274_p3.py
+
+        echo ''P11_SOURCE_REGRESSIONS=PASS''
+
+        '
+    - name: Checkout pinned P2-v5 historical recipe
+      if: ${{ steps.package.outputs.present == 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: Chrizz100/veux-resukisu-builder
+        ref: e58a67835f266620d4fdb86d816295e401a8858d
+        fetch-depth: 1
+        path: historical
+        persist-credentials: false
+    - name: Checkout pinned Positron vendor ancestor (will become exactly 5.4.274)
+      if: ${{ steps.package.outputs.present == 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: dereference23/kernel_xiaomi_sm6375
+        ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+        fetch-depth: 0
+        path: kernel
+        persist-credentials: false
+    - name: Install YAML parser for exact P2 reconstruction
+      if: ${{ steps.package.outputs.present == 'true' }}
+      shell: bash
+      run: "set -euo pipefail\nif ! python3 -c 'import yaml; assert hasattr(yaml,\"safe_load\")'; then\n  sudo apt-get update\n  sudo apt-get install -y --no-install-recommends python3-yaml\n\
+        fi\npython3 -c 'import yaml; print(\"P11_YAML_PARSER=PASS\")'\n"
+    - name: Independently ShellCheck each R6 YAML Bash run block
+      shell: bash
+      run: "set -euo pipefail\nif ! command -v shellcheck >/dev/null 2>&1; then\n  sudo apt-get update -qq\n  sudo apt-get install -y -qq shellcheck\nfi\npython3 - <<'PY_R6_SHELLCHECK'\nimport\
+        \ yaml,subprocess,pathlib\ndoc=yaml.safe_load(pathlib.Path('project/.github/workflows/VEUX_OEM_WALT_ABI_R6_EXACT_P3_SOURCE_BRIDGE.yml').read_text())\nblocks=[s['run'] for j in doc['jobs'].values()\
+        \ for s in j['steps'] if isinstance(s,dict) and isinstance(s.get('run'),str)]\nif len(blocks)<9:raise SystemExit('R6_RUN_BLOCKS_MISSING')\nfor i,script in enumerate(blocks,1):\n    p=subprocess.run(['shellcheck','--shell=bash','--severity=warning','-'],input=script,text=True,capture_output=True)\n\
+        \    if p.returncode:raise SystemExit('SHELLCHECK_BLOCK_'+str(i)+'_FAIL\\n'+p.stdout+p.stderr)\nprint('R6_INDEPENDENT_SHELLCHECK=PASS; BLOCKS='+str(len(blocks)))\nPY_R6_SHELLCHECK\n"
+    - name: 'R7 R2 preflight: pinned package, actionlint, ShellCheck, Clang 14/17 test suites'
+      shell: bash
+      run: "set -euo pipefail\nr7_zip=\"project/$R7_PACKAGE_NAME\"\nr7_yaml='project/.github/workflows/VEUX_OEM_WALT_R7_R2_EXACT_SOURCE_INTERFACE_PREFLIGHT.yml'\ntest -f \"$r7_zip\" && test !\
+        \ -L \"$r7_zip\"\ntest -s \"$r7_yaml\" && test ! -L \"$r7_yaml\"\nprintf '%s  %s\\n' \"$R7_PACKAGE_SHA256\" \"$r7_zip\" | sha256sum -c -\n\"$RUNNER_TEMP/veux-p11-actionlint/actionlint\"\
+        \ -oneline \"$r7_yaml\"\npython3 - <<'PY_R7_SHELLCHECK'\nimport pathlib,subprocess,yaml\np=pathlib.Path('project/.github/workflows/VEUX_OEM_WALT_R7_R2_EXACT_SOURCE_INTERFACE_PREFLIGHT.yml')\n\
+        d=yaml.safe_load(p.read_text())\nblocks=[s['run'] for j in d['jobs'].values() for s in j['steps'] if isinstance(s.get('run'),str)]\nif len(blocks)<11: raise SystemExit('R7_YAML_RUN_BLOCKS_MISSING')\n\
+        for i,b in enumerate(blocks,1):\n    r=subprocess.run(['shellcheck','--shell=bash','--severity=warning','-'],input=b,text=True,capture_output=True)\n    if r.returncode: raise SystemExit(f'SHELLCHECK_BLOCK_{i}:\
+        \ '+r.stdout+r.stderr)\nprint('R7_SELF_ACTIONLINT_AND_SHELLCHECK=PASS; blocks='+str(len(blocks)))\nPY_R7_SHELLCHECK\npython3 - <<'PY_R7_EXTRACT'\nfrom pathlib import Path\nimport hashlib,os,stat,zipfile\n\
+        src=Path(os.environ['GITHUB_WORKSPACE'])/'project'/os.environ['R7_PACKAGE_NAME']\nout=Path(os.environ['R7_DIR'])\nexpect={'r7_walt_interface_audit.py','test_r7_walt_interface_audit.py',\n\
+        \        'OEM_VEUX_5_4_274.config','R7_START_HIER_DE.txt','R7_TEST_LOG.txt'}\nif out.exists() or out.is_symlink():raise SystemExit('R7_WORK_DIR_EXISTS')\nwith zipfile.ZipFile(src) as z:\n\
+        \    members=z.infolist(); names=[m.filename for m in members]\n    if set(names)!=expect|{'SHA256SUMS.txt'} or len(names)!=len(set(names)):\n        raise SystemExit('R7_ZIP_MEMBER_SCOPE_INVALID')\n\
+        \    if z.testzip():raise SystemExit('R7_ZIP_CRC_FAILED')\n    for m in members:\n        if m.is_dir() or '/' in m.filename or chr(92) in m.filename or m.filename.startswith('.') or stat.S_IFMT(m.external_attr>>16)==stat.S_IFLNK:\n\
+        \            raise SystemExit('R7_UNSAFE_MEMBER:'+m.filename)\n    pins={}\n    for line in z.read('SHA256SUMS.txt').decode().splitlines():\n        h,n=line.split('  ',1)\n        if\
+        \ n in pins or len(h)!=64 or any(c not in '0123456789abcdef' for c in h):\n            raise SystemExit('R7_MANIFEST_FORMAT_ERROR')\n        pins[n]=h\n    if set(pins)!=expect:raise SystemExit('R7_MANIFEST_SCOPE_INVALID')\n\
+        \    for n in expect:\n        if hashlib.sha256(z.read(n)).hexdigest()!=pins[n]:raise SystemExit('R7_SHA256_MISMATCH:'+n)\n    out.mkdir()\n    for n in expect:(out/n).write_bytes(z.read(n))\n\
+        \    for n in ('r7_walt_interface_audit.py','test_r7_walt_interface_audit.py'):\n        compile(z.read(n),n,'exec')\nprint('R7_ZIP_MANIFEST_SYNTAX=PASS')\nPY_R7_EXTRACT\nif ! command\
+        \ -v clang >/dev/null; then echo 'R7_CLANG_MISSING_NO_DIAGNOSTIC_APPROVAL' >&2; exit 2; fi\npython3 -m unittest discover -s \"$R7_DIR\" -p test_r7_walt_interface_audit.py -v\necho 'R7_MODEL_NEGATIVE_TESTS=PASS'\n"
+    - name: 'R8 pinned OEM-source patch preflight: actionlint, ShellCheck, 30 negative and compiler regression tests'
+      shell: bash
+      timeout-minutes: 3
+      run: "set -euo pipefail\nr8_zip=\"project/$R8_PACKAGE_NAME\"\nr8_yaml='project/.github/workflows/VEUX_OEM_WALT_R8_EXACT_OEM_INTERFACE_BRIDGE.yml'\ntest -s \"$r8_zip\" && test ! -L \"$r8_zip\"\
+        \ntest -s \"$r8_yaml\" && test ! -L \"$r8_yaml\"\nprintf '%s  %s\\n' \"$R8_PACKAGE_SHA256\" \"$r8_zip\" | sha256sum -c -\n\"$RUNNER_TEMP/veux-p11-actionlint/actionlint\" -oneline \"$r8_yaml\"\
+        \npython3 - <<'PY_R8_SHELLCHECK'\nfrom pathlib import Path\nimport yaml,subprocess\np=Path('project/.github/workflows/VEUX_OEM_WALT_R8_EXACT_OEM_INTERFACE_BRIDGE.yml')\ny=yaml.safe_load(p.read_text())\n\
+        blocks=[s['run'] for j in y['jobs'].values() for s in j['steps'] if isinstance(s.get('run'),str)]\nif len(blocks)<15:raise SystemExit('R8_YAML_MISSING_SHELL_BLOCKS')\nfor i,script in enumerate(blocks,1):\n\
+        \    r=subprocess.run(['shellcheck','--shell=bash','--severity=warning','-'],input=script,text=True,capture_output=True)\n    if r.returncode:raise SystemExit('R8_SHELLCHECK_BLOCK_'+str(i)+':\
+        \ '+r.stdout+r.stderr)\nprint('R8_SELF_ACTIONLINT_AND_SHELLCHECK=PASS; RUN_BLOCKS='+str(len(blocks)))\nPY_R8_SHELLCHECK\npython3 - <<'PY_R8_EXTRACT'\nfrom pathlib import Path,PurePosixPath\n\
+        import hashlib,os,stat,zipfile\nsrc=Path(os.environ['GITHUB_WORKSPACE'])/'project'/os.environ['R8_PACKAGE_NAME']\nout=Path(os.environ['R8_DIR'])\nexpect={\n 'r8_walt_oem_interface_gate.py','test_r8_walt_oem_interface_gate.py',\n\
+        \ 'R8_WALT_OEM_INTERFACE_BRIDGE.patch','R8_START_HIER_DE.txt','R8_TEST_LOG.txt',\n 'fixtures/r6/source/kernel/sched/sched.h','fixtures/r6/R6_SOURCE_GATE.json',\n 'fixtures/r7/R7_WALT_INTERFACE_AUDIT.json','fixtures/OEM_VEUX_5_4_274.config',\n\
+        }\nif out.exists() or out.is_symlink():raise SystemExit('R8_OUTPUT_PATH_EXISTS')\nwith zipfile.ZipFile(src) as z:\n    members=z.infolist()\n    names=[m.filename for m in members]\n \
+        \   if len(names)!=len(set(names)) or set(names)!=expect|{'SHA256SUMS.txt'}:\n        raise SystemExit('R8_ZIP_MEMBERS_DRIFT')\n    if z.testzip():raise SystemExit('R8_CRC_FAILURE')\n\
+        \    for m in members:\n        p=PurePosixPath(m.filename)\n        if p.is_absolute() or '..' in p.parts or chr(92) in m.filename or m.is_dir() or stat.S_IFMT(m.external_attr>>16)==stat.S_IFLNK:\n\
+        \            raise SystemExit('R8_UNSAFE_ZIP_MEMBER:'+m.filename)\n    pins={}\n    for line in z.read('SHA256SUMS.txt').decode().splitlines():\n        h,n=line.split('  ',1)\n      \
+        \  if n in pins or len(h)!=64 or any(c not in '0123456789abcdef' for c in h):\n            raise SystemExit('R8_MANIFEST_FORMAT_DRIFT')\n        pins[n]=h\n    if set(pins)!=expect:raise\
+        \ SystemExit('R8_MANIFEST_SCOPE_DRIFT')\n    for n in expect:\n        if hashlib.sha256(z.read(n)).hexdigest()!=pins[n]:\n            raise SystemExit('R8_MEMBER_SHA_DRIFT:'+n)\n    out.mkdir()\n\
+        \    for n in expect:\n        target=out/n\n        target.parent.mkdir(parents=True,exist_ok=True)\n        target.write_bytes(z.read(n))\n    for n in ('r8_walt_oem_interface_gate.py','test_r8_walt_oem_interface_gate.py'):\n\
+        \        compile(z.read(n),n,'exec')\nprint('R8_ZIP_MEMBER_HASH_AND_PYTHON=PASS')\nPY_R8_EXTRACT\ncommand -v clang >/dev/null\npython3 -m unittest discover -s \"$R8_DIR\" -p test_r8_walt_oem_interface_gate.py\
+        \ -v\necho 'R8_30_REGRESSION_TESTS=PASS'\n"
+    - name: Reproduce proven P3 stock-near source without building
+      if: ${{ steps.package.outputs.present == 'true' }}
+      timeout-minutes: 18
+      shell: bash
+      run: 'set -euo pipefail
+
+        python3 "$R4_TOOL_DIR/stage_stock274.py"
+
+        test -s "$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json"
+
+        '
+    - name: Compose P10 patch on exact P3 and freeze source
+      if: ${{ steps.package.outputs.present == 'true' }}
+      shell: bash
+      timeout-minutes: 6
+      run: "set -euo pipefail\npython3 \"$P11_TOOL_DIR/p11_source_gate.py\" \\\n  --workspace \"$GITHUB_WORKSPACE\" \\\n  --p10-tools \"$P10_TOOL_DIR\" \\\n  --p3-result \"$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json\"\
+        \ \\\n  --output \"$RUNNER_TEMP/VEUX_274_P11_PREP\"\ntest -s \"$RUNNER_TEMP/VEUX_274_P11_PREP/P11_PREP_REPORT.json\"\n"
+    - name: Authenticate and materialize source-only R6 patches and tests
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY_R6_INPUT'\nfrom pathlib import Path\nimport hashlib,os,stat,zipfile\nroot=Path(os.environ['GITHUB_WORKSPACE'])/'project'/os.environ['R6_PACKAGE_NAME']\n\
+        out=Path(os.environ['R6_DIR'])\nexpect={'r6_exact_source_gate.py','WALT_STRUCT_BRIDGE_R2.patch',\n        'WALT_R3_FIX_AFTER_R2_P10.patch','test_r6_source_gate.py',\n        'R6_20_TESTS.log','START_HIER.txt'}\n\
+        if out.exists():raise SystemExit('R6_OUTPUT_MUST_NOT_EXIST')\nwith zipfile.ZipFile(root) as z:\n    info=z.infolist();names=[x.filename for x in info]\n    if len(names)!=len(set(names))\
+        \ or set(names)!=expect|{'SHA256SUMS.txt'}:\n        raise SystemExit('R6_ARCHIVE_SCOPE_MISMATCH')\n    if z.testzip():raise SystemExit('R6_ZIP_CRC_FAILED')\n    for item in info:\n  \
+        \      if item.is_dir() or '/' in item.filename or chr(92) in item.filename or item.filename.startswith('.') or stat.S_IFMT(item.external_attr>>16)==stat.S_IFLNK:\n            raise SystemExit('R6_UNSAFE_ZIP_MEMBER')\n\
+        \    pins={}\n    for line in z.read('SHA256SUMS.txt').decode().splitlines():\n        h,n=line.split('  ',1)\n        if n in pins or len(h)!=64:raise SystemExit('R6_MANIFEST_INVALID')\n\
+        \        pins[n]=h\n    if set(pins)!=expect:raise SystemExit('R6_MEMBER_MANIFEST_SCOPE_MISMATCH')\n    for n in expect:\n        if hashlib.sha256(z.read(n)).hexdigest()!=pins[n]:\n \
+        \           raise SystemExit('R6_MEMBER_SHA_MISMATCH:'+n)\n    out.mkdir()\n    for n in expect:(out/n).write_bytes(z.read(n))\nfor n in ('r6_exact_source_gate.py','test_r6_source_gate.py'):\n\
+        \    compile((out/n).read_bytes(),n,'exec')\nprint('R6_SOURCE_PACKAGE_HASH_SCOPE_SYNTAX=PASS; NO_BUILD=YES')\nPY_R6_INPUT\n"
+    - name: Apply WALT R2 R3 on pinned exact P3/P10 copy and verify idle tick
+      timeout-minutes: 5
+      shell: bash
+      run: "set -euo pipefail\npython3 \"$R6_DIR/r6_exact_source_gate.py\" \\\n  --kernel \"$GITHUB_WORKSPACE/kernel\" \\\n  --p3 \"$RUNNER_TEMP/VEUX_274_P3_OUTPUT/P3_RESULT.json\" \\\n  --p11\
+        \ \"$RUNNER_TEMP/VEUX_274_P11_PREP/P11_PREP_REPORT.json\" \\\n  --patches \"$R6_DIR\" \\\n  --output \"$R6_OUT\"\ntest -s \"$R6_OUT/R6_SOURCE_GATE.json\"\npython3 - <<'PY_R6_STATUS'\n\
+        import json,os,pathlib\np=pathlib.Path(os.environ['R6_OUT'])/'R6_SOURCE_GATE.json'\nr=json.loads(p.read_text())\nif not (r['strict_real_source'] and len(r['r6_modified_files'])==3 and\n\
+        \        len(r['p10_callers_verified'])==6 and r['status']=='WALT_R6_REAL_P3_COMPATIBILITY_PRECOMPILE_STAGED' and\n        not any(r[k] for k in ('final_kernel_built','walt_on_compile_proven','vendor_crc_fixed','flash_allowed','brene_changed'))):\n\
+        \    raise SystemExit('R6_REAL_SOURCE_STAGING_INCOMPLETE')\nprint('R6_EXACT_P3_P10_SOURCE_GATE=PASS; 6_CALLERS=YES; 3_HEADERS=YES; NO_KERNEL_BUILD')\nPY_R6_STATUS\n"
+    - name: R7 identify exact Xiaomi WALT-ON interface blockers; no kernel build
+      shell: bash
+      timeout-minutes: 3
+      run: "set -euo pipefail\npython3 \"$R7_DIR/r7_walt_interface_audit.py\" \\\n  --kernel \"$GITHUB_WORKSPACE/kernel\" \\\n  --r6 \"$R6_OUT\" \\\n  --stock-config \"$R7_DIR/OEM_VEUX_5_4_274.config\"\
+        \ \\\n  --output \"$R7_OUT\" \\\n  --clang clang\npython3 - <<'PY_R7_STATUS'\nimport json,os,pathlib\nr=json.loads((pathlib.Path(os.environ['R7_OUT'])/'R7_WALT_INTERFACE_AUDIT.json').read_text())\n\
+        assert r['status']=='R7_PRECOMPILE_AUDIT_COMPLETED__WALT_ON_BLOCKED'\nassert r['confirmed_blocker_count']==2\nassert r['r6_source_gate_verified'] and r['diagnostic_completed']\nassert\
+        \ len(r['minimal_compiler_probes'])==2\nassert not any(r[k] for k in ('kernel_build_attempted','walt_on_compile_proven','vendor_abi_proven','flash_allowed','brene_changed'))\nprint('R7_SOURCE_CONTRACT_AUDIT=CAPTURED;\
+        \ PRECOMPILE_BLOCKED=YES; BUILD=NO; FLASH=NO')\nPY_R7_STATUS\n"
+    - name: R8 stage genuine Xiaomi WALT clock/reserved-bit branch on exact R6; NO kernel build
+      shell: bash
+      timeout-minutes: 3
+      run: "set -euo pipefail\npython3 \"$R8_DIR/r8_walt_oem_interface_gate.py\" \\\n  --r6 \"$R6_OUT\" \\\n  --r7 \"$R7_OUT\" \\\n  --stock \"$R7_DIR/OEM_VEUX_5_4_274.config\" \\\n  --patch \"\
+        $R8_DIR/R8_WALT_OEM_INTERFACE_BRIDGE.patch\" \\\n  --output \"$R8_OUT\" \\\n  --clang clang\npython3 - <<'PY_R8_STATUS'\nfrom pathlib import Path\nimport json,os\nr=json.loads((Path(os.environ['R8_OUT'])/'R8_SOURCE_GATE.json').read_text())\n\
+        if r['status']!='R8_EXACT_R6_WALT_INTERFACE_SOURCE_BRIDGE_STAGED':raise SystemExit('R8_SOURCE_STAGING_INCOMPLETE')\nif r['r6_source_gate_verified'] is not True or r['r7_diagnosis_verified']\
+        \ is not True:raise SystemExit('R8_R6_R7_EVIDENCE_INCOMPLETE')\nif r['modified_files']!=['kernel/sched/sched.h'] or len(r['clang_interface_models'])!=3:raise SystemExit('R8_PATCH_SCOPE_OR_CLANG_DRIFT')\n\
+        if r['r8_header_after_sha256']!='12f10b1be96b1868304dd0f5e85a8e4e421ae72383d8b76571a2dc91fd6d4f5d':raise SystemExit('R8_OUTPUT_SHA_DRIFT')\nif any(r[k] for k in ('walt_on_kernel_object_compiled','kernel_build_attempted','vendor_abi_proven','flash_allowed','brene_changed','bakasusu_nomount_changed')):raise\
+        \ SystemExit('R8_FALSE_BUILD_ABI_FLASH_CLAIM')\nprint('R8_REAL_R6_R7_OEM_INTERFACE_SOURCE_BRIDGE=PASS; REAL_BUILD=NO; ABI=UNPROVEN; FLASH=NO')\nPY_R8_STATUS\n"
+    - name: Archive P3/P10 source-only R6 results including failures
+      if: ${{ always() && steps.package.outputs.present == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R6-WALT-EXACT-P3-P10-SOURCE-NO-BUILD-${{ github.run_id }}
+        path: '${{ runner.temp }}/VEUX_274_P3_OUTPUT/P3_RESULT.json
+
+          ${{ runner.temp }}/VEUX_274_P11_PREP/P11_PREP_REPORT.json
+
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/'
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Upload R7 R2 diagnostic blockers and R6 provenance
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R7-R2-WALT-INTERFACE-DIAGNOSTIC-${{ github.run_id }}
+        path: '${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/
+
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Upload R8 exact source-only interface bridge and evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R8-WALT-OEM-INTERFACE-SOURCE-NO-BUILD-${{ github.run_id }}
+        path: '${{ github.workspace }}/veux-oem-walt-r8-source-only/
+
+          ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/R7_WALT_INTERFACE_AUDIT.json
+
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+        if-no-files-found: warn
+        retention-days: 14
+    - name: Assert repository unchanged; R8 source-only; flash prohibited
+      if: ${{ always() }}
+      shell: bash
+      run: 'set -euo pipefail
+
+        test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
+
+        test -z "$(git -C project status --porcelain --untracked-files=all)"
+
+        echo ''R8_REPO_UNCHANGED=YES; SOURCE_ONLY=YES; KERNEL_BUILD=NO; DEVICE_FLASH=NO''
+
+        '
+    name: 'R8: authenticate R6/R7; stage genuine Xiaomi WALT clock and reserved-bit interface (NO BUILD)'
