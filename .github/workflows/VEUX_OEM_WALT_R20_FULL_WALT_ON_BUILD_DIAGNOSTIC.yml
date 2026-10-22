@@ -1,4 +1,4 @@
-name: VEUX OEM WALT R20-R8 Xiaomi User-Hint Real Link Provider + Full Build – NO FLASH
+name: VEUX OEM WALT R20-R9 R12-R16 Authenticated Sysctl Lineage + Full Build – NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -120,6 +120,10 @@ jobs:
       R20_R8_PACKAGE_SHA256: 879f7691c0f266ff39f48acff60b4f7e90303cac2f7b32bcaa084dd45e7678f5
       R20_R8_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r8-tools
       R20_R8_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r8-source-proof
+      R20_R9_PACKAGE_NAME: VEUX_OEM_WALT_R20_R9_R12_R16_SYSCTL_LINEAGE_MAIN.zip
+      R20_R9_PACKAGE_SHA256: d17bfe0d302e22398b71a21aebe641cb7f3d9358221645f11fdac431f9aa0c75
+      R20_R9_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r9-tools
+      R20_R9_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r9-source-proof
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1520,6 +1524,55 @@ jobs:
         PY_R20_R8_UNPACK
         python3 -B -m unittest discover -s "$R20_R8_DIR/tests" -p test_r20_r8_xiaomi_user_hint_link.py -v
         echo 'R20_R8_OEM_PATCH_REGRESSIONS=51/51; NO_FLASH'
+    - name: R20 R9 authenticate R12-to-R16 sysctl provenance and run 70 guarded tests before replay
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive="project/$R20_R9_PACKAGE_NAME"
+        wf='project/.github/workflows/VEUX_OEM_WALT_R20_FULL_WALT_ON_BUILD_DIAGNOSTIC.yml'
+        test -s "$archive" && test ! -L "$archive"
+        test -s "$wf" && test ! -L "$wf"
+        printf '%s  %s\n' "$R20_R9_PACKAGE_SHA256" "$archive" | sha256sum -c -
+        "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$wf"
+        python3 - <<'PY_R20_R9_EXTRACT'
+        import hashlib,os,pathlib,stat,zipfile
+        archive=pathlib.Path('project')/os.environ['R20_R9_PACKAGE_NAME']
+        dest=pathlib.Path(os.environ['R20_R9_DIR'])
+        expected={'r20_r9_xiaomi_user_hint_lineage.py',
+          'tests/test_r20_r9_xiaomi_user_hint_lineage.py','R20_R9_LESEN_ZUERST_DE.txt'}
+        if dest.exists() or dest.is_symlink():raise SystemExit('R20_R9_OUTPUT_ALREADY_EXISTS')
+        with zipfile.ZipFile(archive) as z:
+            infos=z.infolist();names=[i.filename for i in infos]
+            if (len(infos)!=4 or len(set(names))!=4 or
+                set(names)!=expected|{'SHA256SUMS.txt'} or z.testzip()):
+                raise SystemExit('R20_R9_ARCHIVE_SCOPE_CRC_INVALID')
+            manifest={}
+            for line in z.read('SHA256SUMS.txt').decode().splitlines():
+                fields=line.split('  ',1)
+                if len(fields)!=2 or len(fields[0])!=64 or fields[1] in manifest or set(fields[0])-set('0123456789abcdef'):
+                    raise SystemExit('R20_R9_MANIFEST_INVALID')
+                manifest[fields[1]]=fields[0]
+            if set(manifest)!=expected:raise SystemExit('R20_R9_MANIFEST_SCOPE')
+            members={}
+            for item in infos:
+                name=item.filename;p=pathlib.PurePosixPath(name)
+                if (p.is_absolute() or '..' in p.parts or chr(92) in name or item.is_dir() or
+                    stat.S_IFMT(item.external_attr>>16)==stat.S_IFLNK or not 0<item.file_size<=220000):
+                    raise SystemExit('R20_R9_UNSAFE_ARCHIVE_MEMBER:'+name)
+                if name in expected:
+                    data=z.read(name)
+                    if hashlib.sha256(data).hexdigest()!=manifest[name]:raise SystemExit('R20_R9_INNER_SHA_DRIFT:'+name)
+                    if name.endswith('.py'):compile(data,name,'exec')
+                    members[name]=data
+        dest.mkdir()
+        for name,data in members.items():
+            file=dest/name
+            file.parent.mkdir(parents=True,exist_ok=True)
+            file.write_bytes(data)
+        print('R20_R9_SHA_CRC_PYTHON=PASS')
+        PY_R20_R9_EXTRACT
+        python3 -B -m unittest discover -s "$R20_R9_DIR/tests" -p 'test_r20_r9_xiaomi_user_hint_lineage.py' -v
+        echo 'R20_R9_R12_R16_CHAIN_REGRESSIONS=70/70; NO_FLASH'
     - name: Reproduce proven P3 stock-near source without building
       if: ${{ steps.package.outputs.present == 'true' }}
       timeout-minutes: 18
@@ -2312,23 +2365,25 @@ jobs:
         test -s "$R20_R7_REPORT/R20_R7_SOURCE_INSPECTION.json"
         test -s "$R20_R7_REPORT/R20_R7_SOURCE_DIFF.patch"
         echo 'R20_R7_REAL_VEUX_WALT_LPM_PROVIDER_ABI=PROVEN; ONLY_CPUIDLE_CLIENT_PATCHED=YES; NO_FLASH'
-    - name: R20 R8 restore exact Xiaomi OEM sched_user_hint_max provider in disposable kernel sysctl
+    - name: R20 R9 verify exact R12-to-R16 source SHA lineage and restore OEM user hint before link
       shell: bash
       run: |
         set -euo pipefail
-        python3 "$R20_R8_DIR/r20_r8_xiaomi_user_hint_link.py" \
+        python3 "$R20_R9_DIR/r20_r9_xiaomi_user_hint_lineage.py" \
           --snapshot "$R9_SNAPSHOT" \
           --canonical "$GITHUB_WORKSPACE/kernel" \
           --project "$GITHUB_WORKSPACE/project" \
           --config "$R13_OBJOUT/.config" \
           --r12-proof "$R12_OUT/R12_SOURCE_GATE.json" \
+          --r16-proof "$R16_OUT/R16_SOURCE_GATE.json" \
+          --r16-patch "$R16_OUT/R16_GENUINE_OEM_FOCUSED_APIS.patch" \
           --r19-proof "$R19_REPORT/R19_PROVIDER_RESULT.json" \
           --objout "$R13_OBJOUT" \
           --llvm-nm "$R9_TOOLCHAIN/bin/llvm-nm" \
-          --output "$R20_R8_REPORT"
-        test -s "$R20_R8_REPORT/R20_R8_SOURCE_GATE.json"
-        test -s "$R20_R8_REPORT/R20_R8_XIAOMI_USER_HINT.patch"
-        echo 'R20_R8_REAL_XIAOMI_USER_HINT=PORT_VERIFIED; VMLINUX_LINK=PENDING; NO_FLASH'
+          --output "$R20_R9_REPORT"
+        test -s "$R20_R9_REPORT/R20_R9_SOURCE_GATE.json"
+        test -s "$R20_R9_REPORT/R20_R9_XIAOMI_USER_HINT.patch"
+        echo 'R20_R9_R12_TO_R16_SYSCTL_LINEAGE=PASS; OEM_USER_HINT=PORT_VERIFIED; VMLINUX_LINK=PENDING; NO_FLASH'
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -2604,12 +2659,12 @@ jobs:
         path: ${{ env.R20_R7_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
-    - name: R20 R8 upload original Xiaomi scheduler user-hint link provider audit even on failure
+    - name: R20 R9 upload authenticated R12 R16 source provenance and user-hint patch even on failure
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-R20-R8-XIAOMI-USER-HINT-PROOF-${{ github.run_id }}
-        path: ${{ env.R20_R8_REPORT }}/
+        name: VEUX-R20-R9-XIAOMI-USER-HINT-LINEAGE-${{ github.run_id }}
+        path: ${{ env.R20_R9_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
     - name: R20 upload real full-kernel compiler and link diagnostics even on failures
