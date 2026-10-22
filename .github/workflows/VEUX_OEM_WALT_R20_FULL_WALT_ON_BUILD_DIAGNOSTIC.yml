@@ -1,4 +1,4 @@
-name: VEUX OEM WALT R20-R6 LLVM-NM LTO Symbol Verification + Full Build – NO FLASH
+name: VEUX OEM WALT R20-R7 Verified VEUX P3 Cpuidle Preimage + Full Build – NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -112,6 +112,10 @@ jobs:
       R20_R6_PACKAGE_SHA256: 9660f0767599d576221be7799de81237a0672cd88b55515b4b128998738354e7
       R20_R6_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r6-tools
       R20_R6_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r6-source-proof
+      R20_R7_PACKAGE_NAME: VEUX_OEM_WALT_R20_R7_P3_DRIVER_SHA256_MAIN.zip
+      R20_R7_PACKAGE_SHA256: 03591254b2572b968400fc1e8e3bd6c83d389c39c610f52f62031c96b9256855
+      R20_R7_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r7-tools
+      R20_R7_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r7-source-proof
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1415,6 +1419,52 @@ jobs:
         PY_R20_R6_PACKAGE
         python3 -m unittest discover -s "$R20_R6_DIR/tests" -p 'test_r20_r6_lpm_real_source.py' -v
         echo 'R20_R6_SOURCE_NEGATIVE_AND_POSITIVE_TESTS=54/54; NO_FLASH'
+    - name: R20 R7 pin reconstructed VEUX P3 driver SHA256 and run 60 guarded regression tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        addon="project/$R20_R7_PACKAGE_NAME"
+        wf='project/.github/workflows/VEUX_OEM_WALT_R20_FULL_WALT_ON_BUILD_DIAGNOSTIC.yml'
+        test -s "$addon" && test ! -L "$addon"
+        test -s "$wf" && test ! -L "$wf"
+        printf '%s  %s\n' "$R20_R7_PACKAGE_SHA256" "$addon" | sha256sum -c -
+        "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$wf"
+        python3 - <<'PY_R20_R7_PACKAGE'
+        import hashlib,os,pathlib,stat,zipfile
+        path=pathlib.Path('project')/os.environ['R20_R7_PACKAGE_NAME']
+        out=pathlib.Path(os.environ['R20_R7_DIR'])
+        exp={'r20_r7_lpm_real_source.py','tests/test_r20_r7_lpm_real_source.py','R20_R7_LESEN_ZUERST_DE.txt'}
+        if out.exists() or out.is_symlink():raise SystemExit('R20_R7_OUTPUT_EXISTS')
+        with zipfile.ZipFile(path) as z:
+         info=z.infolist()
+         if len(info)!=4 or len({i.filename for i in info})!=4 or set(z.namelist())!=exp|{'SHA256SUMS.txt'} or z.testzip():
+          raise SystemExit('R20_R7_ARCHIVE_MEMBER_OR_CRC_DRIFT')
+         sums={}
+         for row in z.read('SHA256SUMS.txt').decode().splitlines():
+          fields=row.split('  ',1)
+          if len(fields)!=2 or len(fields[0])!=64 or set(fields[0])-set('0123456789abcdef') or fields[1] in sums:
+           raise SystemExit('R20_R7_MANIFEST_FORMAT')
+          sums[fields[1]]=fields[0]
+         if set(sums)!=exp:raise SystemExit('R20_R7_MANIFEST_SCOPE')
+         payload={}
+         for inf in info:
+          name=inf.filename
+          p=pathlib.PurePosixPath(name)
+          if (p.is_absolute() or '..' in p.parts or chr(92) in name or inf.is_dir() or
+              stat.S_IFMT(inf.external_attr>>16)==stat.S_IFLNK or not 0<inf.file_size<220000):
+           raise SystemExit('R20_R7_UNSAFE_MEMBER:'+name)
+          if name in sums:
+           data=z.read(name)
+           if hashlib.sha256(data).hexdigest()!=sums[name]:raise SystemExit('R20_R7_INNER_HASH:'+name)
+           if name.endswith('.py'):compile(data,name,'exec')
+           payload[name]=data
+        out.mkdir()
+        for name,data in payload.items():
+         dest=out/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
+        print('R20_R7_ARCHIVE_CRC_INNER_SHA_AND_PYTHON=PASS')
+        PY_R20_R7_PACKAGE
+        python3 -m unittest discover -s "$R20_R7_DIR/tests" -p 'test_r20_r7_lpm_real_source.py' -v
+        echo 'R20_R7_SOURCE_NEGATIVE_AND_POSITIVE_TESTS=60/60; NO_FLASH'
     - name: Reproduce proven P3 stock-near source without building
       if: ${{ steps.package.outputs.present == 'true' }}
       timeout-minutes: 18
@@ -2191,11 +2241,11 @@ jobs:
         test -s "$R20_R3_REPORT/R20_R3_SOURCE_PATCH.json"
         test -s "$R20_R3_REPORT/R20_R3_EXACT_SOURCE_DIFF.patch"
         echo 'R20_R3_ONLY_TWO_UPSTREAM_DECLARATIONS_ADDED; R19_OBJECTS_UNCHANGED; NO_FLASH'
-    - name: R20 R6 validate LLVM-bitcode global text symbol and true OEM LPM ABI before client patch
+    - name: R20 R7 patch LPM caller only after true WALT symbol and pinned VEUX P3 preimage proof
       shell: bash
       run: |
         set -euo pipefail
-        python3 "$R20_R6_DIR/r20_r6_lpm_real_source.py" \
+        python3 "$R20_R7_DIR/r20_r7_lpm_real_source.py" \
           --snapshot "$R9_SNAPSHOT" \
           --canonical "$GITHUB_WORKSPACE/kernel" \
           --project "$GITHUB_WORKSPACE/project" \
@@ -2203,10 +2253,10 @@ jobs:
           --result "$R18_REPORT/R18_COMPILER_RESULT.json" \
           --objects "$R13_OBJOUT" \
           --llvm-nm "$R9_TOOLCHAIN/bin/llvm-nm" \
-          --output "$R20_R6_REPORT"
-        test -s "$R20_R6_REPORT/R20_R6_SOURCE_INSPECTION.json"
-        test -s "$R20_R6_REPORT/R20_R6_SOURCE_DIFF.patch"
-        echo 'R20_R6_REAL_VEUX_WALT_LPM_PROVIDER_ABI=PROVEN; ONLY_CPUIDLE_CLIENT_PATCHED=YES; NO_FLASH'
+          --output "$R20_R7_REPORT"
+        test -s "$R20_R7_REPORT/R20_R7_SOURCE_INSPECTION.json"
+        test -s "$R20_R7_REPORT/R20_R7_SOURCE_DIFF.patch"
+        echo 'R20_R7_REAL_VEUX_WALT_LPM_PROVIDER_ABI=PROVEN; ONLY_CPUIDLE_CLIENT_PATCHED=YES; NO_FLASH'
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -2474,12 +2524,12 @@ jobs:
         path: ${{ env.R20_R4_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
-    - name: R20 R6 upload exact LLVM-NM global-symbol evidence even on failure
+    - name: R20 R7 upload source pin and genuine LLVM-NM evidence even on failure
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-R20-R6-REAL-WALT-LPM-ABI-PROOF-${{ github.run_id }}
-        path: ${{ env.R20_R6_REPORT }}/
+        name: VEUX-R20-R7-REAL-WALT-LPM-ABI-PROOF-${{ github.run_id }}
+        path: ${{ env.R20_R7_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
     - name: R20 upload real full-kernel compiler and link diagnostics even on failures
