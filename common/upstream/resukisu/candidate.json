@@ -1,14 +1,14 @@
 {
-  "ahead": 65,
+  "ahead": 66,
   "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
   "changed": true,
-  "commit": "7c383cfeef3a2ac450f2f1273dae74bd50356d31",
+  "commit": "dac2d186406a0d2b0ce3c67cad5a1fa1adbf9f4d",
   "compatibility_errors": [],
   "component_gate": true,
   "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
   "fast_forward_from_current": true,
   "historical_base_is_ancestor": true,
-  "local_version": 4535,
+  "local_version": 4536,
   "ref": "refs/heads/main",
   "review_reasons": [],
   "review_required": false,
@@ -18,5 +18,5 @@
   "tag": "v4.2.0-rc3",
   "uapi": 5,
   "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-  "version": "35235"
+  "version": "35236"
 }
