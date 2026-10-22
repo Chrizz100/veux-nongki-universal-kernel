@@ -1,4 +1,4 @@
-name: VEUX OEM WALT R20-R3 Genuine Full Build + Two Upstream Repairs – NO FLASH
+name: VEUX OEM WALT R20-R4 Qualcomm LPM Real API Port + Full Build – NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -100,6 +100,10 @@ jobs:
       R20_R3_PACKAGE_SHA256: 32192b59dfebbb2c0b3cd16a143b2d4b95af9edc75929a978bd2b37c79f19704
       R20_R3_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r3-tools
       R20_R3_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r3-source-audit
+      R20_R4_PACKAGE_NAME: VEUX_OEM_WALT_R20_R4_LPM_REAL_API_MAIN.zip
+      R20_R4_PACKAGE_SHA256: 30081c1e11e1a0c7f351c2d87a821a675bab45004967e21a71a771ca98138349
+      R20_R4_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r4-tools
+      R20_R4_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r4-lpm-audit
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1160,7 +1164,7 @@ jobs:
         if blocks<50 or asts<50:raise SystemExit('R19_WORKFLOW_GUARDS_INCOMPLETE:'+str((blocks,asts)))
         print('R19_WORKFLOW_ACTIONLINT_BASH_SHELLCHECK_PYTHON_AST=PASS; RUNS='+str(blocks)+'; PY='+str(asts))
         PY_R19_WORKFLOW_STATIC
-    - name: R20 authenticate standalone ZIP and actionlint entire R20-R3 YAML before heavy replay
+    - name: R20 authenticate standalone ZIP and actionlint entire R20-R4 YAML before heavy replay
       shell: bash
       run: |
         set -euo pipefail
@@ -1265,6 +1269,52 @@ jobs:
         PY_R20_R3_CHECK
         python3 -m unittest discover -s "$R20_R3_DIR/tests" -p test_r20_r3_prebuild.py -v
         echo 'R20_R3_PATCH_MODEL_REGRESSIONS=PASS; SCOPE=mm/vmscan.c,kernel/sched/debug.c'
+    - name: R20 R4 pin real Qualcomm cpuidle API bridge, actionlint, all 30 regressions
+      shell: bash
+      run: |
+        set -euo pipefail
+        addon="project/$R20_R4_PACKAGE_NAME"
+        workflow='project/.github/workflows/VEUX_OEM_WALT_R20_FULL_WALT_ON_BUILD_DIAGNOSTIC.yml'
+        test -s "$addon" && test ! -L "$addon"
+        test -s "$workflow" && test ! -L "$workflow"
+        printf '%s  %s\n' "$R20_R4_PACKAGE_SHA256" "$addon" | sha256sum -c -
+        "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$workflow"
+        python3 - <<'PY_R20_R4_ZIP'
+        import hashlib,os,pathlib,stat,zipfile
+        zpath=pathlib.Path('project')/os.environ['R20_R4_PACKAGE_NAME']
+        folder=pathlib.Path(os.environ['R20_R4_DIR'])
+        expected={'r20_r4_lpm_api.py','tests/test_r20_r4_lpm_api.py','R20_R4_LESEN_ZUERST_DE.txt'}
+        if folder.exists() or folder.is_symlink():raise SystemExit('R20_R4_OUTPUT_EXISTS')
+        with zipfile.ZipFile(zpath) as z:
+         info=z.infolist()
+         if (len(info)!=len(expected)+1 or len(info)!=len({x.filename for x in info}) or
+             {x.filename for x in info}!=expected|{'SHA256SUMS.txt'} or z.testzip()):
+          raise SystemExit('R20_R4_ZIP_SCOPE_OR_CRC_FAILURE')
+         digest={}
+         for row in z.read('SHA256SUMS.txt').decode().splitlines():
+          parts=row.split('  ',1)
+          if len(parts)!=2 or len(parts[0])!=64 or set(parts[0])-set('0123456789abcdef') or parts[1] in digest:
+           raise SystemExit('R20_R4_MEMBER_SHA_FORMAT')
+          digest[parts[1]]=parts[0]
+         if set(digest)!=expected:raise SystemExit('R20_R4_MEMBER_LIST_DRIFT')
+         payload={}
+         for obj in info:
+          name=obj.filename;p=pathlib.PurePosixPath(name)
+          if (p.is_absolute() or '..' in p.parts or chr(92) in name or obj.is_dir() or
+              stat.S_IFMT(obj.external_attr>>16)==stat.S_IFLNK or not 0<obj.file_size<200000):
+           raise SystemExit('R20_R4_MEMBER_UNSAFE:'+name)
+          if name not in digest:continue
+          data=z.read(name)
+          if hashlib.sha256(data).hexdigest()!=digest[name]:raise SystemExit('R20_R4_MEMBER_HASH_DRIFT:'+name)
+          if name.endswith('.py'):compile(data,name,'exec')
+          payload[name]=data
+        folder.mkdir()
+        for name,data in payload.items():
+         out=folder/name;out.parent.mkdir(parents=True,exist_ok=True);out.write_bytes(data)
+        print('R20_R4_ARCHIVE_HASH_CRC_AND_PYTHON=PASS')
+        PY_R20_R4_ZIP
+        python3 -m unittest discover -s "$R20_R4_DIR/tests" -p 'test_r20_r4_lpm_api.py' -v
+        echo 'R20_R4_REGRESSIONS=30/30; ARCHIVE=PINNED; WALT_DUMMY=NO; NO_FLASH'
     - name: Reproduce proven P3 stock-near source without building
       if: ${{ steps.package.outputs.present == 'true' }}
       timeout-minutes: 18
@@ -2041,6 +2091,20 @@ jobs:
         test -s "$R20_R3_REPORT/R20_R3_SOURCE_PATCH.json"
         test -s "$R20_R3_REPORT/R20_R3_EXACT_SOURCE_DIFF.patch"
         echo 'R20_R3_ONLY_TWO_UPSTREAM_DECLARATIONS_ADDED; R19_OBJECTS_UNCHANGED; NO_FLASH'
+    - name: R20 R4 bridge actual scheduler LPM 2-argument ABI on disposable source
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$R20_R4_DIR/r20_r4_lpm_api.py" \
+          --snapshot "$R9_SNAPSHOT" \
+          --canonical "$GITHUB_WORKSPACE/kernel" \
+          --project "$GITHUB_WORKSPACE/project" \
+          --config "$R13_OBJOUT/.config" \
+          --result "$R18_REPORT/R18_COMPILER_RESULT.json" \
+          --output "$R20_R4_REPORT"
+        test -s "$R20_R4_REPORT/R20_R4_SOURCE_RESULT.json"
+        test -s "$R20_R4_REPORT/R20_R4_SOURCE_DIFF.patch"
+        echo 'R20_R4_REAL_WALT_LPM_PROVIDER_NOT_STUBBED=YES; OEM_SOURCE_ISOLATED=YES'
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -2298,6 +2362,14 @@ jobs:
       with:
         name: VEUX-R20-R3-EXACT-SOURCE-PATCH-${{ github.run_id }}
         path: ${{ env.R20_R3_REPORT }}/
+        if-no-files-found: warn
+        retention-days: 14
+    - name: R20 R4 upload genuine Qualcomm LPM API patch, ABI and SHA proof
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R20-R4-LPM-REAL-API-PROOF-${{ github.run_id }}
+        path: ${{ env.R20_R4_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
     - name: R20 upload real full-kernel compiler and link diagnostics even on failures
