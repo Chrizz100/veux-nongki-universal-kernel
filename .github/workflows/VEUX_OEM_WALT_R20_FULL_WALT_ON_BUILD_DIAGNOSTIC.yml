@@ -1,4 +1,4 @@
-name: VEUX OEM WALT R20 Full WALT-ON Build Diagnostic – NO FLASH
+name: VEUX OEM WALT R20-R3 Genuine Full Build + Two Upstream Repairs – NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -96,6 +96,10 @@ jobs:
       R20_PACKAGE_SHA256: 5a213f4793ac6d19b9c5645dd599a809a5810ecf18938abe4de0f4d91d14a289
       R20_DIR: ${{ github.workspace }}/veux-oem-walt-r20-tools
       R20_OUT: ${{ github.workspace }}/veux-oem-walt-r20-full-build
+      R20_R3_PACKAGE_NAME: VEUX_OEM_WALT_R20_R3_UPSTREAM_PRELINK_FIX_MAIN.zip
+      R20_R3_PACKAGE_SHA256: 32192b59dfebbb2c0b3cd16a143b2d4b95af9edc75929a978bd2b37c79f19704
+      R20_R3_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r3-tools
+      R20_R3_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r3-source-audit
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1156,7 +1160,7 @@ jobs:
         if blocks<50 or asts<50:raise SystemExit('R19_WORKFLOW_GUARDS_INCOMPLETE:'+str((blocks,asts)))
         print('R19_WORKFLOW_ACTIONLINT_BASH_SHELLCHECK_PYTHON_AST=PASS; RUNS='+str(blocks)+'; PY='+str(asts))
         PY_R19_WORKFLOW_STATIC
-    - name: R20 authenticate standalone ZIP and actionlint entire R20 YAML before heavy replay
+    - name: R20 authenticate standalone ZIP and actionlint entire R20-R3 YAML before heavy replay
       shell: bash
       run: |
         set -euo pipefail
@@ -1216,6 +1220,51 @@ jobs:
         PY_R20_PACKAGE
         python3 -m unittest discover -s "$R20_DIR/tests" -p test_r20_full_build.py -v
         echo 'R20_PREBUILD_LOCAL_REGRESSIONS=30/30_PASS'
+    - name: R20 R3 authenticate exact Linux compatibility source patch and run all regressions
+      shell: bash
+      run: |
+        set -euo pipefail
+        addon="project/$R20_R3_PACKAGE_NAME"
+        test -s "$addon" && test ! -L "$addon"
+        printf '%s  %s\n' "$R20_R3_PACKAGE_SHA256" "$addon" | sha256sum -c -
+        python3 - <<'PY_R20_R3_CHECK'
+        import hashlib,os,pathlib,stat,zipfile
+        zpath=pathlib.Path('project')/os.environ['R20_R3_PACKAGE_NAME']
+        target=pathlib.Path(os.environ['R20_R3_DIR'])
+        expected={'R20_R3_LESEN_ZUERST_DE.txt','r20_r3_prebuild.py','tests/test_r20_r3_prebuild.py'}
+        if target.exists() or target.is_symlink():raise SystemExit('R20_R3_EXTRACT_DIR_EXISTS')
+        with zipfile.ZipFile(zpath) as z:
+            items=z.infolist();names=[i.filename for i in items]
+            if len(names)!=len(set(names)) or set(names)!=expected|{'SHA256SUMS.txt'} or z.testzip():
+                raise SystemExit('R20_R3_ARCHIVE_CRC_OR_SCOPE_INVALID')
+            for i in items:
+                p=pathlib.PurePosixPath(i.filename)
+                if (p.is_absolute() or '..' in p.parts or '\\' in i.filename or
+                    i.is_dir() or stat.S_IFMT(i.external_attr>>16)==stat.S_IFLNK or
+                    not 0<i.file_size<200000):
+                    raise SystemExit('R20_R3_ARCHIVE_UNSAFE_MEMBER:'+i.filename)
+            pins={}
+            for line in z.read('SHA256SUMS.txt').decode().splitlines():
+                sha,name=line.split('  ',1)
+                if name in pins or len(sha)!=64 or set(sha)-set('0123456789abcdef'):
+                    raise SystemExit('R20_R3_INVALID_SHA_MANIFEST')
+                pins[name]=sha
+            if set(pins)!=expected:raise SystemExit('R20_R3_MANIFEST_SCOPE_INVALID')
+            payload={}
+            for name,sha in pins.items():
+                data=z.read(name)
+                if hashlib.sha256(data).hexdigest()!=sha:raise SystemExit('R20_R3_HASH_MISMATCH:'+name)
+                if name.endswith('.py'):compile(data,name,'exec')
+                payload[name]=data
+        target.mkdir()
+        for name,data in payload.items():
+            out=target/name
+            out.parent.mkdir(parents=True,exist_ok=True)
+            out.write_bytes(data)
+        print('R20_R3_PACKAGE_HASH_SOURCE_SCOPE_PYTHON=PASS')
+        PY_R20_R3_CHECK
+        python3 -m unittest discover -s "$R20_R3_DIR/tests" -p test_r20_r3_prebuild.py -v
+        echo 'R20_R3_PATCH_MODEL_REGRESSIONS=PASS; SCOPE=mm/vmscan.c,kernel/sched/debug.c'
     - name: Reproduce proven P3 stock-near source without building
       if: ${{ steps.package.outputs.present == 'true' }}
       timeout-minutes: 18
@@ -1980,6 +2029,18 @@ jobs:
         print('R19_ACTUAL_ARM64=15/15; REAL_PROVIDER_SYMBOLS='+str(j['type_aware_symbol_count'])+
               '/13; VERIFIED='+str(j['all_verified'])+'; IMAGE=NO; ABI=OPEN; FLASH=NO')
         PY_R19_GATE_RESULT
+    - name: R20 R3 restore two missing upstream declarations ONLY in disposable kernel snapshot
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$R20_R3_DIR/r20_r3_prebuild.py" \
+          --snapshot "$R9_SNAPSHOT" \
+          --canonical "$GITHUB_WORKSPACE/kernel" \
+          --project "$GITHUB_WORKSPACE/project" \
+          --report "$R20_R3_REPORT"
+        test -s "$R20_R3_REPORT/R20_R3_SOURCE_PATCH.json"
+        test -s "$R20_R3_REPORT/R20_R3_EXACT_SOURCE_DIFF.patch"
+        echo 'R20_R3_ONLY_TWO_UPSTREAM_DECLARATIONS_ADDED; R19_OBJECTS_UNCHANGED; NO_FLASH'
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -2229,6 +2290,14 @@ jobs:
       with:
         name: VEUX-R19-REAL-15-OBJECT-TYPED-PROVIDERS-${{ github.run_id }}
         path: ${{ env.R19_REPORT }}/
+        if-no-files-found: warn
+        retention-days: 14
+    - name: R20 R3 upload original two-line source restoration hashes and exact diff
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R20-R3-EXACT-SOURCE-PATCH-${{ github.run_id }}
+        path: ${{ env.R20_R3_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
     - name: R20 upload real full-kernel compiler and link diagnostics even on failures
