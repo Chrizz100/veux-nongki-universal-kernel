@@ -1,4 +1,4 @@
-name: VEUX OEM WALT R20-R7 Verified VEUX P3 Cpuidle Preimage + Full Build – NO FLASH
+name: VEUX OEM WALT R20-R8 Xiaomi User-Hint Real Link Provider + Full Build – NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -116,6 +116,10 @@ jobs:
       R20_R7_PACKAGE_SHA256: 03591254b2572b968400fc1e8e3bd6c83d389c39c610f52f62031c96b9256855
       R20_R7_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r7-tools
       R20_R7_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r7-source-proof
+      R20_R8_PACKAGE_NAME: VEUX_OEM_WALT_R20_R8_XIAOMI_USER_HINT_LINK_MAIN.zip
+      R20_R8_PACKAGE_SHA256: 879f7691c0f266ff39f48acff60b4f7e90303cac2f7b32bcaa084dd45e7678f5
+      R20_R8_DIR: ${{ github.workspace }}/veux-oem-walt-r20-r8-tools
+      R20_R8_REPORT: ${{ github.workspace }}/veux-oem-walt-r20-r8-source-proof
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1465,6 +1469,57 @@ jobs:
         PY_R20_R7_PACKAGE
         python3 -m unittest discover -s "$R20_R7_DIR/tests" -p 'test_r20_r7_lpm_real_source.py' -v
         echo 'R20_R7_SOURCE_NEGATIVE_AND_POSITIVE_TESTS=60/60; NO_FLASH'
+    - name: R20 R8 pin original Xiaomi WALT user-hint max and run 51 guarded regressions before replay
+      shell: bash
+      run: |
+        set -euo pipefail
+        root="project/$R20_R8_PACKAGE_NAME"
+        wf='project/.github/workflows/VEUX_OEM_WALT_R20_FULL_WALT_ON_BUILD_DIAGNOSTIC.yml'
+        test -s "$root" && test ! -L "$root"
+        test -s "$wf" && test ! -L "$wf"
+        printf '%s  %s\n' "$R20_R8_PACKAGE_SHA256" "$root" | sha256sum -c -
+        "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$wf"
+        python3 - <<'PY_R20_R8_UNPACK'
+        import hashlib,os,pathlib,stat,zipfile
+        src=pathlib.Path('project')/os.environ['R20_R8_PACKAGE_NAME']
+        out=pathlib.Path(os.environ['R20_R8_DIR'])
+        expected={'r20_r8_xiaomi_user_hint_link.py',
+          'tests/test_r20_r8_xiaomi_user_hint_link.py','R20_R8_LESEN_ZUERST_DE.txt'}
+        if out.exists() or out.is_symlink():raise SystemExit('R20_R8_DIR_EXISTS')
+        with zipfile.ZipFile(src) as z:
+            info=z.infolist();names=[x.filename for x in info]
+            if (len(info)!=4 or len(set(names))!=4 or set(names)!=expected|{'SHA256SUMS.txt'} or
+                z.testzip()):raise SystemExit('R20_R8_UNEXPECTED_ZIP_SCOPE_OR_CRC')
+            hashes={}
+            for line in z.read('SHA256SUMS.txt').decode().splitlines():
+                fields=line.split('  ',1)
+                if (len(fields)!=2 or len(fields[0])!=64 or
+                    set(fields[0])-set('0123456789abcdef') or fields[1] in hashes):
+                    raise SystemExit('R20_R8_MANIFEST_INVALID')
+                hashes[fields[1]]=fields[0]
+            if set(hashes)!=expected:raise SystemExit('R20_R8_MANIFEST_SCOPE')
+            payload={}
+            for entry in info:
+                p=pathlib.PurePosixPath(entry.filename)
+                if (p.is_absolute() or '..' in p.parts or chr(92) in entry.filename or
+                    entry.is_dir() or stat.S_IFMT(entry.external_attr>>16)==stat.S_IFLNK or
+                    entry.file_size<1 or entry.file_size>220000):
+                    raise SystemExit('R20_R8_UNSAFE_ZIP_MEMBER:'+entry.filename)
+                if entry.filename in expected:
+                    b=z.read(entry.filename)
+                    if hashlib.sha256(b).hexdigest()!=hashes[entry.filename]:
+                        raise SystemExit('R20_R8_INNER_HASH_FAIL:'+entry.filename)
+                    if entry.filename.endswith('.py'):compile(b,entry.filename,'exec')
+                    payload[entry.filename]=b
+        out.mkdir()
+        for name,b in payload.items():
+            target=out/name
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(b)
+        print('R20_R8_ARCHIVE_SHA_CRC_PYTHON=PASS')
+        PY_R20_R8_UNPACK
+        python3 -B -m unittest discover -s "$R20_R8_DIR/tests" -p test_r20_r8_xiaomi_user_hint_link.py -v
+        echo 'R20_R8_OEM_PATCH_REGRESSIONS=51/51; NO_FLASH'
     - name: Reproduce proven P3 stock-near source without building
       if: ${{ steps.package.outputs.present == 'true' }}
       timeout-minutes: 18
@@ -2257,6 +2312,23 @@ jobs:
         test -s "$R20_R7_REPORT/R20_R7_SOURCE_INSPECTION.json"
         test -s "$R20_R7_REPORT/R20_R7_SOURCE_DIFF.patch"
         echo 'R20_R7_REAL_VEUX_WALT_LPM_PROVIDER_ABI=PROVEN; ONLY_CPUIDLE_CLIENT_PATCHED=YES; NO_FLASH'
+    - name: R20 R8 restore exact Xiaomi OEM sched_user_hint_max provider in disposable kernel sysctl
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 "$R20_R8_DIR/r20_r8_xiaomi_user_hint_link.py" \
+          --snapshot "$R9_SNAPSHOT" \
+          --canonical "$GITHUB_WORKSPACE/kernel" \
+          --project "$GITHUB_WORKSPACE/project" \
+          --config "$R13_OBJOUT/.config" \
+          --r12-proof "$R12_OUT/R12_SOURCE_GATE.json" \
+          --r19-proof "$R19_REPORT/R19_PROVIDER_RESULT.json" \
+          --objout "$R13_OBJOUT" \
+          --llvm-nm "$R9_TOOLCHAIN/bin/llvm-nm" \
+          --output "$R20_R8_REPORT"
+        test -s "$R20_R8_REPORT/R20_R8_SOURCE_GATE.json"
+        test -s "$R20_R8_REPORT/R20_R8_XIAOMI_USER_HINT.patch"
+        echo 'R20_R8_REAL_XIAOMI_USER_HINT=PORT_VERIFIED; VMLINUX_LINK=PENDING; NO_FLASH'
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -2530,6 +2602,14 @@ jobs:
       with:
         name: VEUX-R20-R7-REAL-WALT-LPM-ABI-PROOF-${{ github.run_id }}
         path: ${{ env.R20_R7_REPORT }}/
+        if-no-files-found: warn
+        retention-days: 14
+    - name: R20 R8 upload original Xiaomi scheduler user-hint link provider audit even on failure
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R20-R8-XIAOMI-USER-HINT-PROOF-${{ github.run_id }}
+        path: ${{ env.R20_R8_REPORT }}/
         if-no-files-found: warn
         retention-days: 14
     - name: R20 upload real full-kernel compiler and link diagnostics even on failures
