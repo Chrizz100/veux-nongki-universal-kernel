@@ -1207,7 +1207,7 @@ jobs:
         for title,script in blocks:
             p=subprocess.run(['bash','-n'],input=script,text=True,capture_output=True)
             if p.returncode:raise SystemExit('R20_BASH_SYNTAX_ERROR:'+title+'\n'+p.stderr)
-            if title.startswith('R20 '):
+            if title.startswith('R20 ') or title == 'R9 install identical historical Android Clang r416183b toolchain':
                 p=subprocess.run(['shellcheck','--shell=bash','--severity=warning','-'],
                                  input=script,text=True,capture_output=True)
                 if p.returncode:raise SystemExit('R20_SHELLCHECK_ERROR:'+title+'\n'+p.stdout+p.stderr)
@@ -1391,24 +1391,61 @@ jobs:
         python3 -m unittest discover -s "$R10_DIR" -p test_r10_oem_port.py -v
     - name: R9 install identical historical Android Clang r416183b toolchain
       shell: bash
-      timeout-minutes: 12
+      timeout-minutes: 20
       run: |
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           bc bison build-essential ca-certificates cpio curl flex git libelf-dev \
           libncurses-dev libssl-dev patch python3 python-is-python3 rsync xz-utils zstd
-        # Same pinned Android clang-r416183b as successful P11 R4 build 38630203122.
-        # Pinned Google git commit (not a moving branch); archive SHA is reported.
-        mkdir -p "$R9_TOOLCHAIN"
-        curl --fail --location --retry 4 --connect-timeout 30 --max-time 420 \
-          'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/aa2e4a514a6c85eebcc4a27149eaf9244e951a1e/clang-r416183b.tar.gz' \
-          --output "$RUNNER_TEMP/veux-r9-clang-r416183b.tar.gz"
-        sha256sum "$RUNNER_TEMP/veux-r9-clang-r416183b.tar.gz" | tee "$R9_REPORT/R9_PINNED_TOOLCHAIN_ARCHIVE.sha256"
-        tar -xzf "$RUNNER_TEMP/veux-r9-clang-r416183b.tar.gz" -C "$R9_TOOLCHAIN"
+        # R19 run 39698934163: real Android Clang 12.0.5, based on r416183b.
+        # Fail-closed: try exact SHA256 of the successful R19 Gitiles archive.
+        # On server-side HTTP 503 or archive mismatch, fetch precisely the same
+        # AOSP commit and clang sub-tree from Microsoft's read-only AOSP git mirror.
+        clang_commit='aa2e4a514a6c85eebcc4a27149eaf9244e951a1e'
+        clang_root_tree='2fdc995c25e58c0206ff32d5dd46a200431912fa'
+        clang_subtree='0a90693130898d6f98a76538086247b374d4a57f'
+        clang_archive_sha='f6d76f9a7dfafe63363b0ba5398513eff6c6b650d3e15351751afdedc4fd7d37'
+        clang_src='https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/aa2e4a514a6c85eebcc4a27149eaf9244e951a1e/clang-r416183b.tar.gz'
+        clang_mirror='https://github.com/msft-mirror-aosp/platform.prebuilts.clang.host.linux-x86.git'
+        archive="$RUNNER_TEMP/veux-r9-clang-r416183b.tar.gz"
+        mkdir -p "$R9_TOOLCHAIN" "$R9_REPORT"
+        test -z "$(find "$R9_TOOLCHAIN" -mindepth 1 -print -quit)"
+        if curl --fail --location --retry 4 --connect-timeout 30 --max-time 420 \
+            "$clang_src" --output "$archive" && \
+            printf '%s  %s\n' "$clang_archive_sha" "$archive" | sha256sum -c - && \
+            tar -tzf "$archive" > /dev/null; then
+          tar -xzf "$archive" -C "$R9_TOOLCHAIN"
+          printf '%s  %s\n' "$clang_archive_sha" "$archive" > "$R9_REPORT/R9_PINNED_TOOLCHAIN_ARCHIVE.sha256"
+          printf 'source=GOOGLE_GITILES_ARCHIVE\ncommit=%s\nsubtree=%s\narchive_sha256=%s\n' \
+            "$clang_commit" "$clang_subtree" "$clang_archive_sha" > "$R9_REPORT/R9_TOOLCHAIN_PROVENANCE.txt"
+        else
+          echo '::warning::Official Google archive unavailable or rejected; trying exact AOSP commit on GitHub mirror'
+          rm -f "$archive"
+          backup=$(mktemp -d "$RUNNER_TEMP/veux-r9-gitmirror.XXXXXXXX")
+          trap 'rm -rf "$backup"' EXIT
+          git -C "$backup" init -q
+          git -C "$backup" remote add origin "$clang_mirror"
+          git -C "$backup" sparse-checkout init --cone
+          git -C "$backup" sparse-checkout set clang-r416183b
+          git -C "$backup" -c protocol.version=2 fetch --no-tags --depth=1 --filter=blob:none origin "$clang_commit"
+          git -C "$backup" -c advice.detachedHead=false checkout --detach --quiet FETCH_HEAD
+          test "$(git -C "$backup" rev-parse HEAD)" = "$clang_commit"
+          test "$(git -C "$backup" rev-parse 'HEAD^{tree}')" = "$clang_root_tree"
+          test "$(git -C "$backup" rev-parse 'HEAD:clang-r416183b')" = "$clang_subtree"
+          test -x "$backup/clang-r416183b/bin/clang"
+          cp -a "$backup/clang-r416183b/." "$R9_TOOLCHAIN/"
+          printf 'source=MICROSOFT_AOSP_GIT_MIRROR\ncommit=%s\nroot_tree=%s\nsubtree=%s\n' \
+            "$clang_commit" "$clang_root_tree" "$clang_subtree" > "$R9_REPORT/R9_TOOLCHAIN_PROVENANCE.txt"
+        fi
+        test -x "$R9_TOOLCHAIN/bin/clang"
+        test -x "$R9_TOOLCHAIN/bin/llvm-nm"
+        test -x "$R9_TOOLCHAIN/bin/ld.lld"
         "$R9_TOOLCHAIN/bin/clang" --version | grep -F 'r416183b'
         "$R9_TOOLCHAIN/bin/clang" --version | grep -F '12.0.5'
-        echo 'R9_HISTORICAL_ANDROID_CLANG=AVAILABLE'
+        "$R9_TOOLCHAIN/bin/llvm-nm" --version | grep -E 'LLVM|llvm|12.0.5' > /dev/null
+        cat "$R9_REPORT/R9_TOOLCHAIN_PROVENANCE.txt"
+        echo 'R9_HISTORICAL_ANDROID_CLANG=AVAILABLE; TOOLCHAIN_PIN_VERIFIED=YES'
     - name: R10 repeat genuine WALT-ON ARM64 kernel object compilation with Xiaomi APIs
       shell: bash
       timeout-minutes: 19
@@ -2223,4 +2260,4 @@ jobs:
         test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
         test -z "$(git -C project status --porcelain --untracked-files=all)"
         echo 'R20_REPO_UNCHANGED=YES; FULL_BUILD_DIAGNOSTIC=YES; DEVICE_FLASH=NO; VENDOR_ABI=UNPROVEN'
-    name: 'R19: 15 genuine ARM64 objects and 13 typed provider symbols; NO FLASH'
+    name: 'R20: WALT-ON full kernel build with R19 source gates; NO FLASH'
