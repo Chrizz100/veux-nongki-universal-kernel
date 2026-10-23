@@ -1,0 +1,167 @@
+name: VEUX R31 - WALT/RMNET binary pair provenance - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r31-rmnet-pair-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  R31_PACKAGE: VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip
+  R31_PACKAGE_SHA256: 8c37937e745fa9b335bd2a3a3719c73387891d5ec830f695455ca2659ff88de7
+
+jobs:
+  r31:
+    name: R31 authenticate R20 and 2EF0 ARM64 RMNET ABI pairs; no flash
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main in read-only mode
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Authenticate root ZIP and extract with fail-closed path checks
+        shell: bash
+        env:
+          R31_DIR: ${{ runner.temp }}/veux-r31-input
+        run: |
+          set -euo pipefail
+          test -s "$R31_PACKAGE"
+          printf '%s  %s\n' "$R31_PACKAGE_SHA256" "$R31_PACKAGE" | sha256sum -c -
+          python3 - <<'PY_R31_EXTRACT'
+          import os, pathlib, stat, zipfile
+          path = pathlib.Path(os.environ['R31_PACKAGE'])
+          out = pathlib.Path(os.environ['R31_DIR'])
+          allowed = {
+              'evidence/DWARF_COMPARE.json', 'evidence/R22_DEVICE_IKCONFIG.txt',
+              'evidence/R20_Module.symvers', 'evidence/R20_BUILD_RESULT.json',
+              'modules/r20/rmnet_shs.ko', 'modules/r20/rmnet_offload.ko',
+              'modules/device_2ef0/rmnet_shs.ko', 'modules/device_2ef0/rmnet_offload.ko',
+              'scripts/r31_pair_audit.py', 'tests/test_r31.py', 'tools/actionlint',
+              'source_links.txt', 'README_ZUERST_DE.txt', 'MANIFEST_SHA256.json'}
+          with zipfile.ZipFile(path) as z:
+              files = [m for m in z.infolist() if not m.is_dir()]
+              if len(files) != len(allowed) or {m.filename for m in files} != allowed:
+                  raise SystemExit('UNSAFE_ZIP_MEMBERS')
+              total = 0
+              for m in files:
+                  n = pathlib.PurePosixPath(m.filename)
+                  total += m.file_size
+                  if (n.is_absolute() or '.' in n.parts or '..' in n.parts
+                      or '\\' in m.filename or stat.S_ISLNK(m.external_attr >> 16)
+                      or m.file_size > 16_000_000 or total > 32_000_000):
+                      raise SystemExit('UNSAFE_ZIP_ENTRY')
+              for m in files:
+                  dest = out / m.filename
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  dest.write_bytes(z.read(m))
+          print('R31_PINNED_ARCHIVE_AND_EXTRACTION=PASS')
+          PY_R31_EXTRACT
+
+      - name: Verify every original-file hash before running bundled tools
+        shell: bash
+        env:
+          R31_DIR: ${{ runner.temp }}/veux-r31-input
+        run: |
+          set -euo pipefail
+          python3 - "$R31_DIR" <<'PY_R31_VERIFY'
+          import hashlib, json, pathlib, sys
+          base = pathlib.Path(sys.argv[1])
+          m = json.loads((base/'MANIFEST_SHA256.json').read_text())
+          assert m['schema'] == 'VEUX_R31_PINNED_INPUT_V1'
+          assert len(m['files']) == 13
+          for name, info in m['files'].items():
+              blob = (base/name).read_bytes()
+              assert len(blob) == info['bytes']
+              assert hashlib.sha256(blob).hexdigest() == info['sha256']
+          print('R31_INPUT_SHA256_AND_PINNED_BUILD_ATTESTATION=PASS')
+          PY_R31_VERIFY
+
+      - name: Static Green preflight actionlint 1.7.12 and ShellCheck
+        shell: bash
+        env:
+          R31_DIR: ${{ runner.temp }}/veux-r31-input
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          test -s "$GITHUB_WORKSPACE/.github/workflows/VEUX_R31_WALT_RMNET_BINARY_PAIR_GATE.yml"
+          chmod +x "$R31_DIR/tools/actionlint"
+          "$R31_DIR/tools/actionlint" -version | grep -Fx '1.7.12'
+          "$R31_DIR/tools/actionlint" \
+            -color=false -shellcheck="$(command -v shellcheck)" \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_R31_WALT_RMNET_BINARY_PAIR_GATE.yml"
+          echo 'R31_ACTIONLINT_1_7_12_AND_SHELLCHECK=PASS'
+
+      - name: Python syntax and 30 adversarial regression tests
+        shell: bash
+        env:
+          R31_DIR: ${{ runner.temp }}/veux-r31-input
+        run: |
+          set -euo pipefail
+          python3 - "$R31_DIR" <<'PY_R31_SYNTAX'
+          import pathlib,sys
+          for rel in ('scripts/r31_pair_audit.py','tests/test_r31.py'):
+              p=pathlib.Path(sys.argv[1])/rel
+              compile(p.read_bytes(),str(p),'exec')
+          print('R31_PYTHON_SYNTAX=PASS')
+          PY_R31_SYNTAX
+          python3 -B -m unittest discover -v \
+            -s "$R31_DIR/tests" -p 'test_r31.py'
+          echo 'R31_REGRESSION_TESTS=PASS'
+
+      - name: Independently verify all 140 R20 RMNET imports and old 2EF0 ABI
+        shell: bash
+        env:
+          R31_DIR: ${{ runner.temp }}/veux-r31-input
+          R31_OUT: ${{ runner.temp }}/veux-r31-result
+        run: |
+          set -euo pipefail
+          python3 -B "$R31_DIR/scripts/r31_pair_audit.py" \
+            --bundle "$R31_DIR" --out "$R31_OUT"
+          python3 - "$R31_OUT/R31_RESULT.json" <<'PY_R31_GATE'
+          import json,sys
+          r=json.load(open(sys.argv[1]))
+          assert r['status']=='SOURCE_BINARY_PAIR_CRC_PROVEN_NO_FLASH'
+          assert r['r20_rebuilt_modules_matching_imports']==140
+          assert r['modules']['rmnet_shs']['WALT_R20']['symbol_matches']==108
+          assert r['modules']['rmnet_offload']['WALT_R20']['symbol_matches']==32
+          assert r['modules']['rmnet_shs']['DEVICE_2EF0']['missing_exports']==1
+          assert r['modules']['rmnet_shs']['DEVICE_2EF0']['crc_mismatches']>0
+          assert r['flash_allowed'] is False
+          assert r['kernel_built'] is False
+          assert r['kernel_or_module_installed'] is False
+          assert r['repo_mutated'] is False
+          assert r['brene_changed'] is False
+          print('R31_PROOF_GATE=PASS; R20_RMNET=140/140; LEGACY=ABI_INCOMPATIBLE; FLASH=NO')
+          PY_R31_GATE
+          cat "$R31_OUT/R31_SUMMARY_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload strictly non-flashable evidence only
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R31-RMNET-ABI-PAIR-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r31-result/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Confirm repository unchanged and forbid install or flash artifacts
+        shell: bash
+        env:
+          R31_OUT: ${{ runner.temp }}/veux-r31-result
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test -f "$R31_OUT/R31_RESULT.json"
+          if find "$R31_OUT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*AK3*' \) | grep -q .; then
+            echo 'BLOCKED: binary install or flash artifact in uploaded output' >&2
+            exit 1
+          fi
+          echo 'R31_REPO_UNCHANGED=YES; FLASH=NO; BUILD=NO; VERIFIED_BINARY_PAIR=YES'
