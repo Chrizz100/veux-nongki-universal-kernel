@@ -1,0 +1,144 @@
+name: VEUX R33 - Current DTB DTBO Vendor Boot Provenance - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r33-dtb-dtbo-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  R33_ROOT_ZIP: VEUX_R33_DTB_DTBO_PROVENANCE_MAIN.zip
+  R33_ROOT_SHA256: 2bdaad308107cb34aa32e4b1cd327016652a1620385be75e325dc8f310d201fa
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  evidence-gate:
+    name: R33 pinned DTB/DTBO and live device evidence gate - NO FLASH
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Read-only checkout main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Verify pinned package hash and safely unpack
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$R33_ROOT_ZIP"
+          printf '%s  %s\n' "$R33_ROOT_SHA256" "$R33_ROOT_ZIP" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/r33-input"
+          python3 - "$R33_ROOT_ZIP" "$RUNNER_TEMP/r33-input" <<'PY_R33_EXTRACT'
+          import pathlib, stat, sys, zipfile
+          zpath=pathlib.Path(sys.argv[1]);root=pathlib.Path(sys.argv[2]);total=0
+          with zipfile.ZipFile(zpath) as z:
+              info=z.infolist();names=[x.filename for x in info]
+              if len(info)!=10 or len(set(names))!=len(names) or z.testzip() is not None:
+                  raise SystemExit('R33_BAD_PACKAGE_FILE_SET_OR_CRC')
+              for item in info:
+                  name=pathlib.PurePosixPath(item.filename)
+                  if (item.is_dir() or name.is_absolute() or '..' in name.parts or
+                      '\\' in item.filename or stat.S_ISLNK(item.external_attr>>16)):
+                      raise SystemExit('R33_UNSAFE_PACKAGE_MEMBER')
+                  if item.file_size>7_000_000:
+                      raise SystemExit('R33_PACKAGE_FILE_TOO_LARGE')
+                  total+=item.file_size
+                  if total>9_000_000:
+                      raise SystemExit('R33_PACKAGE_TOO_LARGE')
+              z.extractall(root)
+          print('R33_PINNED_ARCHIVE_AND_EXTRACTION=PASS')
+          PY_R33_EXTRACT
+
+      - name: Verify hashes and original R20 R28 R30 R32 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/r33-input" <<'PY_R33_PROVENANCE'
+          import pathlib, sys
+          base=pathlib.Path(sys.argv[1])
+          sys.path.insert(0,str(base/'scripts'))
+          from r33_gate import verify_manifest, reference_values
+          m=verify_manifest(base)
+          proof=reference_values(base)
+          assert len(m['files'])==9
+          assert proof['r32_import_count']==307
+          assert proof['r20_dtb_sha']=='42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+          print('R33_ORIGINAL_PROVENANCE_AND_SHA256=PASS')
+          PY_R33_PROVENANCE
+
+      - name: Static Green gate actionlint 1.7.12 and ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$RUNNER_TEMP/r33-input/tools/actionlint"
+          "$RUNNER_TEMP/r33-input/tools/actionlint" -version | grep -Fx '1.7.12'
+          "$RUNNER_TEMP/r33-input/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" ".github/workflows/VEUX_R33_DTB_DTBO_PROVENANCE_GATE.yml"
+          python3 - "$RUNNER_TEMP/r33-input" <<'PY_R33_PYTHON'
+          import pathlib, sys
+          base=pathlib.Path(sys.argv[1])
+          for name in ('scripts/VEUX_R33_CAPTURE_GERAET.py','scripts/r33_gate.py','tests/test_r33.py'):
+              compile((base/name).read_bytes(),name,'exec')
+          print('R33_PYTHON_SYNTAX=PASS')
+          PY_R33_PYTHON
+
+      - name: Run 48 binary parser and safety regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$RUNNER_TEMP/r33-input/scripts" python3 -B -m unittest discover -v -s "$RUNNER_TEMP/r33-input/tests" -p 'test_r33.py'
+          echo 'R33_48_REGRESSION_TESTS=PASS'
+
+      - name: Analyze verified device evidence when available
+        shell: bash
+        run: |
+          set -euo pipefail
+          R33_ARGS=()
+          if [[ -f "$GITHUB_WORKSPACE/VEUX_R33_DEVICE_EVIDENCE.zip" ]]; then
+            R33_ARGS=(--device-zip "$GITHUB_WORKSPACE/VEUX_R33_DEVICE_EVIDENCE.zip")
+            echo 'R33_CURRENT_DEVICE=FOUND; VALIDATE_DEVICE_ARCHIVE_AND_COMPARE_DTB'
+          else
+            echo '::warning::R33 current device evidence missing. Please run Termux R33 script and upload VEUX_R33_DEVICE_EVIDENCE.zip to repository root.'
+          fi
+          python3 -B "$RUNNER_TEMP/r33-input/scripts/r33_gate.py" --bundle "$RUNNER_TEMP/r33-input" --out "$RUNNER_TEMP/r33-results" "${R33_ARGS[@]}"
+          python3 - "$RUNNER_TEMP/r33-results/R33_RESULT.json" <<'PY_R33_GATE'
+          import json,sys
+          result=json.load(open(sys.argv[1]))
+          assert result['schema']=='VEUX_R33_DTB_VENDORBOOT_PROVENANCE_GATE_V1'
+          assert result['status'] in ('WAITING_FOR_CURRENT_DEVICE_CAPTURE','DEVICE_CAPTURE_ANALYZED_WITH_BOOT_BLOCKERS')
+          assert result['r20_internal_six_modules_matching_imports']==307
+          for flag in ('vendor_abi_proven','boot_ready','source_patch_created','kernel_built','device_modified','flash_allowed'):
+              assert result[flag] is False, flag
+          print('R33_SAFE_RESULT_GATE=PASS; VENDOR_ABI=UNPROVEN; BOOT=NO; FLASH=NO')
+          PY_R33_GATE
+          cat "$RUNNER_TEMP/r33-results/R33_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify report hashes and enforce no flash or source outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="$RUNNER_TEMP/r33-results"
+          test -s "$REPORT/R33_RESULT.json"
+          test -s "$REPORT/R33_DTB_MATRIX.csv"
+          (cd "$REPORT" && sha256sum -c SHA256SUMS.txt)
+          if find "$REPORT" -type f \( -name '*.img' -o -name '*.ko' -o -name '*.dtb' -o -name 'Image' -o -name '*AK3*' -o -name '*.sh' \) | grep -q .; then
+            echo 'R33_UNSAFE_BINARY_OR_INSTALL_OUTPUT' >&2
+            exit 1
+          fi
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'R33_REPOSITORY_UNCHANGED=YES; BUILD=NO; BOOT_APPROVAL=NO; FLASH=NO'
+
+      - name: Upload read-only evidence report
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R33-DTB-DTBO-AUDIT-${{ github.run_id }}
+          path: ${{ runner.temp }}/r33-results/
+          if-no-files-found: error
+          retention-days: 14
