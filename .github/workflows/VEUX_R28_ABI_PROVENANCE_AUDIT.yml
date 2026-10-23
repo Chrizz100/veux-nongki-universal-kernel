@@ -1,0 +1,140 @@
+name: VEUX R28 – Structural ABI Provenance – NO BUILD / NO FLASH
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r28-provenance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r28-readonly-provenance:
+    name: R28 pinned evidence / source-target gate / NO FLASH
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      R28_PKG_NAME: VEUX_R28_ABI_PROVENANCE_MAIN.zip
+      R28_PKG_SHA256: fe71901aea905e1ac22a1b76724ef71e7c78cf9881f024c157af01f6fa07efae
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout repo in read-only mode
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate R28 package and safely extract into temp directory
+        run: |
+          set -euo pipefail
+          test -f "$R28_PKG_NAME"
+          printf '%s  %s\n' "$R28_PKG_SHA256" "$R28_PKG_NAME" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/veux-r28-pkg" "$RUNNER_TEMP/veux-r28-results"
+          python3 - <<'PY_ZIP'
+          import os
+          import pathlib
+          import zipfile
+          archive = pathlib.Path(os.environ['R28_PKG_NAME'])
+          target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'veux-r28-pkg'
+          with zipfile.ZipFile(archive) as z:
+              if z.testzip() is not None:
+                  raise SystemExit('R28_ARCHIVE_INTEGRITY_FAILED')
+              for entry in z.infolist():
+                  rel = pathlib.PurePosixPath(entry.filename)
+                  if rel.is_absolute() or '..' in rel.parts or not rel.parts:
+                      raise SystemExit('R28_UNSAFE_PACKAGE_MEMBER')
+                  if (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                      raise SystemExit('R28_SYMLINK_MEMBER_NOT_ALLOWED')
+              z.extractall(target)
+          print('R28_PINNED_ZIP_AND_EXTRACTION=PASS')
+          PY_ZIP
+
+      - name: Validate this YAML through pinned actionlint and runner ShellCheck
+        run: |
+          set -euo pipefail
+          chmod 0755 "$RUNNER_TEMP/veux-r28-pkg/tools/actionlint"
+          test -x "$RUNNER_TEMP/veux-r28-pkg/tools/actionlint"
+          shellcheck_path="$(command -v shellcheck)"
+          test -x "$shellcheck_path"
+          "$RUNNER_TEMP/veux-r28-pkg/tools/actionlint" \
+            -shellcheck "$shellcheck_path" \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_R28_ABI_PROVENANCE_AUDIT.yml"
+          echo 'R28_ACTIONLINT_1_7_12_AND_SHELLCHECK=PASS'
+
+      - name: Verify all pinned original evidence checksums
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_EVIDENCE'
+          import os
+          import pathlib
+          import sys
+          base = pathlib.Path(os.environ['RUNNER_TEMP']) / 'veux-r28-pkg'
+          sys.path.insert(0, str(base / 'scripts'))
+          import r28_audit
+          files, manifest = r28_audit.input_bytes(base / 'evidence')
+          print('R28_ORIGINAL_SOURCE_HASHES=PASS; PINNED_EVIDENCE_FILES=' + str(len(files)))
+          PY_EVIDENCE
+
+      - name: Compile-check Python and run guarded negative regression tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile "$RUNNER_TEMP/veux-r28-pkg/scripts/r28_audit.py" \
+                                "$RUNNER_TEMP/veux-r28-pkg/scripts/r28_capture_device.py" \
+                                "$RUNNER_TEMP/veux-r28-pkg/tests/test_r28.py"
+          python3 -m unittest discover -s "$RUNNER_TEMP/veux-r28-pkg/tests" -p 'test_*.py' -v
+
+      - name: Produce exact R20/R26 ABI analysis and optional device identity evidence
+        run: |
+          set -euo pipefail
+          device_args=()
+          if [[ -f "$GITHUB_WORKSPACE/VEUX_R28_DEVICE_EVIDENCE.zip" ]]; then
+            device_args=(--device-zip "$GITHUB_WORKSPACE/VEUX_R28_DEVICE_EVIDENCE.zip")
+            echo 'R28_NEW_DEVICE_EVIDENCE=FOUND; VERIFY_SCHEMA_AND_DATA'
+          else
+            echo 'R28_NEW_DEVICE_EVIDENCE=MISSING; ANALYZE_VERIFIED_HISTORICAL_RECORDS'
+          fi
+          python3 "$RUNNER_TEMP/veux-r28-pkg/scripts/r28_audit.py" \
+            --evidence "$RUNNER_TEMP/veux-r28-pkg/evidence" \
+            --out "$RUNNER_TEMP/veux-r28-results" "${device_args[@]}"
+
+      - name: Enforce no-source-patch no-build and absolute NO FLASH output gate
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_GATE'
+          import json
+          import os
+          import pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'veux-r28-results' / 'R28_RESULT.json'
+          r = json.loads(p.read_text(encoding='utf8'))
+          assert r['audit'] == 'PASS_VERIFIED_HISTORICAL_EVIDENCE'
+          assert r['vendor_import_observations'] == 14648
+          assert r['vendor_module_files'] == 218
+          assert r['vendor_families']['conflicting_expected_crcs'] == 836
+          assert r['flash_allowed'] is False
+          assert r['abi_approved'] is False
+          assert r['source_patch_allowed'] is False
+          assert r['kernel_build_justified_by_ABI_evidence'] is False
+          print('R28_AUDIT=PASS; ABI=UNPROVEN; BUILD=NO; FLASH=NO')
+          PY_GATE
+          cat "$RUNNER_TEMP/veux-r28-results/R28_GITHUB_SUMMARY.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload complete read-only ABI audit (never flashable)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: VEUX-R28-ABI-REPORT-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r28-results/
+          retention-days: 14
+          if-no-files-found: warn
+          compression-level: 6
+
+      - name: Verify no tracked or untracked repository files were modified
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          echo 'R28_REPOSITORY_UNCHANGED=YES; KERNEL_NOT_BUILT=YES; NO_FLASH=YES'
