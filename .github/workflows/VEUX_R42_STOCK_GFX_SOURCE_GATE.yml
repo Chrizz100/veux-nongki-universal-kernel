@@ -1,0 +1,45 @@
+name: VEUX R42 Stock GPU Cooling Source Gate - READ ONLY
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stock-gfx:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Original inputs and tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+          test -s VEUX_R37_DEVICE_EVIDENCE.zip
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          python3 -c "import ast,pathlib;ast.parse(pathlib.Path('r42/r42_extract.py').read_text())"
+      - name: Extract stock gfx regulator and exact properties
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B r42/r42_extract.py
+          python3 - <<'PY'
+          import json,os,pathlib
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'r42-report'
+          data=json.loads((out/'R42_RESULT.json').read_text())
+          assert len(data['cooling_maps'])==4
+          assert data['flash_allowed'] is False and data['boot_ready'] is False
+          assert data['source_patch_applied'] is False
+          print('R42_RESULT_GUARDS=PASS')
+          PY
+          (cd "$RUNNER_TEMP/r42-report" && sha256sum R42_* > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R42-STOCK-GFX-${{ github.run_id }}
+          path: ${{ runner.temp }}/r42-report/
+          retention-days: 14
+          if-no-files-found: error
