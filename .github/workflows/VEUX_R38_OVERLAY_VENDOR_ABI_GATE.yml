@@ -1,0 +1,171 @@
+name: VEUX R38 - Complete Overlay Structure and Historical Vendor ABI - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r38-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r38:
+    name: Read-only R37 overlay replay with 503 bound nodes and 218 vendor files
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R38_ZIP: VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip
+      R38_DEVICE: VEUX_R37_DEVICE_EVIDENCE.zip
+      R38_ZIP_SHA256: '05302cda83c6ef67e583ea5d881768e11665af0a39efaef62ae0ec5a47999479'
+      R38_DIR: /tmp/veux-r38-input
+      R38_OUT: /tmp/veux-r38-results
+    steps:
+      - name: Checkout project main without write credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate immutable package, R37 device evidence, and extract safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R38_ZIP"
+          test -s "$R38_DEVICE"
+          printf '%s  %s\n' "$R38_ZIP_SHA256" "$R38_ZIP" | sha256sum -c -
+          mkdir -p "$R38_DIR" "$R38_OUT"
+          python3 - "$R38_ZIP" "$R38_DIR" <<'PY_R38_EXTRACT'
+          import pathlib,stat,sys,zipfile
+          source=pathlib.Path(sys.argv[1]);target=pathlib.Path(sys.argv[2]);total=0
+          with zipfile.ZipFile(source) as z:
+              entries=z.infolist();names=[x.filename for x in entries]
+              if len(names)!=15 or len(set(names))!=15:
+                  raise SystemExit('R38_ROOT_ZIP_WRONG_FILE_COUNT_OR_DUPLICATES')
+              for ent in entries:
+                  p=pathlib.PurePosixPath(ent.filename)
+                  if (ent.is_dir() or p.is_absolute() or '..' in p.parts or
+                      '\\' in ent.filename or stat.S_ISLNK(ent.external_attr>>16)):
+                      raise SystemExit('R38_ROOT_ZIP_UNSAFE_MEMBER')
+                  total+=ent.file_size
+                  if ent.file_size>7_000_000 or ent.compress_size>7_000_000 or total>15_000_000:
+                      raise SystemExit('R38_ROOT_ZIP_BOUNDS')
+              if z.testzip() is not None:raise SystemExit('R38_ROOT_ZIP_CRC_BAD')
+              z.extractall(target)
+          print('R38_ROOT_ZIP_SAFELY_EXTRACTED=PASS')
+          PY_R38_EXTRACT
+
+      - name: Pin R20-R37 originals including 16 DTBO metadata and vendor imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R38_DIR" <<'PY_R38_PIN'
+          import pathlib,sys
+          pkg=pathlib.Path(sys.argv[1]);sys.path.insert(0,str(pkg/'scripts'))
+          import r38_gate
+          r33,r34,targets,original65,r37,vendors,counts=r38_gate.verify_originals(pkg)
+          assert len(r33['dtbo'][0]['entries'])==16
+          assert len(r34['device_nodes'])==754 and len(targets)==27
+          assert len(original65)==65 and len(vendors)==218
+          assert sum(counts.values())==14648
+          assert r37['r20_27_exact_target_matches']==27
+          print('R38_PINNED_ORIGINALS_R20_R21_R33_R34_R35_R36_R37=PASS')
+          PY_R38_PIN
+
+      - name: Static Green actionlint 1.7.12 and runner ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R38_DIR/tools/actionlint"
+          "$R38_DIR/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R38_*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]] || [[ "${workflows[0]}" != '.github/workflows/VEUX_R38_OVERLAY_VENDOR_ABI_GATE.yml' ]]; then
+            echo 'R38_WORKFLOW_EXACT_FILENAME_REQUIRED' >&2
+            exit 1
+          fi
+          "$R38_DIR/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R38_ACTIONLINT_1_7_12_SHELLCHECK=PASS'
+
+      - name: Python syntax and 61 adversarial and source evidence regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R38_DIR" <<'PY_R38_COMPILE'
+          import pathlib,sys
+          pkg=pathlib.Path(sys.argv[1])
+          for rel in ('scripts/r34_gate.py','scripts/r37_gate.py','scripts/r38_gate.py','tests/test_r38.py'):
+              path=pkg/rel
+              compile(path.read_bytes(),str(path),'exec')
+          print('R38_PYTHON_SYNTAX=PASS')
+          PY_R38_COMPILE
+          python3 -B -W error::ResourceWarning -m unittest discover -v -s "$R38_DIR/tests" -p test_r38.py 2>&1 | tee "$R38_OUT/R38_TESTS.log"
+          echo 'R38_61_REGRESSIONS=PASS'
+
+      - name: Install real fdtoverlay on GitHub runner if absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          fi
+          command -v fdtoverlay
+          echo 'R38_REAL_OFFLINE_FDTOVERLAY_TOOL=AVAILABLE'
+
+      - name: Replay verified device overlay and compare driver bindings and vendor ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R38_DIR/scripts/r38_gate.py" \
+            --bundle "$R38_DIR" \
+            --device-zip "$GITHUB_WORKSPACE/$R38_DEVICE" \
+            --out "$R38_OUT"
+          python3 - "$R38_OUT/R38_RESULT.json" <<'PY_R38_GUARD'
+          import json,sys
+          r=json.load(open(sys.argv[1],encoding='utf8'))
+          assert r['schema']=='VEUX_R38_OVERLAY_STRUCTURAL_VENDOR_ABI_TRIAGE_V1'
+          assert r['status']=='R38_REAL_STOCK_R20_MERGED_STRUCTURAL_AND_HISTORICAL_VENDOR_ABI_COMPARED_BOOT_BLOCKED'
+          assert r['stock_merged_nodes']==2652 and r['r20_merged_nodes']==2200
+          assert r['stock_runtime_bound_node_total']==503 and r['r35_65_total']==65
+          assert r['vendor_historical_module_files']==218 and r['vendor_historical_imports']==14648
+          assert r['vendor_crc_matches']==6960 and r['vendor_crc_mismatches']==7653
+          assert r['vendor_missing_exports']==35
+          assert r['ufs_pmic_27_exact_runtime_matches_stock_and_r20'] is True
+          for flag in ('vendor_abi_proven','boot_ready','flash_allowed','kernel_built',
+                       'dtbo_bootloader_selection_proven','r20_live_driver_probe_proven',
+                       'source_patch_created','device_modified','brene_changed',
+                       'bakasusu_nomount_changed','runtime_module_file_provenance_from_load_list'):
+              assert r[flag] is False,flag
+          print('R38_RESULTS_PASS; CURRENT_STOCK_BOUND=503; PRIOR_R35=65; VENDOR=218; NO_BUILD=YES; FLASH=NO')
+          PY_R38_GUARD
+          cat "$R38_OUT/R38_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: SHA-256 report gate and no-modification no-flash boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in R38_RESULT.json R38_BERICHT_DE.txt R38_STOCK_BOUND_503.csv R38_R35_65_AFTER_OVERLAY.csv R38_STOCK_R20_FDT_DIFFERENCES.csv R38_VENDOR_218_ABI_PRIORITY.csv R38_TESTS.log SHA256SUMS.txt; do
+            test -s "$R38_OUT/$name"
+          done
+          (cd "$R38_OUT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R38_OUT" -type f \( -name '*.dtb' -o -name '*.dtbo' -o -name '*.img' -o -name '*.ko' -o -name '*.zip' -o -name '*.sh' \) | grep -q .; then
+            echo 'R38_UNSAFE_OUTPUT_BINARY' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'R38_REPOSITORY_MODIFIED' >&2
+            exit 1
+          fi
+          echo 'R38_REPOSITORY_UNCHANGED=YES; NO_BUILD=YES; NO_FLASH=YES'
+
+      - name: Upload read-only R38 comparative structural and historical ABI matrices
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R38-OVERLAY-VENDOR-ABI-${{ github.run_id }}
+          path: ${{ env.R38_OUT }}
+          retention-days: 14
+          if-no-files-found: error
