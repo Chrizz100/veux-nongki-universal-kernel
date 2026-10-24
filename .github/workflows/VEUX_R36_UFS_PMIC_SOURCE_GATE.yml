@@ -1,0 +1,176 @@
+name: VEUX R36 - Pinned UFS PMIC Source Build and DT Gate - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r36-sources-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: R36 exact ancestor source OF Kbuild and R20 object evidence - NO FLASH
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      R36_ZIP: VEUX_R36_UFS_PMIC_SOURCE_MAIN.zip
+      R36_ZIP_SHA256: 'b9404d736bde917d6e167d173c2be60bfb381d5fe19609697c004ee409c02d10'
+      R36_DIR: /tmp/veux-r36-input
+      R36_OUT: /tmp/veux-r36-output
+    steps:
+      - name: Read-only checkout of project main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate immutable root ZIP and safely extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$R36_ZIP"
+          printf '%s  %s\n' "$R36_ZIP_SHA256" "$R36_ZIP" | sha256sum -c -
+          mkdir -p "$R36_DIR" "$R36_OUT"
+          python3 - "$R36_ZIP" "$R36_DIR" <<'PY_R36_EXTRACT'
+          import pathlib,stat,sys,zipfile
+          source=pathlib.Path(sys.argv[1]);destination=pathlib.Path(sys.argv[2]);size=0
+          with zipfile.ZipFile(source) as z:
+              info=z.infolist(); names=[x.filename for x in info if not x.is_dir()]
+              if len(names)!=13 or len(set(names))!=13:raise SystemExit('R36_UNEXPECTED_ZIP_MEMBER_SET')
+              for item in info:
+                  p=pathlib.PurePosixPath(item.filename)
+                  if p.is_absolute() or '..' in p.parts or '\\' in item.filename or stat.S_ISLNK(item.external_attr>>16):
+                      raise SystemExit('R36_UNSAFE_ZIP_PATH')
+                  size+=item.file_size
+                  if item.file_size>8_000_000 or size>22_000_000:raise SystemExit('R36_ZIP_SIZE_GUARD')
+              if z.testzip() is not None:raise SystemExit('R36_ZIP_CRC_FAIL')
+              z.extractall(destination)
+          print('R36_ARCHIVE_AUTHENTICATED_AND_SAFE=PASS')
+          PY_R36_EXTRACT
+
+      - name: Verify original inputs and source-pin manifest before network checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R36_DIR" <<'PY_R36_MANIFEST'
+          import pathlib,sys
+          base=pathlib.Path(sys.argv[1])
+          sys.path.insert(0,str(base/'scripts'))
+          import r36_source_audit as audit
+          audit.verify_input(base)
+          print('R36_PINNED_R20_R34_R35_EVIDENCE=PASS')
+          PY_R36_MANIFEST
+
+      - name: Static Green actionlint 1.7.12 and runner ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R36_DIR/tools/actionlint"
+          "$R36_DIR/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R36_UFS_PMIC_SOURCE_GATE*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]]; then
+            echo 'R36_REQUIRE_EXACTLY_ONE_WORKFLOW_FILE' >&2
+            exit 1
+          fi
+          "$R36_DIR/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R36_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+      - name: Python syntax and 45 read-only source and safety regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R36_DIR" <<'PY_R36_SYNTAX'
+          import pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          for file in ('scripts/r34_gate.py','scripts/r36_source_audit.py','tests/test_r36.py'):
+              path=root/file
+              compile(path.read_bytes(),str(path),'exec')
+          print('R36_PYTHON_SYNTAX=PASS')
+          PY_R36_SYNTAX
+          python3 -B -m unittest discover -v -s "$R36_DIR/tests" -p 'test_r36.py' 2>&1 | tee "$R36_OUT/R36_TESTS.log"
+          echo 'R36_45_REGRESSIONS=PASS'
+
+      - name: Checkout exact pinned historical source using sparse read-only access
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          persist-credentials: false
+          fetch-depth: 1
+          path: r36_source_ref
+          sparse-checkout: |
+            drivers/phy/qualcomm
+            drivers/scsi/ufs
+            drivers/input/misc
+            drivers/regulator
+            drivers/clk/qcom
+            drivers/nvmem
+            drivers/rtc
+            drivers/thermal/qcom
+            drivers/mfd
+            drivers/pinctrl/qcom
+            drivers/iio/adc
+            arch/arm64/boot/dts/vendor/xiaomi
+            arch/arm64/boot/dts/vendor/qcom
+          sparse-checkout-cone-mode: true
+
+      - name: Verify 22 original Git source blobs and reconstruct 25 PMIC and two UFS proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R36_DIR/scripts/r36_source_audit.py" \
+            --bundle "$R36_DIR" \
+            --source "$GITHUB_WORKSPACE/r36_source_ref" \
+            --out "$R36_OUT"
+          python3 - "$R36_OUT/R36_RESULT.json" <<'PY_R36_GATE'
+          import json,sys
+          r=json.load(open(sys.argv[1],encoding='utf8'))
+          assert r['schema']=='VEUX_R36_PINNED_UFS_PMIC_SOURCE_GATE_V1'
+          assert r['status']=='R36_ANCESTOR_SOURCE_OBJECTS_AND_STOCK_DT_CONFIRMED_BOOT_BLOCKED'
+          assert r['source_blob_hashes_verified'] is True and r['source_blob_count']==22
+          assert r['r20_standalone_ufs_nodes_disabled']==2
+          assert r['stock_ufs_nodes_enabled_and_bound']==2
+          assert r['r20_ufs_built_objects_proven']==2
+          assert r['pmic_nodes_source_and_build_checked']==25
+          assert r['pmic_distinct_compatibles']==16
+          assert r['source_of_matches_proven'] is True
+          for flag in ('r20_final_source_exact_for_every_file','live_r20_driver_probe_proven',
+                       'dtbo_selection_proven','dtbo_merge_into_r20_proven','r20_boot_compatible',
+                       'vendor_abi_proven','boot_ready','flash_allowed','kernel_built',
+                       'source_patch_created','brene_changed','bakasusu_nomount_changed','device_modified'):
+              assert r[flag] is False,flag
+          print('R36_REAL_SOURCE=PASS; PMIC=25/25; UFS=2/2; DTBO_MERGE=UNPROVEN; FLASH=NO')
+          PY_R36_GATE
+          cat "$R36_OUT/R36_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce unchanged project and non-flashable output with valid hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R36_OUT/R36_RESULT.json"
+          test -s "$R36_OUT/R36_PMIC_25_SOURCE_MATRIX.csv"
+          (cd "$R36_OUT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R36_OUT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' -o -name '*.sh' -o -name '*.zip' \) | grep -q .; then
+            echo 'R36_FORBIDDEN_INSTALL_OR_FLASH_BINARY' >&2
+            exit 1
+          fi
+          if [[ -n "$(git diff --name-only)" ]] || [[ -n "$(git diff --cached --name-only)" ]]; then
+            echo 'R36_TRACKED_SOURCE_MODIFIED' >&2
+            exit 1
+          fi
+          echo 'R36_PROJECT_TRACKED_FILES_UNCHANGED=YES; BUILD=NO; FLASH=NO'
+
+      - name: Upload read-only source DTB and PMIC evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R36-UFS-PMIC-SOURCE-${{ github.run_id }}
+          path: /tmp/veux-r36-output/
+          retention-days: 14
+          if-no-files-found: error
