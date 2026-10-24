@@ -1,0 +1,1698 @@
+name: VEUX R43-R2 Stock GFX AO supply and real DTB patch build - NO FLASH
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: veux-r43-r2-stock-gfx-ao-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r43:
+    name: Verify original AO supplier, apply isolated patch, compile before and after
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+        working-directory: project
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R43_STAGE: /tmp/veux-r43-r2-stage
+      R43_WORK: /tmp/veux-r43-r2-build
+      R43_REPORT: /tmp/veux-r43-r2-report
+    steps:
+      - name: Checkout exact project commit without write credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          path: project
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Pin existing evidence and materialize self-contained runner and tests
+        run: |
+          set -euo pipefail
+          mkdir -p "$R43_STAGE/scripts" "$R43_STAGE/tests" "$R43_STAGE/patches" "$R43_STAGE/fixtures" "$R43_WORK" "$R43_REPORT"
+          printf '%s\n' 'R43_R2_STARTED; BOOT_READY=NO; FLASH_ALLOWED=NO' > "$R43_REPORT/R43_STAGE_STATUS.txt"
+          printf '%s  %s\n' \
+            '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528' 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip' \
+            '15491bbb02140204a1e3e278d279668edb66ef7fe8052d0decd80f47b1e9a32f' 'VEUX_R37_DEVICE_EVIDENCE.zip' \
+            '1eb9edcf361e2c5ada4316768ddf3b70e9a4a853fec81b99c8d92d0f10f198eb' 'VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip' | sha256sum -c -
+          cat > "$R43_STAGE/scripts/r42_stock_capture.py" <<'R43_R2_PAYLOAD_0'
+          #!/usr/bin/env python3
+          """R42-R2: read-only capture of Stock VEUX GPU cooling node and references.
+          
+          All input binaries remain untouched. The output is evidence, NOT an applicable patch.
+          """
+          import argparse
+          import hashlib
+          import io
+          import json
+          import pathlib
+          import stat
+          import struct
+          import subprocess
+          import tempfile
+          import zipfile
+          
+          R39_SHA256 = '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R20_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+          STOCK_GFX = '/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev'
+          R20_GFX = '/soc/devfreq-vdd-cdev'
+          
+          
+          def require(condition, label):
+              if not condition:
+                  raise ValueError(label)
+          
+          
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def members(archive, required):
+              """Return selected members after checking archive integrity and safe boundaries."""
+              with zipfile.ZipFile(archive) as z:
+                  infos = z.infolist()
+                  names = [x.filename for x in infos]
+                  require(len(names) == len(set(names)), 'ZIP_DUPLICATE_MEMBERS')
+                  require(z.testzip() is None, 'ZIP_BAD_CRC')
+                  require(len(infos) <= 35, 'ZIP_TOO_MANY_MEMBERS')
+                  require(sum(x.file_size for x in infos) < 20_000_000, 'ZIP_TOTAL_TOO_LARGE')
+                  for info in infos:
+                      path = pathlib.PurePosixPath(info.filename)
+                      require(not path.is_absolute() and '..' not in path.parts, 'ZIP_UNSAFE_PATH')
+                      require(not stat.S_ISLNK(info.external_attr >> 16), 'ZIP_UNSAFE_SYMLINK')
+                      require(info.file_size < 8_000_000, 'ZIP_MEMBER_TOO_LARGE')
+                  require(set(required) <= set(names), 'ZIP_REQUIRED_MISSING')
+                  return {name: z.read(name) for name in required}
+          
+          
+          def merge(dtb, overlay):
+              with tempfile.TemporaryDirectory(prefix='veux-r42-dtbo-') as tmp:
+                  tmp = pathlib.Path(tmp)
+                  base = tmp / 'base.dtb'
+                  over = tmp / 'candidate.dtbo'
+                  merged = tmp / 'merged.dtb'
+                  base.write_bytes(dtb)
+                  over.write_bytes(overlay)
+                  p = subprocess.run(['fdtoverlay', '-i', str(base), '-o', str(merged), str(over)],
+                                     capture_output=True, timeout=45, check=False)
+                  require(p.returncode == 0, 'FDTOVERLAY_FAILED:' + p.stderr[:100].decode(errors='replace'))
+                  return merged.read_bytes()
+          
+          
+          def fdt_properties(data):
+              """Parse FDT nodes and raw properties, with strict header and bounds checks."""
+              require(len(data) >= 40 and len(data) < 8_000_000, 'FDT_SIZE')
+              hdr = struct.unpack_from('>10I', data)
+              magic, total, offset_struct, offset_strings, _off_mem, _ver, _last, _boot, size_strings, size_struct = hdr
+              require(magic == 0xd00dfeed and 40 <= total <= len(data), 'FDT_HEADER')
+              require(offset_struct >= 40 and offset_struct + size_struct <= total, 'FDT_STRUCT_BOUNDS')
+              require(offset_strings >= 40 and offset_strings + size_strings <= total, 'FDT_STRING_BOUNDS')
+              nodes = {}
+              stack = []
+              pos = offset_struct
+              end = offset_struct + size_struct
+              while pos + 4 <= end:
+                  token = struct.unpack_from('>I', data, pos)[0]
+                  pos += 4
+                  if token == 1:  # BEGIN_NODE
+                      require(b'\0' in data[pos:end], 'FDT_UNTERMINATED_NODE')
+                      finish = data.index(b'\0', pos, end)
+                      name = data[pos:finish].decode('utf-8')
+                      pos = (finish + 4) & ~3
+                      path = stack[-1].rstrip('/') + '/' + name if stack else '/'
+                      require(path not in nodes, 'FDT_DUPLICATE_NODE')
+                      nodes[path] = {}
+                      stack.append(path)
+                  elif token == 2:  # END_NODE
+                      require(bool(stack), 'FDT_UNBALANCED_END')
+                      stack.pop()
+                  elif token == 3:  # PROP
+                      require(bool(stack) and pos + 8 <= end, 'FDT_INVALID_PROPERTY_HEADER')
+                      length, off = struct.unpack_from('>II', data, pos)
+                      pos += 8
+                      require(length < 1_000_000 and pos + length <= end, 'FDT_PROPERTY_BOUNDS')
+                      require(off < size_strings, 'FDT_PROPERTY_STRING_OFFSET')
+                      name_start = offset_strings + off
+                      require(b'\0' in data[name_start:offset_strings + size_strings], 'FDT_UNTERMINATED_KEY')
+                      key_end = data.index(b'\0', name_start, offset_strings + size_strings)
+                      key = data[name_start:key_end].decode('utf-8')
+                      require(key not in nodes[stack[-1]], 'FDT_DUPLICATE_PROPERTY')
+                      nodes[stack[-1]][key] = data[pos:pos + length]
+                      pos = (pos + length + 3) & ~3
+                  elif token == 4:  # NOP
+                      continue
+                  elif token == 9:  # END
+                      require(not stack, 'FDT_UNCLOSED_NODES')
+                      return nodes
+                  else:
+                      raise ValueError('FDT_UNKNOWN_TOKEN')
+              raise ValueError('FDT_NO_END')
+          
+          
+          def status(props):
+              return props.get('status', b'okay\0').rstrip(b'\0').decode('ascii')
+          
+          
+          def phandle(props):
+              val = props.get('phandle') or props.get('linux,phandle')
+              require(val is not None and len(val) == 4, 'INVALID_PROVIDER_PHANDLE')
+              ident = int.from_bytes(val, 'big')
+              require(ident != 0, 'INVALID_PROVIDER_PHANDLE_ZERO')
+              return ident
+          
+          
+          def cooling_maps(tree, provider_path, tree_name):
+              ident = phandle(tree[provider_path])
+              rows = []
+              for path, props in sorted(tree.items()):
+                  if '/thermal-zones/' not in path or '/cooling-maps/' not in path:
+                      continue
+                  cells = props.get('cooling-device', b'')
+                  require(len(cells) % 4 == 0, 'COOLING_CELLS_UNALIGNED')
+                  if len(cells) >= 4 and int.from_bytes(cells[:4], 'big') == ident:
+                      # The original R41 evidence identifies single entries with two cells.
+                      require(len(cells) == 12, 'COOLING_CELLS_AMBIGUOUS')
+                      rows.append({'tree': tree_name, 'map_path': path, 'provider_path': provider_path,
+                                   'phandle': ident, 'min_state': int.from_bytes(cells[4:8], 'big'),
+                                   'max_state': int.from_bytes(cells[8:12], 'big')})
+              require(len(rows) == 2, 'COOLING_REFERENCES_NOT_TWO:' + tree_name)
+              return rows
+          
+          
+          def format_comment(key, value):
+              if value and value.endswith(b'\0') and all(i == 0 or 32 <= i <= 126 for i in value):
+                  rendered = ', '.join(json.dumps(s.decode('ascii')) for s in value.rstrip(b'\0').split(b'\0'))
+              elif not value:
+                  rendered = ''
+              elif len(value) % 4 == 0:
+                  rendered = '<' + ' '.join(f'0x{int.from_bytes(value[i:i + 4], "big"):08x}' for i in range(0, len(value), 4)) + '>'
+              else:
+                  rendered = '[' + value.hex(' ') + ']'
+              return f'/* {key} = {rendered}; */'
+          
+          
+          def run(root, out):
+              r39 = root / 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip'
+              r37 = root / 'VEUX_R37_DEVICE_EVIDENCE.zip'
+              require(r39.is_file() and r37.is_file(), 'SOURCE_ARCHIVE_MISSING')
+              require(digest(r39.read_bytes()) == R39_SHA256, 'R39_HASH_DRIFT')
+              r38bytes = members(r39, ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])[
+                  'evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']
+              r20 = members(io.BytesIO(r38bytes), ['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+              require(digest(r20) == R20_DTB_SHA256, 'R20_DTB_DRIFT')
+              e = members(r37, ['R37_VENDOR_BOOT_BASE.dtb', 'R37_DTBO_CANDIDATE0.dtbo'])
+              stock, overlay = e['R37_VENDOR_BOOT_BASE.dtb'], e['R37_DTBO_CANDIDATE0.dtbo']
+              stock_tree = fdt_properties(merge(stock, overlay))
+              r20_tree = fdt_properties(merge(r20, overlay))
+              require(STOCK_GFX in stock_tree and STOCK_GFX not in r20_tree and R20_GFX in r20_tree,
+                      'R41_NODE_RELATION_CHANGED')
+              stock_node = stock_tree[STOCK_GFX]
+              r20_node = r20_tree[R20_GFX]
+              require(status(stock_node) != 'disabled' and
+                      b'qcom,regulator-cooling-device\0' in stock_node.get('compatible', b''),
+                      'STOCK_PROVIDER_INVALID')
+              require(status(r20_node) != 'disabled' and
+                      b'qcom,devfreq-vdd-cooling-device\0' in r20_node.get('compatible', b''),
+                      'R20_PROVIDER_INVALID')
+              rows = cooling_maps(stock_tree, STOCK_GFX, 'STOCK') + cooling_maps(r20_tree, R20_GFX, 'R20')
+              require(set(row['min_state'] for row in rows if row['tree'] == 'STOCK') == {1} and
+                      set(row['max_state'] for row in rows if row['tree'] == 'STOCK') == {1} and
+                      set(row['min_state'] for row in rows if row['tree'] == 'R20') == {2} and
+                      set(row['max_state'] for row in rows if row['tree'] == 'R20') == {2},
+                      'R41_STATE_RELATION_CHANGED')
+              context_paths = [STOCK_GFX.rsplit('/', 1)[0], STOCK_GFX.rsplit('/', 2)[0]]
+              properties = {k: v.hex() for k, v in sorted(stock_node.items())}
+              regulator_levels = stock_node.get('regulator-levels')
+              # Parent / ancestor supply properties are preserved as raw bytes. A missing
+              # supply is reported, never fabricated or silently accepted as patched.
+              context = {p: {k: v.hex() for k, v in sorted(stock_tree.get(p, {}).items())
+                             if 'supply' in k or k in ('compatible', 'status')}
+                         for p in context_paths}
+              fragment = ['/* R42-R2 STOCK SOURCE REFERENCE ONLY - NOT APPLICABLE AS PATCH */',
+                          '/* DTBO index 0 is an OFFLINE candidate; bootloader selection UNPROVEN */',
+                          '/* Parent: ' + context_paths[0] + ' */']
+              fragment.extend(format_comment(k, v) for k, v in sorted(stock_node.items())
+                              if k not in ('phandle', 'linux,phandle'))
+              result = {'schema': 'VEUX_R42_R2_STOCK_GFX_EVIDENCE_V1',
+                        'r39_sha256': R39_SHA256, 'r37_sha256': digest(r37.read_bytes()),
+                        'r20_dtb_sha256': R20_DTB_SHA256, 'stock_gfx_path': STOCK_GFX,
+                        'r20_gfx_path': R20_GFX, 'stock_properties_hex': properties,
+                        'stock_regulator_levels_hex': regulator_levels.hex() if regulator_levels is not None else None,
+                        'supply_context_hex': context, 'cooling_maps': rows,
+                        'source_patch_applied': False, 'kernel_built': False,
+                        'boot_ready': False, 'flash_allowed': False, 'vendor_abi_proven': False,
+                        'runtime_driver_probe_proven': False, 'source_dts_path_proven': False,
+                        'bootloader_dtbo0_choice_proven': False,
+                        'result': 'STOCK_GFX_PROPERTIES_EXTRACTED_NOT_PATCHED'}
+              out.mkdir(parents=True, exist_ok=True)
+              (out / 'R42_RESULT.json').write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
+              (out / 'R42_STOCK_GFX_PROPERTIES.dtsi.txt').write_text('\n'.join(fragment) + '\n')
+              (out / 'R42_BERICHT_DE.txt').write_text(
+                  'R42-R2: Originale Stock-Eigenschaften des aktiven smpa8/gfx-cdev und zwei Thermal-Mappings gelesen.\n'
+                  'Nur Quelleigenschaften, KEIN anwendbarer Patch. Stock-/R20 DTBO0 nur offline gemerged.\n'
+                  'Offen: originaler Quell-DTS-Pfad, Versorgung/Regler-Semantik, Runtime-Probe, Vendor-ABI.\n'
+                  'BReNE, Kernelquellen und Stockkernel unveraendert. BOOT_READY=NO; FLASH=NO.\n')
+              return result
+          
+          
+          def main():
+              p = argparse.ArgumentParser()
+              p.add_argument('--root', type=pathlib.Path, required=True)
+              p.add_argument('--out', type=pathlib.Path, required=True)
+              args = p.parse_args()
+              result = run(args.root, args.out)
+              print('R42_STOCK_SOURCE_READ_PASS', result['result'],
+                    'COOLING_MAPS=', len(result['cooling_maps']), 'BOOT_READY=NO; FLASH=NO')
+          
+          
+          if __name__ == '__main__':
+              main()
+          R43_R2_PAYLOAD_0
+          cat > "$R43_STAGE/scripts/r43_gate.py" <<'R43_R2_PAYLOAD_1'
+          #!/usr/bin/env python3
+          """VEUX R43-R2: measured supply -> isolated candidate application -> real DTB compilation.
+          
+          Never writes a device or commits a repository. Fails closed and preserves failure reports.
+          A successful DTB test is NOT a kernel, vendor-ABI, runtime or flash approval.
+          """
+          from __future__ import annotations
+          import argparse
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import shlex
+          import struct
+          import subprocess
+          import sys
+          import traceback
+          
+          import r42_stock_capture as fdt
+          
+          SOURCE_COMMIT = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'
+          ENTRY = 'arch/arm64/boot/dts/vendor/xiaomi/veux.dts'
+          NEW_DTSI = 'arch/arm64/boot/dts/vendor/xiaomi/veux-gfx-stock-cooling.dtsi'
+          SUPPLY = '/soc/qcom,rpm-smd/rpm-regulator-smpa8/regulator-s8-level-ao'
+          PARENT = SUPPLY.rsplit('/', 1)[0]
+          STOCK_GFX = fdt.STOCK_GFX
+          DEVFREQ = fdt.R20_GFX
+          THERMAL = '/soc/thermal-zones'
+          INPUTS = {
+              'VEUX_R39_R2_MEMORY_ABI_MAIN.zip': fdt.R39_SHA256,
+              'VEUX_R37_DEVICE_EVIDENCE.zip': '15491bbb02140204a1e3e278d279668edb66ef7fe8052d0decd80f47b1e9a32f',
+              'VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip': '1eb9edcf361e2c5ada4316768ddf3b70e9a4a853fec81b99c8d92d0f10f198eb',
+          }
+          SOURCE_PINS = {
+              ENTRY: 'dc0f1bfe8db4676f9cff73b09956b789e56cbab4',
+              'arch/arm64/boot/dts/vendor/qcom/blair.dts': '57b1e25b8c40a2f56b44065d837c773e0f76dd9d',
+              'arch/arm64/boot/dts/vendor/qcom/blair.dtsi': 'd5aa5bc67fdd505a0cfa579a1948edde0ff8598d',
+              'arch/arm64/boot/dts/vendor/qcom/holi-regulators-pm6125.dtsi': 'e5f25c6397f49af2aec557e05f4d6bff635c5032',
+              'arch/arm64/boot/dts/vendor/qcom/holi-thermal.dtsi': '2ba52043e83f3cff785cdac67cefa89980813c4b',
+              'drivers/thermal/qcom/regulator_cdev.c': '33ff71176ee0b6b592eaab1941b15c75b49ce079',
+              'drivers/thermal/qcom/Makefile': '6127db42633c5b94e4125b64094e6b83997ef75c',
+              'drivers/thermal/qcom/Kconfig': 'ba04b3c13c39c2d12513520562950822cf3a300f',
+          }
+          PATCH_SHA = '4842c703a5ae3594a4850ae6d5d9b22c0f882394e844929d2ff149d948cd74fc'
+          R42_RESULT_SHA = 'd2c67a6c55d75ea1004bf64c65ab9961f67deb87025e7eabd5375e4108db8dfd'
+          CONFIG_SHA = '7fa8abbe8e6496ec1613df60fa33da01f1614121a642a780ff909cd438ca6ffe'
+          GATES_FALSE = ('kernel_built', 'vendor_abi_proven', 'runtime_driver_probe_proven',
+                         'bootloader_dtbo0_choice_proven', 'boot_ready', 'flash_allowed',
+                         'brene_modified', 'walt_modified', 'project_repository_modified')
+          
+          
+          def require(ok: bool, message: str) -> None:
+              if not ok:
+                  raise ValueError(message)
+          
+          
+          def sha(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def git_blob(data: bytes) -> str:
+              return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+          
+          
+          def cells(data: bytes) -> tuple[int, ...]:
+              require(len(data) % 4 == 0, 'UNALIGNED_CELLS')
+              return struct.unpack('>' + 'I' * (len(data) // 4), data)
+          
+          
+          def scalar(data: bytes) -> int:
+              require(len(data) == 4, 'EXPECTED_ONE_CELL')
+              return cells(data)[0]
+          
+          
+          def string(data: bytes) -> str:
+              require(bool(data) and data.endswith(b'\0') and data.count(b'\0') == 1, 'INVALID_STRING')
+              return data[:-1].decode('ascii')
+          
+          
+          def enabled(tree: dict, path: str) -> bool:
+              require(path in tree, 'NODE_MISSING:' + path)
+              while True:
+                  require(path in tree, 'ANCESTOR_MISSING:' + path)
+                  if tree[path].get('status', b'okay\0') not in (b'okay\0', b'ok\0'):
+                      return False
+                  if path == '/':
+                      return True
+                  path = path.rsplit('/', 1)[0] or '/'
+          
+          
+          def handles(tree: dict) -> dict[int, str]:
+              index = {}
+              for path, props in tree.items():
+                  a, b = props.get('phandle'), props.get('linux,phandle')
+                  if a is None and b is None:
+                      continue
+                  require(a is None or b is None or a == b, 'CONFLICTING_PHANDLE:' + path)
+                  ident = scalar(a if a is not None else b)
+                  require(ident not in (0, 0xffffffff), 'INVALID_PHANDLE:' + path)
+                  require(ident not in index, 'DUPLICATE_PHANDLE')
+                  index[ident] = path
+              return index
+          
+          
+          def target(tree: dict, data: bytes) -> str:
+              ident = scalar(data)
+              index = handles(tree)
+              require(ident in index, 'DANGLING_PHANDLE')
+              return index[ident]
+          
+          
+          def supplier_signature(tree: dict, path: str) -> dict:
+              require(path == SUPPLY, 'STOCK_SUPPLY_NOT_S8_LEVEL_AO:' + path)
+              p = tree[path]
+              require(enabled(tree, path), 'SUPPLIER_DISABLED')
+              require(p.get('compatible') == b'qcom,rpm-smd-regulator\0', 'SUPPLIER_COMPATIBLE')
+              require(p.get('regulator-name') == b'pm6125_s8_level_ao\0', 'SUPPLIER_NAME')
+              require(p.get('qcom,set') == struct.pack('>I', 1), 'SUPPLIER_SET')
+              require('qcom,use-voltage-level' in p and p['qcom,use-voltage-level'] == b'', 'SUPPLIER_NOT_LEVEL_MODE')
+              require('qcom,use-voltage-floor-level' not in p, 'SUPPLIER_UNEXPECTED_FLOOR_MODE')
+              parent = tree[PARENT]
+              require(parent.get('qcom,resource-name') == b'rwgx\0', 'WRONG_GPU_RAIL')
+              require(parent.get('qcom,resource-id') == b'\0\0\0\0', 'WRONG_GPU_RAIL_ID')
+              return {'path': path, 'regulator_name': string(p['regulator-name']),
+                      'resource_name': string(parent['qcom,resource-name']),
+                      'resource_id': scalar(parent['qcom,resource-id']),
+                      'qcom_set': scalar(p['qcom,set']), 'voltage_level_mode': True,
+                      'minimum_level': scalar(p['regulator-min-microvolt']),
+                      'maximum_level': scalar(p['regulator-max-microvolt'])}
+          
+          
+          def resolve_stock_supply(stock: dict, r20: dict) -> dict:
+              require(STOCK_GFX in stock and enabled(stock, STOCK_GFX), 'STOCK_GFX_NOT_ACTIVE')
+              props = stock[STOCK_GFX]
+              require(props.get('compatible') == b'qcom,regulator-cooling-device\0', 'STOCK_GFX_COMPATIBLE')
+              require(props.get('regulator-levels') == struct.pack('>II', 0, 192), 'STOCK_LEVELS_DRIFT')
+              supply_id = scalar(props['regulator-cdev-supply'])
+              supply_path = target(stock, props['regulator-cdev-supply'])
+              stock_sig = supplier_signature(stock, supply_path)
+              r20_sig = supplier_signature(r20, SUPPLY)
+              require(stock_sig == r20_sig, 'SUPPLIER_SEMANTIC_DIFFERENCE')
+              symbols = r20.get('/__symbols__', {})
+              require(symbols.get('S8A_LEVEL_AO') == (SUPPLY + '\0').encode(), 'R20_SYMBOL_S8A_LEVEL_AO_MISMATCH')
+              return {'stock_supply_phandle': supply_id, 'stock_supply_path': supply_path,
+                      'stock_supplier': stock_sig, 'r20_supplier': r20_sig,
+                      'r20_symbol': 'S8A_LEVEL_AO', 'r20_supply_phandle': fdt.phandle(r20[SUPPLY]),
+                      'same_number_in_r20_resolves_to': handles(r20).get(supply_id),
+                      'candidate_supply_condition_verified': True}
+          
+          
+          def cooling_signature(tree: dict, provider: str) -> list[dict]:
+              index = handles(tree)
+              require(provider in tree and enabled(tree, provider), 'COOLING_PROVIDER_MISSING_OR_DISABLED')
+              require(tree[provider].get('#cooling-cells') == struct.pack('>I', 2), 'COOLING_ARITY')
+              result = []
+              for path, props in sorted(tree.items()):
+                  if '/thermal-zones/' not in path or '/cooling-maps/' not in path or 'cooling-device' not in props:
+                      continue
+                  c = cells(props['cooling-device'])
+                  offset = 0
+                  while offset < len(c):
+                      require(c[offset] in index, 'COOLING_DANGLING_PROVIDER')
+                      ref = index[c[offset]]
+                      arity = scalar(tree[ref]['#cooling-cells'])
+                      require(arity == 2 and offset + arity + 1 <= len(c), 'COOLING_BAD_ARGUMENTS')
+                      if ref == provider:
+                          zone = path.split('/cooling-maps/', 1)[0]
+                          require(enabled(tree, zone) and enabled(tree, path), 'COOLING_ZONE_OR_MAP_DISABLED')
+                          trip_path = target(tree, props['trip'])
+                          require(trip_path.startswith(zone + '/trips/'), 'TRIP_WRONG_ZONE')
+                          trip = {k: v.hex() for k, v in sorted(tree[trip_path].items())
+                                  if k not in ('phandle', 'linux,phandle')}
+                          result.append({'zone': zone, 'map_name': path.rsplit('/', 1)[1],
+                                         'provider_path': provider, 'min_state': c[offset+1],
+                                         'max_state': c[offset+2], 'trip_path': trip_path, 'trip': trip})
+                      offset += arity + 1
+              require(len(result) == 2, 'EXPECTED_TWO_GPU_MAPS')
+              require({r['zone'] for r in result} == {f'{THERMAL}/zeroc-{i}-step' for i in (0, 1)},
+                      'GPU_MAP_ZONE_SET')
+              return result
+          
+          
+          def config_value(config: str, key: str) -> str:
+              found = []
+              for line in config.splitlines():
+                  if line.startswith(key + '='):
+                      found.append(line.split('=', 1)[1])
+                  elif line == f'# {key} is not set':
+                      found.append('n')
+              require(len(found) == 1, 'CONFIG_MISSING_OR_DUPLICATE:' + key)
+              return found[0]
+          
+          
+          def config_gate(data: bytes) -> dict:
+              require(sha(data) == CONFIG_SHA, 'ORIGINAL_CONFIG_SHA_MISMATCH')
+              text = data.decode()
+              expected = {'CONFIG_REGULATOR_COOLING_DEVICE': 'y', 'CONFIG_QTI_DEVFREQ_VDD_COOLING_DEVICE': 'n',
+                          'CONFIG_OF': 'y', 'CONFIG_THERMAL': 'y', 'CONFIG_THERMAL_OF': 'y', 'CONFIG_REGULATOR': 'y'}
+              actual = {k: config_value(text, k) for k in expected}
+              require(actual == expected, 'CONFIG_PREREQUISITES_DIFFER')
+              return actual
+          
+          
+          def write_json(path: Path, data: dict | list) -> None:
+              path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          
+          
+          def run_command(args: list[str], cwd: Path, log: Path, timeout: int = 90) -> str:
+              p = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=timeout, check=False)
+              log.write_text('$ ' + shlex.join(args) + '\n' + p.stdout + p.stderr, encoding='utf-8')
+              require(p.returncode == 0, f'COMMAND_FAILED:{Path(args[0]).name}:{p.returncode}; see {log.name}')
+              return p.stdout
+          
+          
+          def verify_source(source: Path, out: Path) -> None:
+              actual = run_command(['git', 'rev-parse', 'HEAD'], source, out/'R43_SOURCE_HEAD.log').strip()
+              require(actual == SOURCE_COMMIT, 'SOURCE_COMMIT_MISMATCH')
+              require(not run_command(['git', 'status', '--porcelain'], source, out/'R43_SOURCE_INITIAL_STATUS.log').strip(),
+                      'SOURCE_CHECKOUT_NOT_CLEAN')
+              for name, wanted in SOURCE_PINS.items():
+                  p = source/name
+                  require(p.is_file() and not p.is_symlink() and git_blob(p.read_bytes()) == wanted,
+                          'SOURCE_BLOB_MISMATCH:' + name)
+              mk = (source/'drivers/thermal/qcom/Makefile').read_text()
+              require('obj-$(CONFIG_REGULATOR_COOLING_DEVICE) += regulator_cdev.o' in mk, 'REGULATOR_KBUILD_LINK')
+              driver = (source/'drivers/thermal/qcom/regulator_cdev.c').read_text()
+              for token in ('qcom,regulator-cooling-device', 'regulator-cdev', 'regulator-levels',
+                            'regulator_set_voltage', 'thermal_of_cooling_device_register'):
+                  require(token in driver, 'REGULATOR_DRIVER_INTERFACE:' + token)
+              require(not (source/NEW_DTSI).exists(), 'PATCH_ALREADY_APPLIED')
+          
+          
+          def compiler_commands(source: Path, work: Path, name: str) -> tuple[list[str], list[str]]:
+              pre = work/f'{name}.dts'
+              dep = work/f'{name}.d'
+              out = work/f'{name}.dtb'
+              gcc = ['gcc', '-E', '-nostdinc', '-undef', '-D__DTS__', '-x', 'assembler-with-cpp',
+                     '-I', str(source/'include'), '-I', str(source/'scripts/dtc/include-prefixes'),
+                     '-MMD', '-MF', str(dep), '-o', str(pre), str(source/ENTRY)]
+              dtc = ['dtc', '-I', 'dts', '-O', 'dtb', '-b', '0', '-H', 'epapr', '-@', '-i', str((source/ENTRY).parent),
+                     '-o', str(out), str(pre)]
+              return gcc, dtc
+          
+          
+          def dependency_manifest(source: Path, depfile: Path) -> dict[str, str]:
+              data = depfile.read_text().replace('\\\n', ' ')
+              require(': ' in data, 'DEPENDENCY_FILE_MALFORMED')
+              deps = shlex.split(data.split(': ', 1)[1])
+              require(bool(deps), 'DEPENDENCY_LIST_EMPTY')
+              result = {}
+              for raw in deps:
+                  path = Path(raw)
+                  if not path.is_absolute():
+                      path = source/path
+                  resolved = path.resolve(strict=True)
+                  require(resolved.is_relative_to(source.resolve()), 'DEPENDENCY_ESCAPES_SOURCE')
+                  rel = str(resolved.relative_to(source.resolve()))
+                  require(resolved.is_file(), 'DEPENDENCY_NOT_FILE')
+                  result[rel] = sha(resolved.read_bytes())
+              require(ENTRY in result and 'arch/arm64/boot/dts/vendor/qcom/holi-thermal.dtsi' in result
+                      and 'arch/arm64/boot/dts/vendor/qcom/holi-regulators-pm6125.dtsi' in result,
+                      'VEUX_INCLUDE_LINEAGE_NOT_PROVEN')
+              return result
+          
+          
+          def build_dtb(source: Path, work: Path, out: Path, name: str) -> tuple[bytes, dict]:
+              gcc, dtc = compiler_commands(source, work, name)
+              run_command(gcc, source, out/f'R43_{name}_CPP.log')
+              run_command(dtc, source, out/f'R43_{name}_DTC.log')
+              data = (work/f'{name}.dtb').read_bytes()
+              fdt.fdt_properties(data)  # structural verification, not a boot assertion
+              return data, dependency_manifest(source, work/f'{name}.d')
+          
+          
+          def tree_delta(before: dict, after: dict) -> dict:
+              # Compare node scope exactly. Do not treat random integers as phandles.
+              added = set(after) - set(before)
+              removed = set(before) - set(after)
+              wanted_added = {STOCK_GFX} | {f'{THERMAL}/zeroc-{i}-step/cooling-maps/gfx_vdd_cdev' for i in (0, 1)}
+              wanted_removed = {DEVFREQ} | {f'{THERMAL}/zeroc-{i}-step/cooling-maps/devfreq_vdd_cdev' for i in (0, 1)}
+              require(added == wanted_added and removed == wanted_removed, 'UNEXPECTED_DTB_NODE_SCOPE')
+              require('devfreq_vdd_cdev' not in after.get('/__symbols__', {}), 'STALE_DEVFREQ_SYMBOL')
+              require(after.get('/__symbols__', {}).get('gfx_cdev') == (STOCK_GFX+'\0').encode(), 'GFX_SYMBOL_MISSING')
+              # These are evidence of raw encoding differences only; do not overclaim global equivalence.
+              changed = {p: sorted(k for k in set(before[p]) | set(after[p]) if before[p].get(k) != after[p].get(k))
+                         for p in set(before) & set(after) if before[p] != after[p]}
+              return {'nodes_added': sorted(added), 'nodes_removed': sorted(removed),
+                      'raw_properties_changed_in_existing_nodes': dict(sorted(changed.items())),
+                      'raw_difference_note': 'Phandle renumbering is recorded, never interpreted as hardware equivalence.'}
+          
+          
+          def all_cooling_maps(tree: dict) -> dict:
+              index = handles(tree)
+              result = {}
+              for path, props in sorted(tree.items()):
+                  if '/thermal-zones/' not in path or '/cooling-maps/' not in path or 'cooling-device' not in props:
+                      continue
+                  values = cells(props['cooling-device'])
+                  refs, offset = [], 0
+                  while offset < len(values):
+                      require(values[offset] in index, 'UNRESOLVED_COOLING_MAP')
+                      provider = index[values[offset]]
+                      arity = scalar(tree[provider]['#cooling-cells'])
+                      require(0 <= arity <= 16 and offset + 1 + arity <= len(values), 'COOLING_MAP_ARITY')
+                      refs.append({'provider': provider, 'arguments': values[offset+1:offset+1+arity]})
+                      offset += arity + 1
+                  result[path] = {'references': refs, 'trip': target(tree, props['trip']),
+                      'other_properties': {k: v.hex() for k,v in sorted(props.items())
+                          if k not in ('phandle','linux,phandle','cooling-device','trip')}}
+              return result
+          
+          
+          def verify_patch_result(stock: dict, r20: dict, patched: dict) -> dict:
+              require(DEVFREQ not in patched and STOCK_GFX in patched, 'PATCH_PROVIDER_SWITCH_FAILED')
+              require(enabled(patched, STOCK_GFX), 'PATCHED_GFX_DISABLED')
+              a, b = stock[STOCK_GFX], patched[STOCK_GFX]
+              for key in ('compatible', '#cooling-cells', 'regulator-levels', 'status'):
+                  require(a.get(key) == b.get(key), 'PATCHED_PROPERTY_NOT_STOCK:' + key)
+              require(target(patched, b['regulator-cdev-supply']) == SUPPLY, 'PATCHED_SUPPLY_WRONG')
+              require(supplier_signature(stock, SUPPLY) == supplier_signature(patched, SUPPLY), 'PATCHED_SUPPLIER_CHANGED')
+              stock_maps = cooling_signature(stock, STOCK_GFX)
+              patched_maps = cooling_signature(patched, STOCK_GFX)
+              require(stock_maps == patched_maps, 'PATCHED_COOLING_MAPS_NOT_STOCK')
+              r20_maps = cooling_signature(r20, DEVFREQ)
+              require(all(r['min_state'] == r['max_state'] == 2 for r in r20_maps), 'R20_STATE_DRIFT')
+              require(all(r['min_state'] == r['max_state'] == 1 for r in patched_maps), 'PATCHED_STATE_DRIFT')
+              old_maps, new_maps = all_cooling_maps(r20), all_cooling_maps(patched)
+              old_gpu = {f'{THERMAL}/zeroc-{i}-step/cooling-maps/devfreq_vdd_cdev' for i in (0,1)}
+              new_gpu = {f'{THERMAL}/zeroc-{i}-step/cooling-maps/gfx_vdd_cdev' for i in (0,1)}
+              require({p:v for p,v in old_maps.items() if p not in old_gpu} ==
+                      {p:v for p,v in new_maps.items() if p not in new_gpu}, 'UNRELATED_COOLING_MAP_CHANGED')
+              return {'unrelated_cooling_maps_unchanged': len(old_maps)-2, 'stock_maps': stock_maps, 'patched_maps': patched_maps,
+                      'r20_previous_maps': r20_maps, 'stock_provider_properties_match': True,
+                      'stock_supplier_identity_match': True}
+          
+          
+          def load_inputs(root: Path) -> tuple[bytes, bytes, bytes, bytes]:
+              for name, expected in INPUTS.items():
+                  path = root/name
+                  require(path.is_file() and not path.is_symlink(), 'INPUT_MISSING_OR_SYMLINK:' + name)
+                  require(sha(path.read_bytes()) == expected, 'INPUT_HASH_MISMATCH:' + name)
+              r38 = fdt.members(root/'VEUX_R39_R2_MEMORY_ABI_MAIN.zip',
+                                ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']
+              r20 = fdt.members(io.BytesIO(r38), ['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+              require(sha(r20) == fdt.R20_DTB_SHA256, 'R20_DTB_HASH_MISMATCH')
+              device = fdt.members(root/'VEUX_R37_DEVICE_EVIDENCE.zip',
+                                   ['R37_VENDOR_BOOT_BASE.dtb', 'R37_DTBO_CANDIDATE0.dtbo'])
+              cfg = fdt.members(root/'VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip',
+                                ['fixtures/R20_REAL_BUILD_CONFIG.config'])['fixtures/R20_REAL_BUILD_CONFIG.config']
+              return device['R37_VENDOR_BOOT_BASE.dtb'], device['R37_DTBO_CANDIDATE0.dtbo'], r20, cfg
+          
+          
+          def merge_logged(base: bytes, overlay: bytes, work: Path, out: Path, name: str) -> bytes:
+              bp, op, mp = work/(name+'_base.dtb'), work/(name+'_overlay.dtbo'), work/(name+'_merged.dtb')
+              bp.write_bytes(base)
+              op.write_bytes(overlay)
+              run_command(['fdtoverlay', '-i', str(bp), '-o', str(mp), str(op)], work,
+                          out/('R43_'+name+'_MERGE.log'), timeout=45)
+              result = mp.read_bytes()
+              fdt.fdt_properties(result)
+              return result
+          
+          
+          def run(root: Path, source: Path, payload: Path, work: Path, out: Path) -> dict:
+              require(root.resolve() != source.resolve(), 'SOURCE_MUST_BE_ISOLATED')
+              for p in (work, out):
+                  p.mkdir(parents=True, exist_ok=True)
+                  require(not p.resolve().is_relative_to(root.resolve()) and not p.resolve().is_relative_to(source.resolve()),
+                          'OUTPUT_MUST_BE_OUTSIDE_REPOSITORIES')
+              patch = payload/'patches/R43_STOCK_GFX.patch'
+              require(sha(patch.read_bytes()) == PATCH_SHA, 'PATCH_PAYLOAD_HASH_MISMATCH')
+              expected_path = payload/'fixtures/R42_RESULT.json'
+              require(sha(expected_path.read_bytes()) == R42_RESULT_SHA, 'R42_REPORT_HASH_MISMATCH')
+              expected = json.loads(expected_path.read_text())
+              stock_raw, overlay, original_r20, config = load_inputs(root)
+              config_result = config_gate(config)
+              stock = fdt.fdt_properties(merge_logged(stock_raw, overlay, work, out, 'STOCK'))
+              r20 = fdt.fdt_properties(merge_logged(original_r20, overlay, work, out, 'R20'))
+              require({k: v.hex() for k, v in sorted(stock[STOCK_GFX].items())} == expected['stock_properties_hex'],
+                      'R42_STOCK_PROPERTIES_CHANGED')
+              observed_path = target(stock, stock[STOCK_GFX]['regulator-cdev-supply'])
+              observed = {'stock_supply_path': observed_path,
+                          'stock_supply_phandle': scalar(stock[STOCK_GFX]['regulator-cdev-supply']),
+                          'stock_supplier_properties_hex': {k: b.hex() for k, b in stock[observed_path].items()},
+                          'r20_expected_supplier_path': SUPPLY,
+                          'r20_supplier_properties_hex': {k: b.hex() for k, b in r20.get(SUPPLY, {}).items()},
+                          'comparison_pending': True}
+              write_json(out/'R43_SUPPLY_OBSERVED.json', observed)
+              supply = resolve_stock_supply(stock, r20)
+              write_json(out/'R43_SUPPLY_PROOF.json', supply)
+              print('R43_STOCK_SUPPLY_RESOLVED=' + supply['stock_supply_path'], flush=True)
+              verify_source(source, out)
+              before_blob, before_deps = build_dtb(source, work, out, 'BEFORE')
+              before_raw = fdt.fdt_properties(before_blob)
+              raw_r20 = fdt.fdt_properties(original_r20)
+              # Require the identical original tree, including its resolved handle encoding.
+              # This protects against accidentally testing another ancestor/configuration.
+              if before_raw != raw_r20:
+                  write_json(out/'R43_BASELINE_MISMATCH.json', {
+                      'compiled_only_paths': sorted(set(before_raw)-set(raw_r20)),
+                      'r20_only_paths': sorted(set(raw_r20)-set(before_raw)),
+                      'changed_properties': {p: {k: {'compiled': before_raw[p].get(k, b'').hex(),
+                                                    'original_r20': raw_r20[p].get(k, b'').hex()}
+                          for k in sorted(set(before_raw[p])|set(raw_r20[p]))
+                          if before_raw[p].get(k) != raw_r20[p].get(k)}
+                          for p in sorted(set(before_raw)&set(raw_r20)) if before_raw[p] != raw_r20[p]}})
+                  raise ValueError('COMPILED_BASELINE_NOT_ORIGINAL_R20_TREE')
+              write_json(out/'R43_BASELINE_MATCH.json', {'all_nodes_and_properties_equal': True,
+                  'nodes': len(raw_r20), 'reference_dtb_sha256': sha(original_r20),
+                  'compiled_dtb_sha256': sha(before_blob),
+                  'comparison': 'all parsed FDT nodes and every property byte; header layout may differ'})
+              run_command(['git', 'apply', '--check', str(patch.resolve())], source, out/'R43_GIT_APPLY_CHECK.log')
+              run_command(['git', 'apply', str(patch.resolve())], source, out/'R43_GIT_APPLY.log')
+              tracked = run_command(['git', 'diff', '--name-only'], source, out/'R43_CHANGED_TRACKED.log').splitlines()
+              untracked = run_command(['git', 'ls-files', '--others', '--exclude-standard'], source,
+                                      out/'R43_CHANGED_UNTRACKED.log').splitlines()
+              require(tracked == [ENTRY] and untracked == [NEW_DTSI], 'PATCH_FILE_SCOPE_CHANGED')
+              after_blob, after_deps = build_dtb(source, work, out, 'AFTER')
+              require(set(after_deps) == set(before_deps) | {NEW_DTSI}, 'PATCH_DEPENDENCY_SET_CHANGED')
+              require(all(after_deps[k] == v for k, v in before_deps.items() if k != ENTRY),
+                      'UNRELATED_SOURCE_DEPENDENCY_MODIFIED')
+              after_raw = fdt.fdt_properties(after_blob)
+              delta = tree_delta(before_raw, after_raw)
+              after = fdt.fdt_properties(merge_logged(after_blob, overlay, work, out, 'PATCHED'))
+              check = verify_patch_result(stock, r20, after)
+              project_status = run_command(['git', 'status', '--porcelain'], root, out/'R43_PROJECT_STATUS.log')
+              require(not project_status.strip(), 'PROJECT_REPOSITORY_MODIFIED')
+              # Recheck all input archives after compilation/application.
+              require(all(sha((root/n).read_bytes()) == digest for n, digest in INPUTS.items()), 'INPUT_CHANGED_DURING_RUN')
+              write_json(out/'R43_DEPENDENCIES.json', {'before': before_deps, 'after': after_deps})
+              write_json(out/'R43_TREE_DELTA.json', delta)
+              write_json(out/'R43_COOLING_COMPARISON.json', check)
+              (out/'R43_STOCK_GFX_SOURCE.patch').write_bytes(patch.read_bytes())
+              (out/'R43_VEUX_GFX_SOURCE.dtsi.txt').write_bytes((source/NEW_DTSI).read_bytes())
+              result = {'schema': 'VEUX_R43_R2_AO_SUPPLY_PATCH_DTB_V1',
+                  'result': 'SUPPLY_PROVEN_SOURCE_PATCH_COMPILED_STOCK_GPU_MATCH',
+                  'revision': 'R43-R2', 'previous_failure_run': 40131737405,
+                  'source_commit': SOURCE_COMMIT, 'input_sha256': INPUTS, 'source_git_blob_pins': SOURCE_PINS,
+                  'patch_sha256': PATCH_SHA, 'config': config_result,
+                  'stock_supply_condition_verified': True, 'source_patch_applied_to_isolated_checkout': True,
+                  'baseline_full_tree_matches_original_r20': True, 'native_veux_dtb_before_after_compiled': True,
+                  'stock_gpu_semantics_match_after_dtbo0': True, 'unrelated_source_dependencies_unchanged': True,
+                  'dtbo_mode': 'OFFLINE_CANDIDATE_0_NOT_BOOTLOADER_PROOF',
+                  'source_changes': [ENTRY, NEW_DTSI], 'build_output_uploaded': False,
+                  'raw_node_counts': {'original_r20': len(raw_r20), 'before': len(before_raw), 'after': len(after_raw)},
+                  'merged_node_counts': {'stock': len(stock), 'r20': len(r20), 'patched': len(after)},
+                  'next_step': 'Integrate this verified DTS-only patch into R20-R11 full build; vendor ABI remains a separate gate.',
+                  **{k: False for k in GATES_FALSE}}
+              write_json(out/'R43_RESULT.json', result)
+              (out/'R43_BERICHT_DE.txt').write_text(
+                  'R43: Stock-S8-AO-Versorgung aufgeloest; Patch nur in isolierter Quellkopie angewendet.\n'
+                  'VEUX-DTB vor und nach dem Patch mit GCC/DTC kompiliert. Ungepatchter Baum entspricht dem originalen R20-Baum.\n'
+                  'Gepatchte GPU-Eigenschaften, Versorgung, beide Maps und Trips entsprechen Stock+DTBO0 offline.\n'
+                  'Nur veux.dts und neue veux-gfx-stock-cooling.dtsi geaendert; gemeinsame Quellen unveraendert.\n'
+                  'KEIN vollstaendiger Kernel-Build, keine Vendor-ABI-/Runtime-/Bootloader-Freigabe.\n'
+                  'BOOT_READY=NO; FLASH_ALLOWED=NO. Kein Image/DTB/AK3 im Ergebnisartefakt.\n', encoding='utf-8')
+              return result
+          
+          
+          def main() -> int:
+              parser = argparse.ArgumentParser(description=__doc__)
+              for name in ('root', 'source', 'payload', 'work', 'out'):
+                  parser.add_argument('--' + name, required=True, type=Path)
+              args = parser.parse_args()
+              try:
+                  result = run(args.root, args.source, args.payload, args.work, args.out)
+              except Exception as exc:
+                  args.out.mkdir(parents=True, exist_ok=True)
+                  write_json(args.out/'R43_FAILURE.json', {'schema': 'VEUX_R43_R2_FAILURE_V1',
+                      'result': 'BLOCKED_NOT_APPROVED', 'error_type': type(exc).__name__,
+                      'reason': str(exc), **{k: False for k in GATES_FALSE}})
+                  (args.out/'R43_FAILURE_TRACE.log').write_text(traceback.format_exc(), encoding='utf-8')
+                  print('R43_BLOCKED: ' + str(exc), file=sys.stderr)
+                  return 1
+              print('R43_SUPPLY_PATCH_DTB=PASS; FULL_KERNEL_BUILD=NO; VENDOR_ABI_UNPROVEN; BOOT_READY=NO; FLASH=NO')
+              require(result['boot_ready'] is False, 'INVALID_SUCCESS')
+              return 0
+          
+          
+          if __name__ == '__main__':
+              raise SystemExit(main())
+          R43_R2_PAYLOAD_1
+          cat > "$R43_STAGE/tests/test_r42_capture.py" <<'R43_R2_PAYLOAD_2'
+          #!/usr/bin/env python3
+          """Real-R20 fixture tests and adversarial syntax/security regressions for R42-R2."""
+          import io
+          import os
+          import pathlib
+          import stat
+          import struct
+          import sys
+          import tempfile
+          import unittest
+          import warnings
+          import zipfile
+          
+          sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
+          import r42_stock_capture as g
+          
+          
+          class R42Regression(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.fixture = pathlib.Path(os.environ['R42_FIXTURE'])
+                  cls.binary = cls.fixture.read_bytes()
+                  cls.tree = g.fdt_properties(cls.binary)
+          
+              def test_real_r20_hash(self):
+                  self.assertEqual(g.digest(self.binary), g.R20_DTB_SHA256)
+          
+              def test_real_r20_fdt_nodes(self):
+                  self.assertEqual(len(self.tree), 1829)
+                  self.assertIn(g.R20_GFX, self.tree)
+                  self.assertEqual(g.status(self.tree[g.R20_GFX]), 'okay')
+          
+              def test_real_r20_gpu_cooling_refs(self):
+                  rows = g.cooling_maps(self.tree, g.R20_GFX, 'R20')
+                  self.assertEqual([r['min_state'] for r in rows], [2, 2])
+                  self.assertEqual([r['max_state'] for r in rows], [2, 2])
+                  self.assertTrue(all(r['phandle'] == 81 for r in rows))
+          
+              def test_real_r20_provider_compatible(self):
+                  self.assertIn(b'qcom,devfreq-vdd-cooling-device\0', self.tree[g.R20_GFX]['compatible'])
+          
+              def test_invalid_magic_rejected(self):
+                  b = bytearray(self.binary)
+                  b[0] ^= 255
+                  with self.assertRaisesRegex(ValueError, 'FDT_HEADER'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_total_length_rejected(self):
+                  b = bytearray(self.binary)
+                  b[4:8] = struct.pack('>I', 39)
+                  with self.assertRaisesRegex(ValueError, 'FDT_HEADER'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_structure_bounds_rejected(self):
+                  b = bytearray(self.binary)
+                  b[36:40] = struct.pack('>I', len(b))
+                  with self.assertRaisesRegex(ValueError, 'FDT_STRUCT_BOUNDS'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_string_bounds_rejected(self):
+                  b = bytearray(self.binary)
+                  b[32:36] = struct.pack('>I', len(b))
+                  with self.assertRaisesRegex(ValueError, 'FDT_STRING_BOUNDS'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_phandle_validation(self):
+                  with self.assertRaisesRegex(ValueError, 'INVALID_PROVIDER_PHANDLE'):
+                      g.phandle({'phandle': b'\0\1'})
+                  with self.assertRaisesRegex(ValueError, 'INVALID_PROVIDER_PHANDLE_ZERO'):
+                      g.phandle({'phandle': b'\0\0\0\0'})
+          
+              def test_disabled_status(self):
+                  self.assertEqual(g.status({}), 'okay')
+                  self.assertEqual(g.status({'status': b'disabled\0'}), 'disabled')
+          
+              def test_ambiguous_cooling_cell_rejected(self):
+                  tree = {g.R20_GFX: {'phandle': struct.pack('>I', 81)},
+                          '/soc/thermal-zones/z/cooling-maps/a': {'cooling-device': struct.pack('>II', 81, 2)}}
+                  with self.assertRaisesRegex(ValueError, 'COOLING_CELLS_AMBIGUOUS'):
+                      g.cooling_maps(tree, g.R20_GFX, 'R20')
+          
+              def test_zero_cooling_maps_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'COOLING_REFERENCES_NOT_TWO'):
+                      g.cooling_maps({g.R20_GFX: {'phandle': struct.pack('>I', 81)}}, g.R20_GFX, 'R20')
+          
+              def test_property_comment_formatting(self):
+                  self.assertIn('"okay"', g.format_comment('status', b'okay\0'))
+                  self.assertIn('0x00000002', g.format_comment('cells', struct.pack('>I', 2)))
+                  self.assertIn('[01 02 03]', g.format_comment('raw', b'\x01\x02\x03'))
+          
+              @staticmethod
+              def fake_zip(names, symlink=False):
+                  out = io.BytesIO()
+                  with warnings.catch_warnings():
+                      warnings.simplefilter('ignore', UserWarning)
+                      with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                          for idx, name in enumerate(names):
+                              info = zipfile.ZipInfo(name)
+                              if symlink and idx == 0:
+                                  info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                              z.writestr(info, b'data')
+                  out.seek(0)
+                  return out
+          
+              def test_zip_duplicate_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_DUPLICATE_MEMBERS'):
+                      g.members(self.fake_zip(['test.txt', 'test.txt']), ['test.txt'])
+          
+              def test_zip_traversal_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_UNSAFE_PATH'):
+                      g.members(self.fake_zip(['../test.txt']), ['../test.txt'])
+          
+              def test_zip_symlink_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_UNSAFE_SYMLINK'):
+                      g.members(self.fake_zip(['test.txt'], symlink=True), ['test.txt'])
+          
+              def test_zip_missing_member_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_REQUIRED_MISSING'):
+                      g.members(self.fake_zip(['test.txt']), ['missing.txt'])
+          
+              def test_original_r39_nested_r20(self):
+                  root = pathlib.Path(os.environ['R42_ROOT'])
+                  real_zip = (root / 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip').read_bytes()
+                  self.assertEqual(g.digest(real_zip), g.R39_SHA256)
+                  r38 = g.members(io.BytesIO(real_zip),
+                                  ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])
+                  dtb = g.members(io.BytesIO(r38['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']),
+                                  ['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+                  self.assertEqual(g.digest(dtb), g.R20_DTB_SHA256)
+          
+          
+          if __name__ == '__main__':
+              unittest.main()
+          R43_R2_PAYLOAD_2
+          cat > "$R43_STAGE/tests/test_r43_gate.py" <<'R43_R2_PAYLOAD_3'
+          #!/usr/bin/env python3
+          """R43 tests: real R20 inputs, adversarial conditions and real git patch application.
+          
+          Synthetic Stock-like trees exercise guards only. They are NOT a Stock provenance proof.
+          The original Stock tree and real GCC/DTC build are mandatory in the Actions integration.
+          """
+          import copy
+          import json
+          import os
+          from pathlib import Path
+          import struct
+          import subprocess
+          import sys
+          import tempfile
+          import unittest
+          from unittest.mock import patch
+          
+          sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
+          import r43_gate as g
+          
+          U = lambda *v: struct.pack('>'+'I'*len(v), *v)
+          
+          
+          class R43Tests(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.payload = Path(__file__).resolve().parents[1]
+                  cls.raw = Path(os.environ['R42_FIXTURE']).read_bytes()
+                  cls.original = g.fdt.fdt_properties(cls.raw)
+          
+              def synthetic_stock(self):
+                  tree = copy.deepcopy(self.original)
+                  handle = tree[g.DEVFREQ]['phandle']
+                  del tree[g.DEVFREQ]
+                  tree[g.STOCK_GFX] = {'phandle': handle, 'compatible': b'qcom,regulator-cooling-device\0',
+                      'regulator-levels': U(0, 192), '#cooling-cells': U(2), 'status': b'okay\0',
+                      'regulator-cdev-supply': tree[g.SUPPLY]['phandle']}
+                  del tree['/__symbols__']['devfreq_vdd_cdev']
+                  tree['/__symbols__']['gfx_cdev'] = (g.STOCK_GFX+'\0').encode()
+                  for i in (0, 1):
+                      prefix = f'{g.THERMAL}/zeroc-{i}-step/cooling-maps/'
+                      node = tree.pop(prefix+'devfreq_vdd_cdev')
+                      node['cooling-device'] = handle + U(1, 1)
+                      tree[prefix+'gfx_vdd_cdev'] = node
+                  return tree
+          
+              def test_real_r20_supplier(self):
+                  result = g.supplier_signature(self.original, g.SUPPLY)
+                  self.assertEqual(result['regulator_name'], 'pm6125_s8_level_ao')
+                  self.assertEqual(result['resource_name'], 'rwgx')
+                  self.assertEqual(result['maximum_level'], 512)
+          
+              def test_raw_numeric_0x59_is_not_gpu_supply(self):
+                  self.assertEqual(g.handles(self.original)[0x59],
+                      '/soc/qcom,rpm-smd/rpm-regulator-ldoa8/regulator-l8')
+                  self.assertEqual(g.fdt.phandle(self.original[g.SUPPLY]), 0x169)
+          
+              def test_real_r20_symbol_identity(self):
+                  self.assertEqual(self.original['/__symbols__']['S8A_LEVEL_AO'], (g.SUPPLY+'\0').encode())
+          
+              def test_real_r20_cooling_trip_semantics(self):
+                  maps = g.cooling_signature(self.original, g.DEVFREQ)
+                  self.assertEqual(len(maps), 2)
+                  self.assertTrue(all(x['min_state']==x['max_state']==2 for x in maps))
+                  self.assertTrue(all(x['trip']['temperature']=='00000001' for x in maps))
+          
+              def test_real_config_pin(self):
+                  import zipfile
+                  with zipfile.ZipFile(Path(os.environ['R42_ROOT'])/'VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip') as z:
+                      c = z.read('fixtures/R20_REAL_BUILD_CONFIG.config')
+                  self.assertEqual(g.config_gate(c)['CONFIG_REGULATOR_COOLING_DEVICE'], 'y')
+                  with self.assertRaisesRegex(ValueError, 'SHA_MISMATCH'):
+                      g.config_gate(c+b'\n')
+          
+              def test_duplicate_config_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'DUPLICATE'):
+                      g.config_value('CONFIG_FOO=y\nCONFIG_FOO=n\n', 'CONFIG_FOO')
+          
+              def test_missing_config_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'MISSING'):
+                      g.config_value('', 'CONFIG_FOO')
+          
+              def test_duplicate_phandle_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'DUPLICATE_PHANDLE'):
+                      g.handles({'/a': {'phandle': U(1)}, '/b': {'phandle': U(1)}})
+          
+              def test_dual_phandle_equal_accepted(self):
+                  self.assertEqual(g.handles({'/a': {'phandle': U(1), 'linux,phandle': U(1)}}), {1:'/a'})
+          
+              def test_dual_phandle_conflict_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'CONFLICTING'):
+                      g.handles({'/a': {'phandle': U(1), 'linux,phandle': U(2)}})
+          
+              def test_reserved_phandle_rejected(self):
+                  for value in (0, 0xffffffff):
+                      with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'INVALID_PHANDLE'):
+                          g.handles({'/a': {'phandle': U(value)}})
+          
+              def test_dangling_reference_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'DANGLING'):
+                      g.target(self.original, U(0xffff))
+          
+              def test_multicell_supply_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.STOCK_GFX]['regulator-cdev-supply'] += U(0)
+                  with self.assertRaisesRegex(ValueError, 'ONE_CELL'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_disabled_ancestor_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.PARENT]['status'] = b'disabled\0'
+                  with self.assertRaisesRegex(ValueError, 'NOT_ACTIVE'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_supply_pointing_to_l8_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.STOCK_GFX]['regulator-cdev-supply'] = U(0x59)
+                  with self.assertRaisesRegex(ValueError, 'NOT_S8_LEVEL_AO'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_wrong_supply_name_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.SUPPLY]['regulator-name'] = b'not_gpu\0'
+                  with self.assertRaisesRegex(ValueError, 'SUPPLIER_NAME'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_wrong_voltage_rail_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.PARENT]['qcom,resource-name'] = b'wrong\0'
+                  with self.assertRaisesRegex(ValueError, 'WRONG_GPU_RAIL'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_unexpected_voltage_mode_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.SUPPLY]['qcom,use-voltage-floor-level'] = b''
+                  with self.assertRaisesRegex(ValueError, 'FLOOR_MODE'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_supply_signature_difference_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.SUPPLY]['regulator-max-microvolt'] = U(384)
+                  with self.assertRaisesRegex(ValueError, 'SEMANTIC_DIFFERENCE'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_wrong_supply_symbol_rejected(self):
+                  stock, r20 = self.synthetic_stock(), copy.deepcopy(self.original)
+                  r20['/__symbols__']['S8A_LEVEL_AO'] = b'/wrong\0'
+                  with self.assertRaisesRegex(ValueError, 'SYMBOL'):
+                      g.resolve_stock_supply(stock, r20)
+          
+              def test_synthetic_supply_positive_not_real_stock_attestation(self):
+                  result = g.resolve_stock_supply(self.synthetic_stock(), self.original)
+                  self.assertEqual(result['stock_supply_path'], g.SUPPLY)
+          
+              def test_stock_levels_drift_rejected(self):
+                  tree = self.synthetic_stock()
+                  tree[g.STOCK_GFX]['regulator-levels'] = U(0, 256)
+                  with self.assertRaisesRegex(ValueError, 'LEVELS_DRIFT'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_cooling_map_arguments_rejected(self):
+                  tree = copy.deepcopy(self.original)
+                  p = f'{g.THERMAL}/zeroc-0-step/cooling-maps/devfreq_vdd_cdev'
+                  tree[p]['cooling-device'] = U(81, 2)
+                  with self.assertRaisesRegex(ValueError, 'BAD_ARGUMENTS'):
+                      g.cooling_signature(tree, g.DEVFREQ)
+          
+              def test_cooling_zone_disabled_rejected(self):
+                  tree = copy.deepcopy(self.original)
+                  tree[f'{g.THERMAL}/zeroc-0-step']['status'] = b'disabled\0'
+                  with self.assertRaisesRegex(ValueError, 'DISABLED'):
+                      g.cooling_signature(tree, g.DEVFREQ)
+          
+              def test_wrong_trip_zone_rejected(self):
+                  tree = copy.deepcopy(self.original)
+                  p = f'{g.THERMAL}/zeroc-0-step/cooling-maps/devfreq_vdd_cdev'
+                  tree[p]['trip'] = tree[f'{g.THERMAL}/zeroc-1-step/trips/active-config0']['phandle']
+                  with self.assertRaisesRegex(ValueError, 'WRONG_ZONE'):
+                      g.cooling_signature(tree, g.DEVFREQ)
+          
+              def test_patched_trip_change_rejected(self):
+                  stock = self.synthetic_stock(); patched = copy.deepcopy(stock)
+                  patched[f'{g.THERMAL}/zeroc-0-step/trips/active-config0']['temperature'] = U(50000)
+                  with self.assertRaisesRegex(ValueError, 'MAPS_NOT_STOCK'):
+                      g.verify_patch_result(stock, self.original, patched)
+          
+              def test_synthetic_patch_result_positive(self):
+                  stock = self.synthetic_stock()
+                  result = g.verify_patch_result(stock, self.original, copy.deepcopy(stock))
+                  self.assertTrue(result['stock_supplier_identity_match'])
+          
+              def test_patch_scope_exact_three_added_removed(self):
+                  result = g.tree_delta(self.original, self.synthetic_stock())
+                  self.assertEqual(len(result['nodes_added']), 3)
+                  self.assertEqual(len(result['nodes_removed']), 3)
+          
+              def test_extra_node_rejected(self):
+                  after = self.synthetic_stock(); after['/unexpected'] = {}
+                  with self.assertRaisesRegex(ValueError, 'NODE_SCOPE'):
+                      g.tree_delta(self.original, after)
+          
+              def test_stale_symbol_rejected(self):
+                  after = self.synthetic_stock(); after['/__symbols__']['devfreq_vdd_cdev'] = b'/old\0'
+                  with self.assertRaisesRegex(ValueError, 'STALE'):
+                      g.tree_delta(self.original, after)
+          
+              def test_original_source_and_patch_pins(self):
+                  data = (self.payload/'fixtures/veux.dts').read_bytes()
+                  self.assertEqual(g.git_blob(data), g.SOURCE_PINS[g.ENTRY])
+                  self.assertEqual(g.sha((self.payload/'patches/R43_STOCK_GFX.patch').read_bytes()), g.PATCH_SHA)
+                  self.assertEqual(g.sha((self.payload/'fixtures/R42_RESULT.json').read_bytes()), g.R42_RESULT_SHA)
+          
+              def test_real_git_apply_and_scope(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      root = Path(tmp)
+                      original = (self.payload/'fixtures/veux.dts').read_bytes()
+                      (root/g.ENTRY).parent.mkdir(parents=True)
+                      (root/g.ENTRY).write_bytes(original)
+                      subprocess.run(['git','init','-q',str(root)],check=True,capture_output=True)
+                      subprocess.run(['git','-C',str(root),'add',g.ENTRY],check=True,capture_output=True)
+                      patchfile = str((self.payload/'patches/R43_STOCK_GFX.patch').resolve())
+                      for args in (['git','apply','--check',patchfile], ['git','apply',patchfile]):
+                          subprocess.run(args,cwd=root,check=True,capture_output=True)
+                      self.assertTrue((root/g.NEW_DTSI).is_file())
+                      self.assertIn(b'#include "veux-gfx-stock-cooling.dtsi"', (root/g.ENTRY).read_bytes())
+                      r = subprocess.run(['git','apply','--check',patchfile],cwd=root,capture_output=True)
+                      self.assertNotEqual(r.returncode, 0)
+                      subprocess.run(['git','apply','-R',patchfile],cwd=root,check=True,capture_output=True)
+                      self.assertEqual((root/g.ENTRY).read_bytes(),original)
+                      self.assertFalse((root/g.NEW_DTSI).exists())
+          
+              def test_native_compile_commands_are_dtb_not_kernel_build(self):
+                  gcc, dtc = g.compiler_commands(Path('/source'),Path('/tmp/work'),'BEFORE')
+                  self.assertEqual(gcc[:4],['gcc','-E','-nostdinc','-undef'])
+                  self.assertIn('-D__DTS__',gcc)
+                  self.assertIn('-@',dtc)
+                  self.assertEqual(dtc[dtc.index('-H')+1], 'epapr')
+                  self.assertIn(str(Path('/source')/g.ENTRY),gcc)
+                  self.assertNotIn('-f',dtc)  # Never force broken DTB compilation.
+          
+              def test_command_failure_preserves_log(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      log = Path(tmp)/'fail.log'
+                      with self.assertRaisesRegex(ValueError,'COMMAND_FAILED'):
+                          g.run_command([sys.executable,'-c','import sys;print("diagnostic");sys.exit(7)'],Path(tmp),log)
+                      self.assertIn('diagnostic',log.read_text())
+          
+              def test_safety_flags_stay_false(self):
+                  self.assertTrue({'kernel_built','vendor_abi_proven','boot_ready','flash_allowed'} <= set(g.GATES_FALSE))
+          
+              def test_missing_inputs_fail_closed_before_source_application(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      with self.assertRaisesRegex(ValueError,'INPUT_MISSING'):
+                          g.load_inputs(Path(tmp))
+          
+              def test_dependency_escape_rejected(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      root=Path(tmp)/'source';root.mkdir()
+                      outside=Path(tmp)/'outside';outside.write_text('no')
+                      dep=Path(tmp)/'file.d';dep.write_text('out: '+str(outside)+'\n')
+                      with self.assertRaisesRegex(ValueError,'ESCAPES'):
+                          g.dependency_manifest(root,dep)
+          
+              def test_string_and_cell_boundaries(self):
+                  with self.assertRaisesRegex(ValueError,'UNALIGNED'):
+                      g.cells(b'123')
+                  with self.assertRaisesRegex(ValueError,'INVALID_STRING'):
+                      g.string(b'abc')
+                  with self.assertRaisesRegex(ValueError,'INVALID_STRING'):
+                      g.string(b'a\0b\0')
+          
+          if __name__ == '__main__':
+              unittest.main()
+          R43_R2_PAYLOAD_3
+          cat > "$R43_STAGE/patches/R43_STOCK_GFX.patch" <<'R43_R2_PAYLOAD_4'
+          diff --git a/arch/arm64/boot/dts/vendor/xiaomi/veux-gfx-stock-cooling.dtsi b/arch/arm64/boot/dts/vendor/xiaomi/veux-gfx-stock-cooling.dtsi
+          new file mode 100644
+          index 0000000..0d5ee9d
+          --- /dev/null
+          +++ b/arch/arm64/boot/dts/vendor/xiaomi/veux-gfx-stock-cooling.dtsi
+          @@ -0,0 +1,43 @@
+          +/* VEUX R43-R2 stock-GFX CDEV candidate; NOT boot/flash approved.
+          + * Stock 0x59 resolved to the AO supplier in original run 40131737405;
+          + * target: /soc/qcom,rpm-smd/rpm-regulator-smpa8/regulator-s8-level-ao.
+          + * The workflow rechecks its identity and qcom,set=1 before application.
+          + */
+          +
+          +&rpm_bus {
+          +    rpm-regulator-smpa8 {
+          +        gfx_cdev: gfx-cdev {
+          +            compatible = "qcom,regulator-cooling-device";
+          +            regulator-cdev-supply = <&S8A_LEVEL_AO>;
+          +            regulator-levels = <RPM_SMD_REGULATOR_LEVEL_NONE
+          +                                RPM_SMD_REGULATOR_LEVEL_SVS_PLUS>;
+          +            #cooling-cells = <2>;
+          +            status = "okay";
+          +        };
+          +    };
+          +};
+          +
+          +&thermal_zones {
+          +    zeroc-0-step {
+          +        cooling-maps {
+          +            /delete-node/ devfreq_vdd_cdev;
+          +            gfx_vdd_cdev {
+          +                trip = <&zeroc_0_trip>;
+          +                cooling-device = <&gfx_cdev 1 1>;
+          +            };
+          +        };
+          +    };
+          +    zeroc-1-step {
+          +        cooling-maps {
+          +            /delete-node/ devfreq_vdd_cdev;
+          +            gfx_vdd_cdev {
+          +                trip = <&zeroc_1_trip>;
+          +                cooling-device = <&gfx_cdev 1 1>;
+          +            };
+          +        };
+          +    };
+          +};
+          +
+          +&soc {
+          +    /delete-node/ devfreq-vdd-cdev;
+          +};
+          diff --git a/arch/arm64/boot/dts/vendor/xiaomi/veux.dts b/arch/arm64/boot/dts/vendor/xiaomi/veux.dts
+          index dc0f1bf..1918d81 100644
+          --- a/arch/arm64/boot/dts/vendor/xiaomi/veux.dts
+          +++ b/arch/arm64/boot/dts/vendor/xiaomi/veux.dts
+          @@ -4,6 +4,7 @@
+           #include "veux-pinctrl.dtsi"
+           #include "veux-qupv3.dtsi"
+           #include "veux-regulators-pm6125.dtsi"
+          +#include "veux-gfx-stock-cooling.dtsi"
+           #include "veux-thermal-modem.dtsi"
+           #include "veux-usb.dtsi"
+           #include "veux-vidc.dtsi"
+          R43_R2_PAYLOAD_4
+          cat > "$R43_STAGE/fixtures/veux.dts" <<'R43_R2_PAYLOAD_5'
+          #include "../qcom/blair.dts"
+          #include "veux-audio.dtsi"
+          #include "veux-camera.dtsi"
+          #include "veux-pinctrl.dtsi"
+          #include "veux-qupv3.dtsi"
+          #include "veux-regulators-pm6125.dtsi"
+          #include "veux-thermal-modem.dtsi"
+          #include "veux-usb.dtsi"
+          #include "veux-vidc.dtsi"
+          
+          &adsp_mem {
+          	compatible = "removed-dma-pool";
+          	/delete-property/ reusable;
+          	no-map;
+          };
+          
+          &pil_adsp_mem {
+          	reg = <0x0 0x86700000 0x0 0x2c00000>;
+          };
+          
+          &pil_cdsp_mem {
+          	reg = <0x0 0x89300000 0x0 0x1e00000>;
+          };
+          
+          &pil_video_mem {
+          	reg = <0x0 0x8b100000 0x0 0x500000>;
+          };
+          
+          &pil_ipa_fw_mem {
+          	reg = <0x0 0x8b600000 0x0 0x10000>;
+          };
+          
+          &pil_ipa_gsi_mem {
+          	reg = <0x0 0x8b610000 0x0 0xa000>;
+          };
+          
+          &pil_gpu_micro_code_mem {
+          	reg = <0x0 0x8b61a000 0x0 0x2000>;
+          };
+          
+          &soc {
+          	qcom,rmtfs_sharedmem@0 {
+          		reg = <0x0 0x300000>;
+          	};
+          };
+          
+          &qcom {
+          	/delete-property/ mem-type;
+          	/delete-property/ console-size;
+          	record-size = <0x100000>;
+          	pmsg-size = <0x100000>;
+          	max-reason = <4>;
+          };
+          
+          &ufshc_mem {
+          	spm-level = <3>;
+          };
+          R43_R2_PAYLOAD_5
+          cat > "$R43_STAGE/fixtures/R42_RESULT.json" <<'R43_R2_PAYLOAD_6'
+          {
+            "schema": "VEUX_R42_R2_STOCK_GFX_EVIDENCE_V1",
+            "r39_sha256": "745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528",
+            "r37_sha256": "15491bbb02140204a1e3e278d279668edb66ef7fe8052d0decd80f47b1e9a32f",
+            "r20_dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
+            "stock_gfx_path": "/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev",
+            "r20_gfx_path": "/soc/devfreq-vdd-cdev",
+            "stock_properties_hex": {
+              "#cooling-cells": "00000002",
+              "compatible": "71636f6d2c726567756c61746f722d636f6f6c696e672d64657669636500",
+              "phandle": "00000051",
+              "regulator-cdev-supply": "00000059",
+              "regulator-levels": "00000000000000c0",
+              "status": "6f6b617900"
+            },
+            "stock_regulator_levels_hex": "00000000000000c0",
+            "supply_context_hex": {
+              "/soc/qcom,rpm-smd/rpm-regulator-smpa8": {
+                "compatible": "71636f6d2c72706d2d736d642d726567756c61746f722d7265736f7572636500",
+                "status": "6f6b617900"
+              },
+              "/soc/qcom,rpm-smd": {
+                "compatible": "71636f6d2c72706d2d736d6400"
+              }
+            },
+            "cooling_maps": [
+              {
+                "tree": "STOCK",
+                "map_path": "/soc/thermal-zones/zeroc-0-step/cooling-maps/gfx_vdd_cdev",
+                "provider_path": "/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev",
+                "phandle": 81,
+                "min_state": 1,
+                "max_state": 1
+              },
+              {
+                "tree": "STOCK",
+                "map_path": "/soc/thermal-zones/zeroc-1-step/cooling-maps/gfx_vdd_cdev",
+                "provider_path": "/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev",
+                "phandle": 81,
+                "min_state": 1,
+                "max_state": 1
+              },
+              {
+                "tree": "R20",
+                "map_path": "/soc/thermal-zones/zeroc-0-step/cooling-maps/devfreq_vdd_cdev",
+                "provider_path": "/soc/devfreq-vdd-cdev",
+                "phandle": 81,
+                "min_state": 2,
+                "max_state": 2
+              },
+              {
+                "tree": "R20",
+                "map_path": "/soc/thermal-zones/zeroc-1-step/cooling-maps/devfreq_vdd_cdev",
+                "provider_path": "/soc/devfreq-vdd-cdev",
+                "phandle": 81,
+                "min_state": 2,
+                "max_state": 2
+              }
+            ],
+            "source_patch_applied": false,
+            "kernel_built": false,
+            "boot_ready": false,
+            "flash_allowed": false,
+            "vendor_abi_proven": false,
+            "runtime_driver_probe_proven": false,
+            "source_dts_path_proven": false,
+            "bootloader_dtbo0_choice_proven": false,
+            "result": "STOCK_GFX_PROPERTIES_EXTRACTED_NOT_PATCHED"
+          }
+          R43_R2_PAYLOAD_6
+          cat > "$R43_STAGE/tests/test_r43_r2_ao.py" <<'R43_R2_PAYLOAD_7'
+          #!/usr/bin/env python3
+          """R43-R2 AO regressions. Real R20 fixture + original failure record.
+          
+          The failure record proves the Stock supplier PATH, not its complete signature.
+          Synthetic provider additions test guards only, never assert a real Stock boot.
+          """
+          import copy
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import struct
+          import sys
+          import tempfile
+          import unittest
+          from contextlib import redirect_stderr
+          from unittest.mock import patch
+          
+          sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+          import r43_gate as g
+          
+          U = lambda *values: struct.pack('>' + 'I' * len(values), *values)
+          FAILURE_SHA = 'ce14119df672e4e06c937b908da14caff6f3267a97f6ccca146f0bd637516810'
+          NON_AO = '/soc/qcom,rpm-smd/rpm-regulator-smpa8/regulator-s8-level'
+          
+          
+          class AOSupplyRegression(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.payload = Path(__file__).resolve().parents[1]
+                  cls.original = g.fdt.fdt_properties(Path(os.environ['R42_FIXTURE']).read_bytes())
+                  cls.failure_bytes = (cls.payload / 'fixtures/R43_ORIGINAL_FAILURE.json').read_bytes()
+                  cls.failure = json.loads(cls.failure_bytes)
+          
+              def mock_stock_provider(self):
+                  """Synthetic consumer on genuine R20 supplier data; NOT real Stock proof."""
+                  tree = copy.deepcopy(self.original)
+                  tree[g.STOCK_GFX] = {
+                      'compatible': b'qcom,regulator-cooling-device\0',
+                      'status': b'okay\0', '#cooling-cells': U(2),
+                      'regulator-levels': U(0, 192),
+                      'regulator-cdev-supply': tree[g.SUPPLY]['phandle'],
+                  }
+                  return tree
+          
+              def test_original_failure_record_hash(self):
+                  self.assertEqual(hashlib.sha256(self.failure_bytes).hexdigest(), FAILURE_SHA)
+                  self.assertEqual(self.failure['result'], 'BLOCKED_NOT_APPROVED')
+          
+              def test_original_failure_resolves_ao_not_old_candidate(self):
+                  prefix = 'STOCK_SUPPLY_NOT_S8_LEVEL:'
+                  self.assertTrue(self.failure['reason'].startswith(prefix))
+                  observed = self.failure['reason'][len(prefix):]
+                  self.assertEqual(observed, g.SUPPLY)
+                  self.assertNotEqual(observed, NON_AO)
+          
+              def test_real_ao_properties_are_not_non_ao_properties(self):
+                  ao, non_ao = self.original[g.SUPPLY], self.original[NON_AO]
+                  self.assertEqual(ao['qcom,set'], U(1))
+                  self.assertEqual(non_ao['qcom,set'], U(3))
+                  self.assertEqual(ao['regulator-name'], b'pm6125_s8_level_ao\0')
+                  self.assertNotEqual(ao['phandle'], non_ao['phandle'])
+          
+              def test_real_ao_symbol_and_handle(self):
+                  symbol_path = self.original['/__symbols__']['S8A_LEVEL_AO']
+                  self.assertEqual(symbol_path, (g.SUPPLY + '\0').encode())
+                  self.assertEqual(g.fdt.phandle(self.original[g.SUPPLY]), 0x169)
+                  self.assertEqual(g.target(self.original, U(0x169)), g.SUPPLY)
+          
+              def test_non_ao_supplier_rejected_even_on_same_gpu_rail(self):
+                  tree = self.mock_stock_provider()
+                  tree[g.STOCK_GFX]['regulator-cdev-supply'] = tree[NON_AO]['phandle']
+                  with self.assertRaisesRegex(ValueError, 'STOCK_SUPPLY_NOT_S8_LEVEL_AO:'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_qcom_set_three_is_not_accepted_as_ao(self):
+                  tree = self.mock_stock_provider()
+                  tree[g.SUPPLY]['qcom,set'] = U(3)
+                  with self.assertRaisesRegex(ValueError, 'SUPPLIER_SET'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_non_ao_regulator_name_cannot_hide_behind_ao_path(self):
+                  tree = self.mock_stock_provider()
+                  tree[g.SUPPLY]['regulator-name'] = b'pm6125_s8_level\0'
+                  with self.assertRaisesRegex(ValueError, 'SUPPLIER_NAME'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_synthetic_ao_guard_positive_still_rechecks_signature(self):
+                  r = g.resolve_stock_supply(self.mock_stock_provider(), self.original)
+                  self.assertEqual(r['r20_symbol'], 'S8A_LEVEL_AO')
+                  self.assertEqual(r['stock_supplier'], r['r20_supplier'])
+                  self.assertEqual(r['stock_supplier']['qcom_set'], 1)
+          
+              def test_ao_voltage_range_mismatch_still_blocks(self):
+                  tree = self.mock_stock_provider()
+                  tree[g.SUPPLY]['regulator-max-microvolt'] = U(384)
+                  with self.assertRaisesRegex(ValueError, 'SUPPLIER_SEMANTIC_DIFFERENCE'):
+                      g.resolve_stock_supply(tree, self.original)
+          
+              def test_ao_symbol_pointing_to_non_ao_blocks(self):
+                  r20 = copy.deepcopy(self.original)
+                  r20['/__symbols__']['S8A_LEVEL_AO'] = (NON_AO + '\0').encode()
+                  with self.assertRaisesRegex(ValueError, 'R20_SYMBOL_S8A_LEVEL_AO_MISMATCH'):
+                      g.resolve_stock_supply(self.mock_stock_provider(), r20)
+          
+              def test_candidate_uses_only_symbolic_ao_supply(self):
+                  text = (self.payload / 'patches/R43_STOCK_GFX.patch').read_text()
+                  supply_lines = [line for line in text.splitlines()
+                                  if line.startswith('+') and 'regulator-cdev-supply' in line]
+                  self.assertEqual(len(supply_lines), 1)
+                  self.assertEqual(supply_lines[0].strip('+ '),
+                                   'regulator-cdev-supply = <&S8A_LEVEL_AO>;')
+                  self.assertNotIn('<&S8A_LEVEL>;', text)
+                  self.assertNotIn('regulator-cdev-supply = <0x59>', text)
+          
+              def test_original_failure_keeps_every_safety_flag_closed(self):
+                  for key in g.GATES_FALSE:
+                      with self.subTest(key=key):
+                          self.assertIs(self.failure[key], False)
+          
+              def test_failure_handler_writes_report_and_returns_failure(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      out = Path(tmp) / 'report'
+                      argv = ['r43_gate.py', '--root', tmp, '--source', tmp,
+                              '--payload', tmp, '--work', tmp, '--out', str(out)]
+                      with patch.object(sys, 'argv', argv), patch.object(g, 'run',
+                              side_effect=ValueError('SUPPLIER_SET')), redirect_stderr(io.StringIO()):
+                          self.assertEqual(g.main(), 1)
+                      failure = json.loads((out / 'R43_FAILURE.json').read_text())
+                      self.assertEqual(failure['schema'], 'VEUX_R43_R2_FAILURE_V1')
+                      self.assertEqual(failure['reason'], 'SUPPLIER_SET')
+                      self.assertIs(failure['flash_allowed'], False)
+                      self.assertFalse((out / 'R43_RESULT.json').exists())
+          
+              def test_observation_is_recorded_before_strict_supplier_guard(self):
+                  # Test ordering in the actual runner without pretending to have Stock DTB locally.
+                  import ast
+                  source = (self.payload / 'scripts/r43_gate.py').read_text()
+                  module = ast.parse(source)
+                  run = next(node for node in module.body if isinstance(node, ast.FunctionDef)
+                             and node.name == 'run')
+                  observations, decisions = [], []
+                  for node in ast.walk(run):
+                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                          if node.func.id == 'write_json' and node.args and any(
+                              isinstance(x, ast.Constant) and x.value == 'R43_SUPPLY_OBSERVED.json'
+                              for x in ast.walk(node.args[0])):
+                              observations.append(node.lineno)
+                          if node.func.id == 'resolve_stock_supply':
+                              decisions.append(node.lineno)
+                  self.assertEqual(len(observations), 1)
+                  self.assertEqual(len(decisions), 1)
+                  self.assertLess(observations[0], decisions[0])
+          
+          
+          if __name__ == '__main__':
+              unittest.main()
+          R43_R2_PAYLOAD_7
+          cat > "$R43_STAGE/fixtures/R43_ORIGINAL_FAILURE.json" <<'R43_R2_PAYLOAD_8'
+          {
+            "schema": "VEUX_R43_FAILURE_V1",
+            "result": "BLOCKED_NOT_APPROVED",
+            "error_type": "ValueError",
+            "reason": "STOCK_SUPPLY_NOT_S8_LEVEL:/soc/qcom,rpm-smd/rpm-regulator-smpa8/regulator-s8-level-ao",
+            "kernel_built": false,
+            "vendor_abi_proven": false,
+            "runtime_driver_probe_proven": false,
+            "bootloader_dtbo0_choice_proven": false,
+            "boot_ready": false,
+            "flash_allowed": false,
+            "brene_modified": false,
+            "walt_modified": false,
+            "project_repository_modified": false
+          }
+          R43_R2_PAYLOAD_8
+          printf '%s  %s\n' \
+            '4dbb740edb849ccbd007503a6eac05f43f62c707a9b251e4eeee4480b0729cbe' "$R43_STAGE/scripts/r42_stock_capture.py" \
+            '7611ec43c49dd43f17bc2b230450134f9296b66a3670043d431accc6f2acc317' "$R43_STAGE/scripts/r43_gate.py" \
+            'fa344f4bcafa1d959ee074f7585653d0a50bb415c809608f4f65b0d8aabdddfd' "$R43_STAGE/tests/test_r42_capture.py" \
+            '5ad23b64613ec227ba40b9ee54a219e713dffbb9fd2355d7c91ae50bff1f2040' "$R43_STAGE/tests/test_r43_gate.py" \
+            '4842c703a5ae3594a4850ae6d5d9b22c0f882394e844929d2ff149d948cd74fc' "$R43_STAGE/patches/R43_STOCK_GFX.patch" \
+            '1f4508698c0b21e1b0e164cc6073b6d107e34f28fe1f5237dba139160512f355' "$R43_STAGE/fixtures/veux.dts" \
+            'd2c67a6c55d75ea1004bf64c65ab9961f67deb87025e7eabd5375e4108db8dfd' "$R43_STAGE/fixtures/R42_RESULT.json" \
+            '2dfcaf2ff0fb461d7aeb3482e1ca341e11a9328129bc333d1642f1ff1b3bd8e2' "$R43_STAGE/tests/test_r43_r2_ao.py" \
+            'ce14119df672e4e06c937b908da14caff6f3267a97f6ccca146f0bd637516810' "$R43_STAGE/fixtures/R43_ORIGINAL_FAILURE.json" | sha256sum -c -
+          python3 -B - "$R43_STAGE" <<'R43_SETUP'
+          import ast, io, pathlib, sys, zipfile
+          p=pathlib.Path(sys.argv[1])
+          for f in sorted(p.rglob('*.py')):
+              ast.parse(f.read_text(encoding='utf-8'), filename=str(f))
+          sys.path.insert(0,str(p/'scripts'))
+          import r43_gate as g
+          import r42_stock_capture as fdt
+          with zipfile.ZipFile('VEUX_R39_R2_MEMORY_ABI_MAIN.zip') as z:
+              tool=z.read('tools/actionlint')
+          g.require(g.sha(tool)=='c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4','ACTIONLINT_BINARY_HASH')
+          (p/'actionlint').write_bytes(tool)
+          (p/'actionlint').chmod(0o755)
+          r38=fdt.members(pathlib.Path('VEUX_R39_R2_MEMORY_ABI_MAIN.zip'),['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']
+          r20=fdt.members(io.BytesIO(r38),['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+          g.require(g.sha(r20)==fdt.R20_DTB_SHA256,'ORIGINAL_R20_FIXTURE_HASH')
+          (p/'fixtures/R20_VEUX.dtb').write_bytes(r20)
+          print('R43_PAYLOAD_PYTHON_SYNTAX_INPUT_HASHES=PASS')
+          R43_SETUP
+      - name: Require real ShellCheck, GCC, DTC and fdtoverlay
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in shellcheck gcc dtc fdtoverlay; do
+            if ! command -v "$tool" >/dev/null 2>&1; then missing=1; fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends shellcheck gcc device-tree-compiler
+          fi
+          for tool in shellcheck gcc dtc fdtoverlay; do command -v "$tool"; done
+          {
+            shellcheck --version
+            gcc --version
+            dtc --version
+            "$R43_STAGE/actionlint" -version
+          } > "$R43_REPORT/R43_TOOL_VERSIONS.log"
+      - name: Lint this exact standalone workflow with actionlint and ShellCheck
+        run: |
+          set -euo pipefail
+          test -s '.github/workflows/VEUX_R43_R2_STOCK_GFX_AO_PATCH_DTB_GATE.yml'
+          "$R43_STAGE/actionlint" -version | grep -Fx '1.7.12'
+          "$R43_STAGE/actionlint" -color=false -shellcheck="$(command -v shellcheck)" \
+            '.github/workflows/VEUX_R43_R2_STOCK_GFX_AO_PATCH_DTB_GATE.yml' \
+            2>&1 | tee "$R43_REPORT/R43_ACTIONLINT_SHELLCHECK.log"
+          printf '%s\n' 'ACTIONLINT_1.7.12_AND_REAL_SHELLCHECK=PASS' >> "$R43_REPORT/R43_ACTIONLINT_SHELLCHECK.log"
+      - name: Run 70 original-fixture, AO supply, patch and negative tests
+        run: |
+          set -euo pipefail
+          export R42_FIXTURE="$R43_STAGE/fixtures/R20_VEUX.dtb"
+          export R42_ROOT="$GITHUB_WORKSPACE/project"
+          python3 -B -W error::ResourceWarning -m unittest discover \
+            -s "$R43_STAGE/tests" -p 'test_*.py' -v 2>&1 | tee "$R43_REPORT/R43_TESTS.log"
+          grep -E '^Ran 70 tests in ' "$R43_REPORT/R43_TESTS.log"
+          grep -Fx 'OK' "$R43_REPORT/R43_TESTS.log"
+      - name: Checkout pinned Qualcomm ancestor into separate source directory
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            arch/arm64/boot/dts
+            include
+            scripts/dtc
+            drivers/thermal/qcom
+      - name: Resolve Stock AO supply, compile original VEUX, apply isolated AO patch and compile again
+        run: |
+          set -euo pipefail
+          python3 -B "$R43_STAGE/scripts/r43_gate.py" \
+            --root "$GITHUB_WORKSPACE/project" \
+            --source "$GITHUB_WORKSPACE/source" \
+            --payload "$R43_STAGE" --work "$R43_WORK" --out "$R43_REPORT" \
+            2>&1 | tee "$R43_REPORT/R43_EXECUTION.log"
+      - name: Strict result, source scope and no-flash guards
+        run: |
+          set -euo pipefail
+          python3 - "$R43_REPORT" <<'R43_VERIFY'
+          import json, pathlib, sys
+          p=pathlib.Path(sys.argv[1])
+          r=json.loads((p/'R43_RESULT.json').read_text())
+          if r.get('schema')!='VEUX_R43_R2_AO_SUPPLY_PATCH_DTB_V1':raise SystemExit('BAD_SCHEMA')
+          if r.get('result')!='SUPPLY_PROVEN_SOURCE_PATCH_COMPILED_STOCK_GPU_MATCH':raise SystemExit('NOT_PASSED')
+          for k in ('stock_supply_condition_verified','source_patch_applied_to_isolated_checkout',
+                    'baseline_full_tree_matches_original_r20','native_veux_dtb_before_after_compiled',
+                    'stock_gpu_semantics_match_after_dtbo0','unrelated_source_dependencies_unchanged'):
+              if r.get(k) is not True:raise SystemExit('MISSING_GATE:'+k)
+          for k in ('kernel_built','vendor_abi_proven','runtime_driver_probe_proven','bootloader_dtbo0_choice_proven',
+                    'boot_ready','flash_allowed','brene_modified','walt_modified','project_repository_modified',
+                    'build_output_uploaded'):
+              if r.get(k) is not False:raise SystemExit('UNSAFE_FLAG:'+k)
+          required={'R43_SUPPLY_OBSERVED.json','R43_SUPPLY_PROOF.json','R43_BASELINE_MATCH.json','R43_DEPENDENCIES.json',
+                    'R43_TREE_DELTA.json','R43_COOLING_COMPARISON.json','R43_STOCK_GFX_SOURCE.patch',
+                    'R43_VEUX_GFX_SOURCE.dtsi.txt','R43_BEFORE_CPP.log','R43_BEFORE_DTC.log',
+                    'R43_AFTER_CPP.log','R43_AFTER_DTC.log','R43_TESTS.log','R43_BERICHT_DE.txt'}
+          if not required <= {f.name for f in p.iterdir() if f.is_file()}:raise SystemExit('MISSING_ARTIFACTS')
+          if r.get('revision')!='R43-R2' or r.get('previous_failure_run')!=40131737405:
+              raise SystemExit('REVISION_OR_ORIGINAL_FAILURE_PROVENANCE')
+          s=json.loads((p/'R43_SUPPLY_PROOF.json').read_text())
+          if (s.get('r20_symbol')!='S8A_LEVEL_AO' or
+              not s.get('stock_supply_path','').endswith('/regulator-s8-level-ao') or
+              s.get('stock_supplier',{}).get('qcom_set')!=1 or
+              s.get('stock_supplier')!=s.get('r20_supplier') or
+              s.get('candidate_supply_condition_verified') is not True):
+              raise SystemExit('AO_SUPPLY_RESULT_NOT_VERIFIED')
+          if (p/'R43_FAILURE.json').exists():raise SystemExit('FAILURE_PRESENT')
+          if any(f.suffix in ('.img','.dtb','.dtbo','.ko') or f.name in ('Image','vmlinux') for f in p.rglob('*')):
+              raise SystemExit('FLASHABLE_OUTPUT_FORBIDDEN')
+          print('R43_SOURCE_PATCH_AND_DTB_GATES=PASS; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          R43_VERIFY
+          test -z "$(git status --porcelain)"
+      - name: Always preserve outcome, checksums and summary, including on failure
+        if: ${{ always() }}
+        working-directory: ${{ github.workspace }}
+        env:
+          R43_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$R43_REPORT"
+          python3 - <<'R43_FINALIZE'
+          import hashlib,json,os,pathlib
+          p=pathlib.Path(os.environ['R43_REPORT'])
+          state=os.environ['R43_JOB_STATUS']
+          (p/'R43_WORKFLOW_STATUS.json').write_text(json.dumps({'job_status_before_upload':state,
+              'boot_ready':False,'flash_allowed':False},indent=2)+'\n')
+          lines=[]
+          for f in sorted(p.iterdir()):
+              if f.is_file() and f.name!='SHA256SUMS.txt':
+                  lines.append(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name)
+          (p/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a',encoding='utf-8') as summary:
+              summary.write('## R43-R2 AO: '+state+'\n\n')
+              report=p/'R43_BERICHT_DE.txt'
+              if state=='success' and report.is_file():summary.write(report.read_text())
+              else:
+                  summary.write('BLOCKIERT / NICHT FREIGEGEBEN. Original-Fehler und Logs im Artefakt.\n')
+                  failure=p/'R43_FAILURE.json'
+                  if failure.is_file():summary.write('\n'+json.loads(failure.read_text())['reason']+'\n')
+              summary.write('\nBOOT_READY=NO; FLASH_ALLOWED=NO; VENDOR_ABI_UNPROVEN.\n')
+          R43_FINALIZE
+          (cd "$R43_REPORT" && sha256sum -c SHA256SUMS.txt)
+      - name: Upload source patch and evidence only, never flashable binaries
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R43-R2-AO-SUPPLY-PATCH-DTB-${{ github.run_id }}
+          path: ${{ env.R43_REPORT }}/
+          retention-days: 14
+          if-no-files-found: error
