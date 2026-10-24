@@ -1,0 +1,167 @@
+name: VEUX R37 - Device DTBO Candidate and Offline Merge Gate - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r37-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r37:
+    name: Verify unique VEUX DTBO and offline compare UFS/PMIC - NO FLASH
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R37_ZIP: VEUX_R37_DTBO_OFFLINE_MAIN.zip
+      R37_DEVICE: VEUX_R37_DEVICE_EVIDENCE.zip
+      R37_ZIP_SHA256: '3ba5a168a59b60041882026447c65ac46a379939a93556940b514baf24b08d14'
+      R37_DIR: /tmp/veux-r37-input
+      R37_OUT: /tmp/veux-r37-results
+    steps:
+      - name: Checkout project main without write credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate root ZIP and unpack safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R37_ZIP"
+          test -s "$R37_DEVICE"
+          printf '%s  %s\n' "$R37_ZIP_SHA256" "$R37_ZIP" | sha256sum -c -
+          mkdir -p "$R37_DIR" "$R37_OUT"
+          python3 - "$R37_ZIP" "$R37_DIR" <<'PY_R37_EXTRACT'
+          import pathlib,stat,sys,zipfile
+          archive=pathlib.Path(sys.argv[1]);target=pathlib.Path(sys.argv[2]);uncompressed=0
+          with zipfile.ZipFile(archive) as z:
+              infos=z.infolist()
+              names=[f.filename for f in infos]
+              if len(names)!=11 or len(names)!=len(set(names)):
+                  raise SystemExit('R37_MAIN_ZIP_FILE_SET_OR_DUPLICATE')
+              for info in infos:
+                  p=pathlib.PurePosixPath(info.filename)
+                  if info.is_dir() or p.is_absolute() or '..' in p.parts or '\\' in info.filename or stat.S_ISLNK(info.external_attr>>16):
+                      raise SystemExit('R37_MAIN_ZIP_UNSAFE_PATH')
+                  if info.file_size>7_000_000 or info.compress_size>7_000_000:
+                      raise SystemExit('R37_MAIN_ZIP_MEMBER_TOO_BIG')
+                  uncompressed+=info.file_size
+                  if uncompressed>12_000_000:raise SystemExit('R37_MAIN_ZIP_SIZE_LIMIT')
+              if z.testzip() is not None:raise SystemExit('R37_MAIN_ZIP_CRC_FAILURE')
+              z.extractall(target)
+          print('R37_ROOT_ZIP_SAFE_EXTRACTION=PASS')
+          PY_R37_EXTRACT
+
+      - name: Pin original evidence and all package hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R37_DIR" <<'PY_R37_MANIFEST'
+          import pathlib,sys
+          pkg=pathlib.Path(sys.argv[1]);sys.path.insert(0,str(pkg/'scripts'))
+          import r37_gate
+          r37_gate.verify_bundle(pkg)
+          _r33, table=r37_gate.verify_r33(pkg)
+          _r34, nodes=r37_gate.verify_r34_r36(pkg)
+          assert len(table)==16 and len(nodes)==27
+          print('R37_ORIGINAL_R33_R34_R36_PIN=PASS; DTBO_ENTRIES=16; SAFE_NODES=27')
+          PY_R37_MANIFEST
+
+      - name: Static Green actionlint 1.7.12 plus real runner ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R37_DIR/tools/actionlint"
+          "$R37_DIR/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R37_DTBO_OFFLINE_GATE*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]] || [[ "${workflows[0]}" != '.github/workflows/VEUX_R37_DTBO_OFFLINE_GATE.yml' ]]; then
+            echo 'R37_WORKFLOW_FILENAME_MUST_MATCH_EXACTLY' >&2
+            exit 1
+          fi
+          "$R37_DIR/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R37_ACTIONLINT_SHELLCHECK=PASS'
+
+      - name: Python syntax and 50 defensive regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R37_DIR" <<'PY_R37_COMPILE'
+          import pathlib,sys
+          pkg=pathlib.Path(sys.argv[1])
+          for rel in ('scripts/r37_gate.py','scripts/r34_gate.py','scripts/VEUX_R37_CAPTURE_GERAET.py','tests/test_r37.py'):
+              path=pkg/rel
+              compile(path.read_bytes(),str(path),'exec')
+          print('R37_PYTHON_SYNTAX=PASS')
+          PY_R37_COMPILE
+          python3 -B -m unittest discover -v -s "$R37_DIR/tests" -p test_r37.py 2>&1 | tee "$R37_OUT/R37_TESTS.log"
+          echo 'R37_50_DEFENSIVE_TESTS=PASS'
+
+      - name: Require genuine fdtoverlay without touching kernel sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          fi
+          command -v fdtoverlay
+          fdtoverlay --version || fdtoverlay --help >/dev/null 2>&1 || true
+          echo 'R37_OFFLINE_DEVICE_TREE_TOOL=AVAILABLE'
+
+      - name: Verify raw active stock DTBO and apply to stock and R20 offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R37_DIR/scripts/r37_gate.py" \
+            --bundle "$R37_DIR" \
+            --device-zip "$GITHUB_WORKSPACE/$R37_DEVICE" \
+            --out "$R37_OUT"
+          python3 - "$R37_OUT/R37_RESULT.json" <<'PY_R37_GUARD'
+          import json,sys
+          r=json.load(open(sys.argv[1],encoding='utf8'))
+          assert r['schema']=='VEUX_R37_DTBO_CANDIDATE_OFFLINE_MERGE_GATE_V1'
+          assert r['status']=='R37_RAW_STOCK_DTBO_AND_OFFLINE_MERGE_ANALYZED_BOOT_BLOCKED'
+          assert r['unique_root_metadata_candidate_index']==0
+          assert r['r33_dtbo_entries_per_slot']==16
+          assert r['r37_new_device_evidence_present'] is True
+          for k in ('dtbo_bootloader_choice_proven','r20_live_probe_proven',
+                    'vendor_abi_proven','boot_ready','flash_allowed',
+                    'kernel_built','source_patch_created','device_modified','brene_changed'):
+              assert r[k] is False,k
+          print('R37_16_DTBO_AND_RAW_APPLY_DIAGNOSTIC=PASS; BOOT=NO; FLASH=NO')
+          PY_R37_GUARD
+          cat "$R37_OUT/R37_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check report hashes and forbid bootable or flashable outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R37_OUT/R37_RESULT.json"
+          test -s "$R37_OUT/R37_DTBO_16_INDEX.csv"
+          test -s "$R37_OUT/R37_BERICHT_DE.txt"
+          (cd "$R37_OUT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R37_OUT" -type f \( -name '*.dtb' -o -name '*.dtbo' -o -name '*.img' -o -name '*.ko' -o -name '*.zip' -o -name '*.sh' \) | grep -q .; then
+            echo 'R37_FORBIDDEN_INSTALL_FLASH_OR_RAW_FDT_ARTIFACT' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'R37_REPOSITORY_MODIFIED' >&2
+            exit 1
+          fi
+          echo 'R37_REPO_UNCHANGED=YES; NO_KERNEL_BUILD=YES; NO_FLASH=YES'
+
+      - name: Upload read-only R37 report with separate stock and R20 merge matrices
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R37-DTBO-OFFLINE-RESULT-${{ github.run_id }}
+          path: ${{ env.R37_OUT }}
+          retention-days: 14
+          if-no-files-found: error
