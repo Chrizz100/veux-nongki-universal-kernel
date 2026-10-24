@@ -1,0 +1,623 @@
+name: VEUX R41 GPU Thermal Config Source Proof - NO BUILD NO FLASH
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r41-thermal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r41:
+    name: Pinned R20/Stock GPU cooling DT and effective config, read-only
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R41_STAGE: /tmp/veux-r41-stage
+      R41_REPORT: /tmp/veux-r41-report
+    steps:
+      - name: Checkout exactly this GitHub repository read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Pin the already uploaded R39 and R26 evidence and prepare R41 runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s VEUX_R37_DEVICE_EVIDENCE.zip
+          printf '%s  %s\n' \
+            '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528' 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip' \
+            '1eb9edcf361e2c5ada4316768ddf3b70e9a4a853fec81b99c8d92d0f10f198eb' 'VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip' \
+            | sha256sum -c -
+          mkdir -p "$R41_STAGE/tests" "$R41_REPORT"
+          cat > "$R41_STAGE/r41_gate.py" <<'PY_R41_ENGINE'
+          #!/usr/bin/env python3
+          """R41 VEUX read-only GPU cold/thermal DT-to-buildconfig provenance gate.
+          
+          Stock and R20 DTBs are offline merged with *candidate* DTBO0. This is not
+          bootloader selection, module probing, runtime validation or a flash gate.
+          """
+          from __future__ import annotations
+          import argparse
+          import csv
+          import hashlib
+          import io
+          import json
+          from pathlib import Path, PurePosixPath
+          import re
+          import stat
+          import struct
+          import sys
+          import tempfile
+          import zipfile
+          
+          R39_PIN = '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R26_PIN = '1eb9edcf361e2c5ada4316768ddf3b70e9a4a853fec81b99c8d92d0f10f198eb'
+          R20_DTB_PIN = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+          CONFIG_PINS = {
+              'fixtures/R20_REAL_BUILD_CONFIG.config': '7fa8abbe8e6496ec1613df60fa33da01f1614121a642a780ff909cd438ca6ffe',
+              'fixtures/VEUX_R22_RUNNING_KERNEL_CONFIG.config': '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4',
+              'fixtures/R20_BUILD_RESULT.json': '1ac165d7faed60af2c3ab43b086a4693d5a7dddace6026c39764ef73433aab19',
+          }
+          R26_NAMES = {
+              'R26_R2_START_HIER_DE.txt', 'R26_START_HIER_DE.txt', 'SHA256SUMS.txt',
+              'fixtures/R20_BUILD_RESULT.json', 'fixtures/R20_REAL_BUILD_CONFIG.config',
+              'fixtures/R20_REAL_Module.symvers', 'fixtures/R21_IMPORTS.csv',
+              'fixtures/VEUX_R22_RUNNING_KERNEL_CONFIG.config', 'r26_abi_ab_probe.py',
+              'tests/test_r26_abi_ab_probe.py', 'tests/test_r26_r2_symvers_attestation.py',
+          }
+          GFX_PATH = '/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev'
+          GFX_DISABLED_PATH = '/soc/qcom,rpm-smd/rpm-regulator-smpa3/gfx-cdev'
+          REG_COMPAT = 'qcom,regulator-cooling-device'
+          DEV_COMPAT = 'qcom,devfreq-vdd-cooling-device'
+          CFG_REG = 'CONFIG_REGULATOR_COOLING_DEVICE'
+          CFG_DEV = 'CONFIG_QTI_DEVFREQ_VDD_COOLING_DEVICE'
+          SCHEMA = 'VEUX_R41_GPU_THERMAL_BUILD_CONFIG_PINNED_V1'
+          SOURCE_COMMIT = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'
+          SOURCE_BLOBS = {
+              'drivers/thermal/qcom/Kconfig': 'ba04b3c13c39c2d12513520562950822cf3a300f',
+              'drivers/thermal/qcom/Makefile': '6127db42633c5b94e4125b64094e6b83997ef75c',
+              'arch/arm64/boot/dts/vendor/qcom/holi-thermal.dtsi': '2ba52043e83f3cff785cdac67cefa89980813c4b',
+          }
+          
+          
+          def digest(b: bytes) -> str:
+              return hashlib.sha256(b).hexdigest()
+          
+          
+          def pin_file(path: Path, sha: str) -> None:
+              if not path.is_file() or digest(path.read_bytes()) != sha:
+                  raise ValueError('R41_INPUT_SHA256_MISMATCH:' + path.name)
+          
+          
+          def checked_zip(path: Path, expected: set[str], max_input=2_000_000,
+                          max_output=4_000_000) -> dict[str, bytes]:
+              if not path.is_file() or path.stat().st_size > max_input:
+                  raise ValueError('R41_ZIP_SIZE:' + path.name)
+              with zipfile.ZipFile(path) as z:
+                  items = z.infolist()
+                  names = [m.filename for m in items]
+                  if len(names) != len(expected) or len(set(names)) != len(names) or set(names) != expected:
+                      raise ValueError('R41_ZIP_MEMBER_SET:' + path.name)
+                  total = 0
+                  for m in items:
+                      p = PurePosixPath(m.filename)
+                      if (m.is_dir() or p.is_absolute() or '..' in p.parts or '\\' in m.filename or
+                              stat.S_ISLNK(m.external_attr >> 16)):
+                          raise ValueError('R41_UNSAFE_ZIP_MEMBER:' + m.filename)
+                      total += m.file_size
+                      if m.file_size > max_output or total > max_output:
+                          raise ValueError('R41_ZIP_DECOMPRESSION_BOUND')
+                  if z.testzip() is not None:
+                      raise ValueError('R41_ZIP_BAD_CRC')
+                  return {name: z.read(name) for name in names}
+          
+          
+          def verify_r26(path: Path) -> dict[str, bytes]:
+              pin_file(path, R26_PIN)
+              b = checked_zip(path, R26_NAMES)
+              actual = {}
+              for line in b['SHA256SUMS.txt'].decode('ascii').splitlines():
+                  if not re.fullmatch(r'[0-9a-f]{64}  .+', line):
+                      raise ValueError('R41_R26_BAD_SUM_LINE')
+                  sha, name = line.split('  ', 1)
+                  if name in actual:
+                      raise ValueError('R41_R26_DUPLICATE_SUM')
+                  actual[name] = sha
+              if set(actual) != set(b) - {'SHA256SUMS.txt'}:
+                  raise ValueError('R41_R26_BAD_SUM_MEMBER_SET')
+              for name, sha in actual.items():
+                  if digest(b[name]) != sha:
+                      raise ValueError('R41_R26_BAD_SUM:' + name)
+              for name, sha in CONFIG_PINS.items():
+                  if actual[name] != sha:
+                      raise ValueError('R41_R26_ORIGINAL_CONFIG_PIN_CHANGED')
+              build = json.loads(b['fixtures/R20_BUILD_RESULT.json'])
+              dtb_files = build.get('dtb_files')
+              if (not isinstance(dtb_files, list) or len(dtb_files) != 1 or
+                      dtb_files[0].get('sha256') != R20_DTB_PIN or
+                      dtb_files[0].get('bytes') != 275689 or
+                      build.get('vendor_abi_proven') is not False or
+                      build.get('flash_allowed') is not False):
+                  raise ValueError('R41_R20_BUILD_ATTESTATION_MISMATCH')
+              return b
+          
+          
+          def cfg_value(blob: bytes, key: str) -> str:
+              if not re.fullmatch(r'CONFIG_[A-Z0-9_]+', key):
+                  raise ValueError('R41_CONFIG_INVALID_NAME')
+              lines = blob.decode('utf-8').splitlines()
+              hits = [line for line in lines if line.startswith(key + '=') or line == '# ' + key + ' is not set']
+              if len(hits) != 1:
+                  raise ValueError('R41_CONFIG_MISSING_OR_DUPLICATE:' + key)
+              if hits[0] == '# ' + key + ' is not set':
+                  return 'n'
+              value = hits[0].split('=', 1)[1]
+              if value not in {'y', 'm', 'n'}:
+                  raise ValueError('R41_CONFIG_UNEXPECTED_FLAG:' + key)
+              return value
+          
+          
+          def config_comparison(b: dict[str, bytes]) -> dict:
+              config_r20 = b['fixtures/R20_REAL_BUILD_CONFIG.config']
+              config_stock = b['fixtures/VEUX_R22_RUNNING_KERNEL_CONFIG.config']
+              config = {
+                  'r20_regulator': cfg_value(config_r20, CFG_REG),
+                  'r20_devfreq': cfg_value(config_r20, CFG_DEV),
+                  'stock_regulator': cfg_value(config_stock, CFG_REG),
+                  'stock_devfreq': cfg_value(config_stock, CFG_DEV),
+                  'r20_thermal_of': cfg_value(config_r20, 'CONFIG_THERMAL_OF'),
+                  'stock_thermal_of': cfg_value(config_stock, 'CONFIG_THERMAL_OF'),
+              }
+              if config != {
+                  'r20_regulator': 'y', 'r20_devfreq': 'n',
+                  'stock_regulator': 'y', 'stock_devfreq': 'y',
+                  'r20_thermal_of': 'y', 'stock_thermal_of': 'y',
+              }:
+                  raise ValueError('R41_PINNED_CONFIG_VALUES_CHANGED')
+              return config
+          
+          
+          def u32(raw: bytes | None) -> int:
+              if raw is None:
+                  return 0
+              if len(raw) != 4:
+                  raise ValueError('R41_NON_U32_PHANDLE')
+              return struct.unpack('>I', raw)[0]
+          
+          
+          def strs(raw: bytes | None) -> list[str]:
+              return [x.decode('utf-8', 'replace') for x in (raw or b'').split(b'\x00') if x]
+          
+          
+          def enabled(props: dict[str, bytes] | None) -> bool:
+              return props is not None and (not strs(props.get('status')) or strs(props.get('status'))[0] in ('okay', 'ok'))
+          
+          
+          def provider(nodes: dict[str, dict[str, bytes]], path: str,
+                       compatible: str) -> dict:
+              props = nodes.get(path)
+              if props is None:
+                  return {'path': path, 'present': False, 'enabled': False,
+                          'compatible': False, 'phandle': 0, 'references': []}
+              phandle = u32(props.get('phandle') or props.get('linux,phandle'))
+              if phandle and sum(u32(x.get('phandle') or x.get('linux,phandle')) == phandle
+                                 for x in nodes.values()) != 1:
+                  raise ValueError('R41_DUPLICATE_PROVIDER_PHANDLE')
+              return {'path': path, 'present': True, 'enabled': enabled(props),
+                      'compatible': compatible in strs(props.get('compatible')),
+                      'phandle': phandle, 'references': cooling_refs(nodes, phandle)}
+          
+          
+          def cooling_refs(nodes: dict[str, dict[str, bytes]], phandle: int) -> list[dict]:
+              if not phandle:
+                  return []
+              refs = []
+              for path, props in nodes.items():
+                  raw = props.get('cooling-device')
+                  if raw is None or '/thermal-zones/' not in path:
+                      continue
+                  # Qualcomm GPU cooling maps in pinned DTBs use <&provider state1 state2>.
+                  # Do not claim to parse other cooling-device array cell layouts.
+                  if len(raw) == 0 or len(raw) % 12:
+                      if struct.pack('>I', phandle) in [raw[i:i + 4] for i in range(0, len(raw) - 3, 4)]:
+                          raise ValueError('R41_AMBIGUOUS_COOLING_CELLS:' + path)
+                      continue
+                  for index, (ref, low, high) in enumerate(struct.iter_unpack('>III', raw)):
+                      if ref == phandle:
+                          refs.append({'map_path': path, 'index': index,
+                                       'cooling_phandle': ref, 'min_state': low, 'max_state': high})
+              return sorted(refs, key=lambda x: (x['map_path'], x['index']))
+          
+          
+          def summary(stock: dict, r20: dict, cfg: dict) -> dict:
+              stock_gfx = provider(stock, GFX_PATH, REG_COMPAT)
+              stock_gfx_off = provider(stock, GFX_DISABLED_PATH, REG_COMPAT)
+              r20_gfx = provider(r20, GFX_PATH, REG_COMPAT)
+              dev = [p for p, v in r20.items() if DEV_COMPAT in strs(v.get('compatible'))]
+              if len(dev) != 1:
+                  raise ValueError('R41_R20_DEVFREQ_PROVIDER_COUNT_UNEXPECTED')
+              r20_dev = provider(r20, dev[0], DEV_COMPAT)
+              # Minimum evidence: different enabled node and explicit R20 driver disable.
+              if (not stock_gfx['enabled'] or not stock_gfx['compatible'] or
+                      len(stock_gfx['references']) != 2 or stock_gfx_off['enabled'] or
+                      r20_gfx['present'] or not r20_dev['enabled'] or
+                      not r20_dev['compatible'] or len(r20_dev['references']) != 2 or
+                      cfg['r20_devfreq'] != 'n' or cfg['stock_devfreq'] != 'y'):
+                  raise ValueError('R41_EXPECTED_ORIGINAL_GPU_EVIDENCE_DIVERGED')
+              return {
+                  'schema': SCHEMA,
+                  'result': 'GPU_DT_CONFIG_MISMATCH_CONFIRMED_OFFLINE',
+                  'source': 'R20-R11 build config and DTB, R22 stock config, stock/R20 offline DTBO0 candidate merges',
+                  'r20_dtb_sha256': R20_DTB_PIN,
+                  'config': cfg,
+                  'stock_active_regulator_gfx': stock_gfx,
+                  'stock_disabled_regulator_gfx': stock_gfx_off,
+                  'r20_regulator_gfx': r20_gfx,
+                  'r20_devfreq_gpu': r20_dev,
+                  'r20_devfreq_node_has_two_cooling_maps_but_config_disables_driver': True,
+                  'stock_and_r20_cooling_equivalence_proven': False,
+                  'r20_device_boot_observed': False,
+                  'runtime_driver_probe_proven': False,
+                  'bootloader_dtbo0_choice_proven': False,
+                  'runtime_module_file_proven': False,
+                  'vendor_abi_proven': False,
+                  'brene_modified': False,
+                  'r20_sources_modified': False,
+                  'build_performed': False,
+                  'boot_ready': False,
+                  'flash_allowed': False,
+                  'qualcomm_reference_commit': SOURCE_COMMIT,
+                  'qualcomm_reference_blob_shas': SOURCE_BLOBS,
+                  'qualification': 'Structural mismatch is established; root cause of runtime malfunction and safe fix not proven.',
+              }
+          
+          
+          def csv_write(path: Path, rows: list[dict], columns: tuple[str, ...]) -> None:
+              with path.open('w', newline='', encoding='utf-8') as f:
+                  wr = csv.DictWriter(f, fieldnames=columns, lineterminator='\n')
+                  wr.writeheader()
+                  for row in rows:
+                      wr.writerow({k: row.get(k, '') for k in columns})
+          
+          
+          def produce(out: Path, report: dict) -> None:
+              out.mkdir(parents=True, exist_ok=True)
+              (out / 'R41_RESULT.json').write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+              columns = ('tree', 'provider_path', 'compatible', 'enabled', 'phandle',
+                         'map_path', 'min_state', 'max_state')
+              rows = []
+              for name, p in [('STOCK_REGULATOR_GFX', report['stock_active_regulator_gfx']),
+                              ('R20_DEVFREQ_GPU', report['r20_devfreq_gpu'])]:
+                  for ref in p['references']:
+                      rows.append({'tree': name, 'provider_path': p['path'],
+                                   'compatible': p['compatible'], 'enabled': p['enabled'],
+                                   'phandle': p['phandle'], 'map_path': ref['map_path'],
+                                   'min_state': ref['min_state'], 'max_state': ref['max_state']})
+              csv_write(out / 'R41_COOLING_PHANDLES.csv', rows, columns)
+              flags = [{'config': CFG_REG, 'stock': report['config']['stock_regulator'],
+                        'r20': report['config']['r20_regulator']},
+                       {'config': CFG_DEV, 'stock': report['config']['stock_devfreq'],
+                        'r20': report['config']['r20_devfreq']}]
+              csv_write(out / 'R41_KERNEL_CONFIG.csv', flags, ('config', 'stock', 'r20'))
+              lines = [
+                  'VEUX R41 – QUELLENBASIERTER GPU-THERMAL-BEFUND (READ ONLY)',
+                  'R20: Der devfreq-vdd-cdev-DT-Knoten wird von zwei Cooling-Mappings angesprochen,',
+                  '     aber CONFIG_QTI_DEVFREQ_VDD_COOLING_DEVICE=n im echten R20-R11-Build.',
+                  'Stock: Aktiver smpa8/gfx-cdev hat zwei Cooling-Mappings, ist in R20 nicht vorhanden.',
+                  'Der passende regulator_cdev-Treiber ist in R20 konfiguriert, doch der Stock-Knoten fehlt.',
+                  'Ein Laufzeitdefekt ist hiermit NICHT nachgewiesen; ein Quellpatch wurde NICHT vorgenommen.',
+                  'VENDOR_ABI_UNPROVEN; BOOT_READY=NO; FLASH_ALLOWED=NO.',
+                  'KEINE FREIGABE zum Boot/Flash, keine Änderung an BReNE, NoMount, SUSFS oder BakaSU.',
+                  'Nächster begrenzter Nachweis: Original-Xiaomi-Thermal-DTS/Config-Linie bzw.',
+                  'Treiber-/Cooling-Probe zur Klärung, ob devfreq-Treiber oder ursprüngliche',
+                  'smpa8-Regler-Kühlung für die VEUX-Stock-Zuordnung erforderlich ist.',
+              ]
+              (out / 'R41_BERICHT_DE.txt').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+              names = sorted(x.name for x in out.iterdir() if x.is_file())
+              checksums = ''.join(digest((out / name).read_bytes()) + '  ' + name + '\n' for name in names)
+              (out / 'SHA256SUMS.txt').write_text(checksums, encoding='ascii')
+          
+          
+          def execute(r39_zip: Path, r26_zip: Path, r37_zip: Path | None,
+                      out: Path, preflight: bool) -> None:
+              pin_file(r39_zip, R39_PIN)
+              fixtures = verify_r26(r26_zip)
+              cfg = config_comparison(fixtures)
+              with tempfile.TemporaryDirectory(prefix='veux-r41-readonly-') as root:
+                  temp = Path(root)
+                  r39 = temp / 'r39'; r39.mkdir()
+                  with zipfile.ZipFile(r39_zip) as z:
+                      items = z.infolist()
+                      names = [x.filename for x in items]
+                      expected = {'MANIFEST_SHA256.json', 'README_ZUERST_DE.txt',
+                                  'evidence/VEUX_R30_ABI_ORIGINALMODULE_NACHWEIS_20261023.zip',
+                                  'evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip',
+                                  'evidence/VEUX_R38_RUN_40080527188_ERGEBNIS.zip',
+                                  'scripts/r34_gate.py', 'scripts/r37_gate.py',
+                                  'scripts/r38_gate.py', 'scripts/r39_gate.py',
+                                  'tests/test_r39.py', 'tools/actionlint'}
+                      if set(names) != expected or len(names) != len(expected) or z.testzip():
+                          raise ValueError('R41_R39_ZIP_MEMBER_OR_CRC')
+                      for m in items:
+                          p = PurePosixPath(m.filename)
+                          if (m.is_dir() or p.is_absolute() or '..' in p.parts or
+                                  '\\' in m.filename or stat.S_ISLNK(m.external_attr >> 16) or
+                                  m.file_size > 8_000_000):
+                              raise ValueError('R41_R39_UNSAFE_ZIP')
+                      if sum(m.file_size for m in items) > 15_000_000:
+                          raise ValueError('R41_R39_ZIP_TOO_LARGE')
+                      z.extractall(r39)
+                  sys.path.insert(0, str(r39 / 'scripts'))
+                  import r39_gate as g
+                  old, bound, vendor, *_ = g.verify_original_reports(r39)
+                  if len(bound) != 503 or len(vendor) != 218:
+                      raise ValueError('R41_PRIOR_REPORT_CHANGED')
+                  r38 = temp / 'r38'; r38.mkdir()
+                  g.safe_extract_r38(r39, r38)
+                  r20bytes = (r38 / 'evidence/R20_VEUX.dtb').read_bytes()
+                  if digest(r20bytes) != R20_DTB_PIN:
+                      raise ValueError('R41_R20_DTB_BUILD_IDENTITY_CHANGED')
+                  r20_raw, _ = g.parse_fdt_selected(r20bytes)
+                  raw_dev = [p for p, props in r20_raw.items() if DEV_COMPAT in strs(props.get('compatible'))]
+                  if len(raw_dev) != 1 or len(provider(r20_raw, raw_dev[0], DEV_COMPAT)['references']) != 2:
+                      raise ValueError('R41_RAW_R20_DEVICE_TREE_EXPECTATION_FAILED')
+                  if preflight:
+                      print('R41_LOCAL_PREFLIGHT=PASS; R39/R26/R20_ORIGINALS_PINNED; CONFIG_GPU_MISMATCH=CONFIRMED')
+                      return
+                  if r37_zip is None or not r37_zip.is_file():
+                      raise ValueError('R41_R37_DEVICE_PROVENANCE_REQUIRED')
+                  r33, r34, targets, _old65, _r37, _counts, _total = g.r38_gate.verify_originals(r38)
+                  dev = g.r37_gate.safe_zip(r37_zip, g.r37_gate.DEVICE_NAMES)
+                  g.r37_gate.parse_device(dev, r33, targets)
+                  stockbase = temp / 'stock.dtb'; stockbase.write_bytes(dev['R37_VENDOR_BOOT_BASE.dtb'])
+                  overlay = temp / 'candidate0.dtbo'; overlay.write_bytes(dev['R37_DTBO_CANDIDATE0.dtbo'])
+                  r20base = temp / 'r20.dtb'; r20base.write_bytes(r20bytes)
+                  stock, _ = g.parse_fdt_selected(g.run_merge(stockbase, overlay, temp / 'stock_merged.dtb'))
+                  r20, _ = g.parse_fdt_selected(g.run_merge(r20base, overlay, temp / 'r20_merged.dtb'))
+                  if (len(stock), len(r20)) != (2652, 2200):
+                      raise ValueError('R41_OFFLINE_MERGE_NODE_COUNTS_DIVERGED')
+                  report = summary(stock, r20, cfg)
+                  produce(out, report)
+                  print('R41_ORIGINAL_THERMAL_AND_CONFIG_EVIDENCE=PASS; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          
+          
+          def main() -> None:
+              a = argparse.ArgumentParser()
+              a.add_argument('--r39-zip', type=Path, required=True)
+              a.add_argument('--r26-zip', type=Path, required=True)
+              a.add_argument('--r37-zip', type=Path)
+              a.add_argument('--out', type=Path)
+              a.add_argument('--preflight', action='store_true')
+              args = a.parse_args()
+              if not args.preflight and args.out is None:
+                  a.error('--out required for full audit')
+              execute(args.r39_zip, args.r26_zip, args.r37_zip, args.out, args.preflight)
+          
+          
+          if __name__ == '__main__':
+              main()
+          PY_R41_ENGINE
+          cat > "$R41_STAGE/tests/test_r41_gate.py" <<'PY_R41_TESTS'
+          import warnings
+          import pathlib
+          import struct
+          import sys
+          import unittest
+          from tempfile import TemporaryDirectory
+          import zipfile
+          sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+          import r41_gate as g
+          
+          
+          def conf(dev='n', reg='y', thermal='y'):
+              return (f'CONFIG_REGULATOR_COOLING_DEVICE={reg}\n'
+                      f'# CONFIG_QTI_DEVFREQ_VDD_COOLING_DEVICE is not set\n' if dev == 'n'
+                      else f'CONFIG_REGULATOR_COOLING_DEVICE={reg}\nCONFIG_QTI_DEVFREQ_VDD_COOLING_DEVICE={dev}\n').encode() + f'CONFIG_THERMAL_OF={thermal}\n'.encode()
+          
+          
+          def node(comp='', ph=0, status=None):
+              d = {'compatible': comp.encode() + b'\0'} if comp else {}
+              if ph: d['phandle'] = struct.pack('>I', ph)
+              if status is not None:d['status'] = status.encode() + b'\0'
+              return d
+          
+          
+          class R41GateTests(unittest.TestCase):
+              def test_config_y_n(self):
+                  self.assertEqual(g.cfg_value(conf(), g.CFG_DEV), 'n')
+                  self.assertEqual(g.cfg_value(conf(dev='y'), g.CFG_DEV), 'y')
+                  self.assertEqual(g.cfg_value(conf(), g.CFG_REG), 'y')
+          
+              def test_duplicate_config_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'DUPLICATE'):
+                      g.cfg_value(conf() + b'CONFIG_REGULATOR_COOLING_DEVICE=n\n', g.CFG_REG)
+          
+              def test_missing_config_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'MISSING'):
+                      g.cfg_value(b'CONFIG_THERMAL_OF=y\n', g.CFG_DEV)
+          
+              def test_invalid_config_rejected(self):
+                  with self.assertRaises(ValueError):g.cfg_value(conf(), '../../foo')
+          
+              def test_references_read_real_phandle_triples(self):
+                  nodes = {'/soc/devfreq-vdd-cdev': node(g.DEV_COMPAT, 81),
+                           '/soc/thermal-zones/zeroc-0-step/cooling-maps/a':
+                            {'cooling-device':struct.pack('>III',81,2,2)},
+                           '/soc/thermal-zones/zeroc-1-step/cooling-maps/b':
+                            {'cooling-device':struct.pack('>III',81,2,2)},
+                           '/other/cooling-maps/not-a-thermal-map':
+                            {'cooling-device':struct.pack('>III',81,2,2)}}
+                  refs = g.provider(nodes,'/soc/devfreq-vdd-cdev',g.DEV_COMPAT)['references']
+                  self.assertEqual(len(refs),2)
+                  self.assertEqual({(x['min_state'],x['max_state']) for x in refs},{(2,2)})
+          
+              def test_ambiguous_cells_fail_closed(self):
+                  nodes = {'/soc/thermal-zones/z/cooling-maps/m':
+                           {'cooling-device':struct.pack('>II',81,2)}}
+                  with self.assertRaisesRegex(ValueError,'AMBIGUOUS'):
+                      g.cooling_refs(nodes,81)
+          
+              def test_missing_phandle_is_not_a_proof(self):
+                  self.assertEqual(g.cooling_refs({'/soc/thermal-zones/z':{}},0),[])
+                  self.assertFalse(g.provider({},g.GFX_PATH,g.REG_COMPAT)['present'])
+          
+              def test_stock_disabled_status(self):
+                  self.assertFalse(g.enabled(node(g.REG_COMPAT,79,'disabled')))
+                  self.assertTrue(g.enabled(node(g.REG_COMPAT,79,'okay')))
+                  self.assertTrue(g.enabled(node(g.REG_COMPAT,79)))
+          
+              def test_duplicate_provider_handle_rejected(self):
+                  nodes={'/soc/a': node(g.REG_COMPAT,81), '/soc/b': node(g.REG_COMPAT,81)}
+                  with self.assertRaisesRegex(ValueError,'DUPLICATE'):
+                      g.provider(nodes,'/soc/a',g.REG_COMPAT)
+          
+              def test_pin_mismatch_fail_closed(self):
+                  with TemporaryDirectory() as temp:
+                      p=pathlib.Path(temp)/'blob';p.write_bytes(b'invalid')
+                      with self.assertRaisesRegex(ValueError,'SHA256_MISMATCH'):
+                          g.pin_file(p,'0'*64)
+          
+              def test_duplicate_archive_member_rejected(self):
+                  with TemporaryDirectory() as temp:
+                      p=pathlib.Path(temp)/'duplicate.zip'
+                      with warnings.catch_warnings():
+                          warnings.simplefilter('ignore', UserWarning)
+                          with zipfile.ZipFile(p,'w') as z:
+                              z.writestr('x','good');z.writestr('x','bad')
+                      with self.assertRaisesRegex(ValueError,'MEMBER_SET'):
+                          g.checked_zip(p,{'x'})
+          
+              def test_archive_traversal_rejected(self):
+                  with TemporaryDirectory() as temp:
+                      p=pathlib.Path(temp)/'traversal.zip'
+                      with zipfile.ZipFile(p,'w') as z:z.writestr('../a','x')
+                      with self.assertRaisesRegex(ValueError,'UNSAFE'):
+                          g.checked_zip(p,{'../a'})
+          
+              def test_no_runtime_or_boot_false_positive(self):
+                  stock={g.GFX_PATH:node(g.REG_COMPAT,81),g.GFX_DISABLED_PATH:node('',0,'disabled'),
+                         '/soc/thermal-zones/zeroc-0-step/cooling-maps/gfx':{'cooling-device':struct.pack('>III',81,2,2)},
+                         '/soc/thermal-zones/zeroc-1-step/cooling-maps/gfx':{'cooling-device':struct.pack('>III',81,2,2)}}
+                  r20={'/soc/devfreq-vdd-cdev':node(g.DEV_COMPAT,81),
+                       '/soc/thermal-zones/zeroc-0-step/cooling-maps/dev':{'cooling-device':struct.pack('>III',81,2,2)},
+                       '/soc/thermal-zones/zeroc-1-step/cooling-maps/dev':{'cooling-device':struct.pack('>III',81,2,2)}}
+                  cfg={'r20_devfreq':'n','stock_devfreq':'y','r20_regulator':'y','stock_regulator':'y'}
+                  report=g.summary(stock,r20,cfg)
+                  for k in ('boot_ready','vendor_abi_proven','flash_allowed','runtime_driver_probe_proven'):
+                      self.assertIs(report[k],False)
+                  self.assertTrue(report['r20_devfreq_node_has_two_cooling_maps_but_config_disables_driver'])
+                  with TemporaryDirectory() as temp:
+                      g.produce(pathlib.Path(temp),report)
+                      self.assertEqual(len(list(pathlib.Path(temp).glob('*.csv'))),2)
+                      self.assertTrue((pathlib.Path(temp)/'SHA256SUMS.txt').exists())
+          
+              def test_no_false_config_mismatch_when_driver_enabled(self):
+                  stock={g.GFX_PATH:node(g.REG_COMPAT,81),g.GFX_DISABLED_PATH:node('',0,'disabled'),
+                         '/soc/thermal-zones/z/cooling-maps/a':{'cooling-device':struct.pack('>III',81,2,2)},
+                         '/soc/thermal-zones/z/cooling-maps/b':{'cooling-device':struct.pack('>III',81,2,2)}}
+                  r20={'/soc/devfreq-vdd-cdev':node(g.DEV_COMPAT,81),
+                         '/soc/thermal-zones/z/cooling-maps/a':{'cooling-device':struct.pack('>III',81,2,2)},
+                         '/soc/thermal-zones/z/cooling-maps/b':{'cooling-device':struct.pack('>III',81,2,2)}}
+                  with self.assertRaisesRegex(ValueError,'DIVERGED'):
+                      g.summary(stock,r20,{'r20_devfreq':'y','stock_devfreq':'y'})
+          
+          
+          if __name__=='__main__':unittest.main()
+          PY_R41_TESTS
+          python3 -B - "$R41_STAGE" <<'PY_R41_COMPILE'
+          import pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          for p in (root/'r41_gate.py',root/'tests/test_r41_gate.py'):
+              compile(p.read_bytes(),str(p),'exec')
+          print('R41_PYTHON_SYNTAX=PASS')
+          PY_R41_COMPILE
+
+      - name: Check this EXACT workflow with actionlint 1.7.12 and genuine ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          test -f '.github/workflows/VEUX_R41_GPU_THERMAL_CONFIG_GATE.yml'
+          unzip -p VEUX_R39_R2_MEMORY_ABI_MAIN.zip tools/actionlint > "$R41_STAGE/actionlint"
+          chmod 0755 "$R41_STAGE/actionlint"
+          "$R41_STAGE/actionlint" -version | grep -Fx '1.7.12'
+          "$R41_STAGE/actionlint" -color=false -shellcheck="$(command -v shellcheck)" \
+            .github/workflows/VEUX_R41_GPU_THERMAL_CONFIG_GATE.yml
+          echo 'R41_ACTIONLINT_SHELLCHECK=PASS'
+
+      - name: Run 14 new regression/negative cases and pin real R20 input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -W error::ResourceWarning -m unittest discover \
+            -v -s "$R41_STAGE/tests" -p 'test_r41_gate.py' 2>&1 \
+            | tee "$R41_REPORT/R41_TESTS.log"
+          python3 -B "$R41_STAGE/r41_gate.py" \
+            --r39-zip VEUX_R39_R2_MEMORY_ABI_MAIN.zip \
+            --r26-zip VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip \
+            --preflight
+          echo 'R41_PINNED_CONFIG_AND_REAL_RAW_R20_DTB=PASS'
+
+      - name: Audit actual pinned Stock and R20 GPU cooling maps offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          fi
+          command -v fdtoverlay
+          python3 -B "$R41_STAGE/r41_gate.py" \
+            --r39-zip VEUX_R39_R2_MEMORY_ABI_MAIN.zip \
+            --r26-zip VEUX_OEM_WALT_R26_R2_SYMVERS_SEMANTIC_PROOF_MAIN.zip \
+            --r37-zip VEUX_R37_DEVICE_EVIDENCE.zip \
+            --out "$R41_REPORT"
+          cat "$R41_REPORT/R41_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Strict result guards, SHA256 and no changes or flashable files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R41_REPORT" <<'PY_R41_GUARD'
+          import json,pathlib,sys
+          p=pathlib.Path(sys.argv[1]);r=json.loads((p/'R41_RESULT.json').read_text(encoding='utf-8'))
+          expected={'R41_RESULT.json','R41_COOLING_PHANDLES.csv','R41_KERNEL_CONFIG.csv',
+                    'R41_BERICHT_DE.txt','R41_TESTS.log','SHA256SUMS.txt'}
+          if {q.name for q in p.iterdir()} != expected or not all((p/x).stat().st_size>0 for x in expected):
+              raise SystemExit('R41_OUTPUT_MANIFEST_MISMATCH')
+          if (r.get('schema')!='VEUX_R41_GPU_THERMAL_BUILD_CONFIG_PINNED_V1' or
+              r.get('result')!='GPU_DT_CONFIG_MISMATCH_CONFIRMED_OFFLINE' or
+              r['config']['r20_devfreq']!='n' or r['config']['stock_devfreq']!='y' or
+              len(r['stock_active_regulator_gfx']['references'])!=2 or
+              len(r['r20_devfreq_gpu']['references'])!=2 or
+              not r['r20_devfreq_node_has_two_cooling_maps_but_config_disables_driver']):
+              raise SystemExit('R41_ORIGINAL_EVIDENCE_UNEXPECTED')
+          for k in ('boot_ready','vendor_abi_proven','flash_allowed',
+                    'build_performed','runtime_driver_probe_proven','brene_modified',
+                    'r20_sources_modified','bootloader_dtbo0_choice_proven'):
+              if r.get(k) is not False:raise SystemExit('R41_UNSAFE_SUCCESS_FLAG:'+k)
+          print('R41_RESULT_GUARDS=PASS; RUNTIME_NOT_PROVEN; BOOT_READY=NO; FLASH=NO')
+          PY_R41_GUARD
+          (cd "$R41_REPORT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R41_REPORT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' \
+              -o -name '*.dtbo' -o -name '*.zip' -o -name '*.sh' \) | grep -q .; then
+            echo 'R41_FORBIDDEN_FLASHABLE_OUTPUT' >&2
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+          echo 'R41_REPOSITORY_UNCHANGED=YES; KERNEL_BUILT=NO; FLASH_ALLOWED=NO'
+
+      - name: Upload only non-flashable R41 evidence and logs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R41-THERMAL-CONFIG-${{ github.run_id }}
+          path: ${{ env.R41_REPORT }}
+          retention-days: 14
+          if-no-files-found: error
