@@ -1,0 +1,162 @@
+name: VEUX R34 - Live DT Driver Mapping and Vendor ABI - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r34-vendor-abi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: R34 pinned evidence and read-only driver/ABI gate - NO FLASH
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R34_ZIP: VEUX_R34_DTB_VENDOR_ABI_MAIN.zip
+      R34_ZIP_SHA: '2f910c68c4b8d9bfb2c7976db884bbd0b134e9002979c3426832d9554e576f5b'
+      R34_INPUT: /tmp/veux-r34-input
+      R34_REPORT: /tmp/veux-r34-results
+    steps:
+      - name: Checkout main without write credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate root ZIP and extract safely to temporary directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$R34_ZIP"
+          printf '%s  %s\n' "$R34_ZIP_SHA" "$R34_ZIP" | sha256sum -c -
+          mkdir -p "$R34_INPUT"
+          python3 - "$R34_ZIP" "$R34_INPUT" <<'PY_R34_EXTRACT'
+          from pathlib import Path, PurePosixPath
+          import stat, sys, zipfile
+          source=Path(sys.argv[1]); dest=Path(sys.argv[2]); total=0
+          with zipfile.ZipFile(source) as z:
+              infos=z.infolist()
+              names=[x.filename for x in infos if not x.is_dir()]
+              if len(names)!=13 or len(names)!=len(set(names)):
+                  raise SystemExit('R34_ARCHIVE_CONTENT_SET_OR_DUPLICATE')
+              for info in infos:
+                  part=PurePosixPath(info.filename)
+                  if part.is_absolute() or '..' in part.parts or '\\' in info.filename or stat.S_ISLNK(info.external_attr>>16):
+                      raise SystemExit('R34_UNSAFE_ARCHIVE_PATH')
+                  total+=info.file_size
+                  if info.file_size>10_000_000 or total>32_000_000:
+                      raise SystemExit('R34_ARCHIVE_SIZE_LIMIT')
+              if z.testzip() is not None:
+                  raise SystemExit('R34_ARCHIVE_CRC_FAILURE')
+              z.extractall(dest)
+          print('R34_PACKAGE_UNPACKED_SAFELY=YES')
+          PY_R34_EXTRACT
+
+      - name: Verify pinned originals and every package file hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R34_INPUT" <<'PY_R34_MANIFEST'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1]);sys.path.insert(0,str(root/'scripts'))
+          import r34_gate
+          r34_gate.verify_manifest(root)
+          r34_gate.verify_r33(root)
+          print('R34_ORIGINAL_EVIDENCE_R20_R21_R31_R32_R33=PASS')
+          PY_R34_MANIFEST
+
+      - name: Static Green actionlint 1.7.12 and genuine ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R34_INPUT/tools/actionlint"
+          "$R34_INPUT/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R34_DTB_VENDOR_ABI_GATE*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]]; then
+            echo 'R34_EXPECTED_EXACTLY_ONE_WORKFLOW_FILE' >&2
+            exit 1
+          fi
+          "$R34_INPUT/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R34_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+      - name: Python syntax and 54 guarded tests including negative inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R34_INPUT" <<'PY_R34_SYNTAX'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])
+          for relative in ('scripts/r34_gate.py','scripts/VEUX_R34_CAPTURE_GERAET.py','tests/test_r34.py'):
+              p=root/relative
+              compile(p.read_bytes(),str(p),'exec')
+          print('R34_PYTHON_SYNTAX=PASS')
+          PY_R34_SYNTAX
+          python3 -B -m unittest discover -v -s "$R34_INPUT/tests" -p 'test_r34.py'
+          echo 'R34_ALL_54_REGRESSIONS=PASS'
+
+      - name: Perform historical ABI analysis plus fresh device driver mapping if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          extra=()
+          if [[ -f "$GITHUB_WORKSPACE/VEUX_R34_DEVICE_EVIDENCE.zip" ]]; then
+            extra=(--device-zip "$GITHUB_WORKSPACE/VEUX_R34_DEVICE_EVIDENCE.zip")
+            echo 'R34_FRESH_DEVICE_DATA=FOUND_VERIFY_AND_COMPARE'
+          else
+            echo 'R34_FRESH_DEVICE_DATA=MISSING_HISTORICAL_ONLY'
+          fi
+          python3 -B "$R34_INPUT/scripts/r34_gate.py" --bundle "$R34_INPUT" --out "$R34_REPORT" "${extra[@]}"
+          python3 - "$R34_REPORT/R34_RESULT.json" <<'PY_R34_RESULT'
+          import json,sys
+          x=json.load(open(sys.argv[1]))
+          assert x['schema']=='VEUX_R34_STATIC_VENDOR_DTB_ABI_GATE_V1'
+          assert x['provenance_pass'] is True
+          assert x['historical_vendor_imports']==14648
+          assert x['r20_dtb_nodes_parsed']==1829
+          assert x['r20_six_modules_crc_matching']==307
+          assert x['status'] in (
+              'HISTORICAL_MODULE_ABI_DONE_AWAIT_DEVICE_NODE_CAPTURE',
+              'CURRENT_DEVICE_NODE_CAPTURE_INCOMPLETE',
+              'CURRENT_DEVICE_NODES_COMPARED_BOOT_BLOCKED')
+          for key in ('vendor_abi_proven','r20_driver_probe_proven','boot_ready',
+                      'flash_allowed','kernel_built','source_patch_created',
+                      'device_modified','brene_changed','nomount_changed'):
+              assert x[key] is False,key
+          print('R34_GATED_RESULT=PASS; VENDOR_ABI=UNPROVEN; BOOT=NO; FLASH=NO')
+          PY_R34_RESULT
+          cat "$R34_REPORT/R34_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify report hashes and forbid executable or flashable results
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R34_REPORT/R34_RESULT.json"
+          test -s "$R34_REPORT/R34_VENDOR_MATRIX.csv"
+          test -s "$R34_REPORT/R34_DEVICE_TREE_MATRIX.csv"
+          (cd "$R34_REPORT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R34_REPORT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' -o -name '*.sh' -o -name '*.zip' \) | grep -q .; then
+            echo 'R34_FORBIDDEN_INSTALL_OR_FLASH_FILE' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'R34_REPOSITORY_DIRTY' >&2
+            exit 1
+          fi
+          echo 'R34_REPOSITORY_UNCHANGED=YES; NO_BUILD=YES; NO_FLASH=YES'
+
+      - name: Upload non-flashable R34 evidence report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R34-VENDOR-DTB-ABI-${{ github.run_id }}
+          path: /tmp/veux-r34-results/
+          retention-days: 14
+          if-no-files-found: error
