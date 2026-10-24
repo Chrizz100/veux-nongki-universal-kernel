@@ -1,0 +1,141 @@
+
+name: VEUX R40 Direkt ohne Downloads - NO BUILD NO FLASH
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  r40:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Originalquellen und statische Pruefungen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528  VEUX_R39_R2_MEMORY_ABI_MAIN.zip' | sha256sum -c -
+          test -s VEUX_R37_DEVICE_EVIDENCE.zip
+          mkdir -p "$RUNNER_TEMP/r40src" "$RUNNER_TEMP/r40report"
+          python3 - <<'PY'
+          import os,pathlib,stat,zipfile,sys
+          d=pathlib.Path(os.environ['RUNNER_TEMP'])/'r40src'
+          with zipfile.ZipFile('VEUX_R39_R2_MEMORY_ABI_MAIN.zip') as z:
+              m=z.infolist();names=[x.filename for x in m]
+              if len(names)!=11 or len(set(names))!=11 or z.testzip():raise SystemExit('ZIP_ERROR')
+              for x in m:
+                  p=pathlib.PurePosixPath(x.filename)
+                  if x.is_dir() or p.is_absolute() or '..' in p.parts or stat.S_ISLNK(x.external_attr>>16) or x.file_size>8000000:
+                      raise SystemExit('UNSAFE_ZIP')
+              z.extractall(d)
+          sys.path.insert(0,str(d/'scripts'))
+          import r39_gate
+          assert len(r39_gate.verify_original_reports(d)[2])==218
+          print('R39_R38_R30_HASHES=PASS')
+          PY
+          command -v shellcheck
+          chmod +x "$RUNNER_TEMP/r40src/tools/actionlint"
+          "$RUNNER_TEMP/r40src/tools/actionlint" -version | grep -Fx '1.7.12'
+          "$RUNNER_TEMP/r40src/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" \
+            .github/workflows/VEUX_R40_DIREKT_OHNE_DOWNLOAD_KURZ.yml
+          echo 'ACTIONLINT_SHELLCHECK=PASS'
+      - name: Echte R39-Tests und R40-Offlinevergleich
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends device-tree-compiler
+          fi
+          python3 -B -W error::ResourceWarning -m unittest discover -s "$RUNNER_TEMP/r40src/tests" -p test_r39.py -v \
+            2>&1 | tee "$RUNNER_TEMP/r40report/R39_TESTS.log"
+          python3 - <<'PY'
+          import csv,hashlib,io,json,os,pathlib,sys,tempfile
+          t=pathlib.Path(os.environ['RUNNER_TEMP']);p=t/'r40src';out=t/'r40report'
+          sys.path.insert(0,str(p/'scripts'))
+          import r39_gate as g
+          _,bound,vendor,_,_,_,_=g.verify_original_reports(p)
+          assert (len(bound),len(vendor))==(503,218)
+          targets={'adsp_region','linux,cma','mem_dump_region','memshare_region',
+                   'qseecom_region','qseecom_ta_region','secure_display_region','user_contig_region'}
+          priority={
+           '/vendor/lib/modules/5.4-gki/msm_drm.ko',
+           '/vendor/lib/modules/5.4-gki/msm_ion_heaps.ko',
+           '/vendor/lib/modules/5.4-gki/ipam.ko',
+           '/vendor/lib/modules/5.4-gki/msm_kgsl.ko',
+           '/vendor/lib/modules/platform_dlkm.ko',
+           '/vendor/lib/modules/5.4-gki/platform_dlkm.ko',
+           '/vendor/lib/modules/5.4-gki/rndisipam.ko'}
+          chosen=[r for r in vendor if r['vendor_file_path'] in priority]
+          assert len(chosen)==7
+          totals=[sum(int(r[k]) for r in chosen) for k in
+            ('historical_matched','historical_crc_mismatched','historical_exports_absent','historical_total_imports')]
+          assert totals==[1064,1193,7,2264],totals
+          with tempfile.TemporaryDirectory() as tmp:
+              w=pathlib.Path(tmp);r=w/'r38';r.mkdir()
+              g.safe_extract_r38(p,r)
+              r33,_,nodes,_,_,_,_=g.r38_gate.verify_originals(r)
+              d=g.r37_gate.safe_zip(pathlib.Path('VEUX_R37_DEVICE_EVIDENCE.zip'),g.r37_gate.DEVICE_NAMES)
+              g.r37_gate.parse_device(d,r33,nodes)
+              a=w/'stock.dtb';b=w/'r20.dtb';o=w/'overlay.dtbo'
+              a.write_bytes(d['R37_VENDOR_BOOT_BASE.dtb'])
+              b.write_bytes((r/'evidence/R20_VEUX.dtb').read_bytes())
+              o.write_bytes(d['R37_DTBO_CANDIDATE0.dtbo'])
+              sn,_=g.parse_fdt_selected(g.run_merge(a,o,w/'stock-merged.dtb'))
+              rn,_=g.parse_fdt_selected(g.run_merge(b,o,w/'r20-merged.dtb'))
+          assert (len(sn),len(rn))==(2652,2200)
+          rows=[]
+          for name,tree in (('STOCK',sn),('R20',rn)):
+              reserve=g.extract_reserved(tree);assert len(reserve)==26
+              found={}
+              for x in reserve.values():
+                  if x['label'] not in targets:continue
+                  z=tree[x['path']]
+                  def number(key):
+                      b=z.get(key)
+                      if b is None:return None
+                      if len(b) not in (4,8):raise ValueError('INVALID_FDT_SIZE')
+                      return int.from_bytes(b,'big')
+                  if x['label'] in found or x['state']!='NO_REG_DYNAMIC_OR_UNKNOWN':raise ValueError('DYNAMIC_INVALID')
+                  found[x['label']]={'tree':name,'label':x['label'],'size':number('size'),
+                    'alignment':number('alignment'),'alloc_ranges':(z.get('alloc-ranges') or b'').hex(),
+                    'flags':x['flags'],'references':x['reference_count']}
+              assert set(found)==targets
+              rows.extend(found.values())
+          m={(r['tree'],r['label']):r for r in rows}
+          same=sum(all(m['STOCK',i][k]==m['R20',i][k] for k in
+                   ('size','alignment','alloc_ranges','flags','references')) for i in targets)
+          size=sum(m['R20',i]['size'] or 0 for i in targets)
+          assert size==200*1048576
+          gpu={name:sum(b'qcom,regulator-cooling-device' in v.get('compatible',b'') for v in tree.values())
+               for name,tree in (('STOCK',sn),('R20',rn))}
+          state=lambda x:(x or {}).get('status',b'okay').decode('ascii','replace').strip('\0')
+          thermal=sum(state(sn.get(i))!=state(rn.get(i)) for i in set(sn)|set(rn)
+                      if '/thermal-zones/' in i and i.count('/')==2)
+          result={'schema':'VEUX_R40_DIRECT_V1','dynamic':8,'matching_declarations':same,
+                  'r20_size_mib':200,'gpu_cooling_providers':gpu,'thermal_status_differences':thermal,
+                  'vendor_files':7,'historical_imports':2264,'crc_matches':1064,'crc_mismatches':1193,
+                  'missing_exports':7,'runtime_module_proven':False,'boot_ready':False,
+                  'vendor_abi_proven':False,'flash_allowed':False}
+          (out/'R40_RESULT.json').write_text(json.dumps(result,indent=2)+'\n')
+          with (out/'R40_DYNAMIC.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+          with (out/'R40_VENDOR.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(chosen[0]));w.writeheader();w.writerows(chosen)
+          (out/'R40_BERICHT.txt').write_text('READ-ONLY R40 Direkt: '+json.dumps(result)+'\nKEIN BOOT / KEIN FLASH.\n')
+          print('R40_OFFLINE_REVIEW_PASS',result)
+          PY
+          test -s "$RUNNER_TEMP/r40report/R40_RESULT.json"
+          test -z "$(git status --porcelain)"
+          (cd "$RUNNER_TEMP/r40report" && sha256sum R40_* R39_TESTS.log > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R40-DIREKT-${{ github.run_id }}
+          path: ${{ runner.temp }}/r40report/
+          retention-days: 14
+          if-no-files-found: error
