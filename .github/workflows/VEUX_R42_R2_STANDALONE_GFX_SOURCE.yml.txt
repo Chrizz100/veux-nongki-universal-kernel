@@ -1,0 +1,492 @@
+name: VEUX R42-R2 standalone Stock gfx-cdev source capture - NO BUILD NO FLASH
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-r42-r2-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r42:
+    name: Pinned Stock/R20 DTBO0 source property evidence, read-only
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R42_STAGE: /tmp/veux-r42-r2-stage
+      R42_REPORT: /tmp/veux-r42-r2-report
+    steps:
+      - name: Checkout exact triggering commit read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Pin original archives and create self-contained verified Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This single uploaded YAML owns its execution code; no second repo script.
+          test -s VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+          test -s VEUX_R37_DEVICE_EVIDENCE.zip
+          printf '%s  %s\n' \
+            '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528' 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip' \
+            | sha256sum -c -
+          test "$(git rev-parse HEAD:VEUX_R39_R2_MEMORY_ABI_MAIN.zip)" = '6034e7c9f6e88ccc547151b64303ea91d5b974c3'
+          test "$(git rev-parse HEAD:VEUX_R37_DEVICE_EVIDENCE.zip)" = 'dc16a565659acef4cb916baee1978f1ac90a8b3c'
+          mkdir -p "$R42_STAGE/scripts" "$R42_STAGE/tests" "$R42_STAGE/fixtures" "$R42_REPORT"
+          cat > "$R42_STAGE/scripts/r42_stock_capture.py" <<'PY_R42_PROGRAM'
+          #!/usr/bin/env python3
+          """R42-R2: read-only capture of Stock VEUX GPU cooling node and references.
+          
+          All input binaries remain untouched. The output is evidence, NOT an applicable patch.
+          """
+          import argparse
+          import hashlib
+          import io
+          import json
+          import pathlib
+          import stat
+          import struct
+          import subprocess
+          import tempfile
+          import zipfile
+          
+          R39_SHA256 = '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R20_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+          STOCK_GFX = '/soc/qcom,rpm-smd/rpm-regulator-smpa8/gfx-cdev'
+          R20_GFX = '/soc/devfreq-vdd-cdev'
+          
+          
+          def require(condition, label):
+              if not condition:
+                  raise ValueError(label)
+          
+          
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def members(archive, required):
+              """Return selected members after checking archive integrity and safe boundaries."""
+              with zipfile.ZipFile(archive) as z:
+                  infos = z.infolist()
+                  names = [x.filename for x in infos]
+                  require(len(names) == len(set(names)), 'ZIP_DUPLICATE_MEMBERS')
+                  require(z.testzip() is None, 'ZIP_BAD_CRC')
+                  require(len(infos) <= 35, 'ZIP_TOO_MANY_MEMBERS')
+                  require(sum(x.file_size for x in infos) < 20_000_000, 'ZIP_TOTAL_TOO_LARGE')
+                  for info in infos:
+                      path = pathlib.PurePosixPath(info.filename)
+                      require(not path.is_absolute() and '..' not in path.parts, 'ZIP_UNSAFE_PATH')
+                      require(not stat.S_ISLNK(info.external_attr >> 16), 'ZIP_UNSAFE_SYMLINK')
+                      require(info.file_size < 8_000_000, 'ZIP_MEMBER_TOO_LARGE')
+                  require(set(required) <= set(names), 'ZIP_REQUIRED_MISSING')
+                  return {name: z.read(name) for name in required}
+          
+          
+          def merge(dtb, overlay):
+              with tempfile.TemporaryDirectory(prefix='veux-r42-dtbo-') as tmp:
+                  tmp = pathlib.Path(tmp)
+                  base = tmp / 'base.dtb'
+                  over = tmp / 'candidate.dtbo'
+                  merged = tmp / 'merged.dtb'
+                  base.write_bytes(dtb)
+                  over.write_bytes(overlay)
+                  p = subprocess.run(['fdtoverlay', '-i', str(base), '-o', str(merged), str(over)],
+                                     capture_output=True, timeout=45, check=False)
+                  require(p.returncode == 0, 'FDTOVERLAY_FAILED:' + p.stderr[:100].decode(errors='replace'))
+                  return merged.read_bytes()
+          
+          
+          def fdt_properties(data):
+              """Parse FDT nodes and raw properties, with strict header and bounds checks."""
+              require(len(data) >= 40 and len(data) < 8_000_000, 'FDT_SIZE')
+              hdr = struct.unpack_from('>10I', data)
+              magic, total, offset_struct, offset_strings, _off_mem, _ver, _last, _boot, size_strings, size_struct = hdr
+              require(magic == 0xd00dfeed and 40 <= total <= len(data), 'FDT_HEADER')
+              require(offset_struct >= 40 and offset_struct + size_struct <= total, 'FDT_STRUCT_BOUNDS')
+              require(offset_strings >= 40 and offset_strings + size_strings <= total, 'FDT_STRING_BOUNDS')
+              nodes = {}
+              stack = []
+              pos = offset_struct
+              end = offset_struct + size_struct
+              while pos + 4 <= end:
+                  token = struct.unpack_from('>I', data, pos)[0]
+                  pos += 4
+                  if token == 1:  # BEGIN_NODE
+                      require(b'\0' in data[pos:end], 'FDT_UNTERMINATED_NODE')
+                      finish = data.index(b'\0', pos, end)
+                      name = data[pos:finish].decode('utf-8')
+                      pos = (finish + 4) & ~3
+                      path = stack[-1].rstrip('/') + '/' + name if stack else '/'
+                      require(path not in nodes, 'FDT_DUPLICATE_NODE')
+                      nodes[path] = {}
+                      stack.append(path)
+                  elif token == 2:  # END_NODE
+                      require(bool(stack), 'FDT_UNBALANCED_END')
+                      stack.pop()
+                  elif token == 3:  # PROP
+                      require(bool(stack) and pos + 8 <= end, 'FDT_INVALID_PROPERTY_HEADER')
+                      length, off = struct.unpack_from('>II', data, pos)
+                      pos += 8
+                      require(length < 1_000_000 and pos + length <= end, 'FDT_PROPERTY_BOUNDS')
+                      require(off < size_strings, 'FDT_PROPERTY_STRING_OFFSET')
+                      name_start = offset_strings + off
+                      require(b'\0' in data[name_start:offset_strings + size_strings], 'FDT_UNTERMINATED_KEY')
+                      key_end = data.index(b'\0', name_start, offset_strings + size_strings)
+                      key = data[name_start:key_end].decode('utf-8')
+                      require(key not in nodes[stack[-1]], 'FDT_DUPLICATE_PROPERTY')
+                      nodes[stack[-1]][key] = data[pos:pos + length]
+                      pos = (pos + length + 3) & ~3
+                  elif token == 4:  # NOP
+                      continue
+                  elif token == 9:  # END
+                      require(not stack, 'FDT_UNCLOSED_NODES')
+                      return nodes
+                  else:
+                      raise ValueError('FDT_UNKNOWN_TOKEN')
+              raise ValueError('FDT_NO_END')
+          
+          
+          def status(props):
+              return props.get('status', b'okay\0').rstrip(b'\0').decode('ascii')
+          
+          
+          def phandle(props):
+              val = props.get('phandle') or props.get('linux,phandle')
+              require(val is not None and len(val) == 4, 'INVALID_PROVIDER_PHANDLE')
+              ident = int.from_bytes(val, 'big')
+              require(ident != 0, 'INVALID_PROVIDER_PHANDLE_ZERO')
+              return ident
+          
+          
+          def cooling_maps(tree, provider_path, tree_name):
+              ident = phandle(tree[provider_path])
+              rows = []
+              for path, props in sorted(tree.items()):
+                  if '/thermal-zones/' not in path or '/cooling-maps/' not in path:
+                      continue
+                  cells = props.get('cooling-device', b'')
+                  require(len(cells) % 4 == 0, 'COOLING_CELLS_UNALIGNED')
+                  if len(cells) >= 4 and int.from_bytes(cells[:4], 'big') == ident:
+                      # The original R41 evidence identifies single entries with two cells.
+                      require(len(cells) == 12, 'COOLING_CELLS_AMBIGUOUS')
+                      rows.append({'tree': tree_name, 'map_path': path, 'provider_path': provider_path,
+                                   'phandle': ident, 'min_state': int.from_bytes(cells[4:8], 'big'),
+                                   'max_state': int.from_bytes(cells[8:12], 'big')})
+              require(len(rows) == 2, 'COOLING_REFERENCES_NOT_TWO:' + tree_name)
+              return rows
+          
+          
+          def format_comment(key, value):
+              if value and value.endswith(b'\0') and all(i == 0 or 32 <= i <= 126 for i in value):
+                  rendered = ', '.join(json.dumps(s.decode('ascii')) for s in value.rstrip(b'\0').split(b'\0'))
+              elif not value:
+                  rendered = ''
+              elif len(value) % 4 == 0:
+                  rendered = '<' + ' '.join(f'0x{int.from_bytes(value[i:i + 4], "big"):08x}' for i in range(0, len(value), 4)) + '>'
+              else:
+                  rendered = '[' + value.hex(' ') + ']'
+              return f'/* {key} = {rendered}; */'
+          
+          
+          def run(root, out):
+              r39 = root / 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip'
+              r37 = root / 'VEUX_R37_DEVICE_EVIDENCE.zip'
+              require(r39.is_file() and r37.is_file(), 'SOURCE_ARCHIVE_MISSING')
+              require(digest(r39.read_bytes()) == R39_SHA256, 'R39_HASH_DRIFT')
+              r38bytes = members(r39, ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])[
+                  'evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']
+              r20 = members(io.BytesIO(r38bytes), ['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+              require(digest(r20) == R20_DTB_SHA256, 'R20_DTB_DRIFT')
+              e = members(r37, ['R37_VENDOR_BOOT_BASE.dtb', 'R37_DTBO_CANDIDATE0.dtbo'])
+              stock, overlay = e['R37_VENDOR_BOOT_BASE.dtb'], e['R37_DTBO_CANDIDATE0.dtbo']
+              stock_tree = fdt_properties(merge(stock, overlay))
+              r20_tree = fdt_properties(merge(r20, overlay))
+              require(STOCK_GFX in stock_tree and STOCK_GFX not in r20_tree and R20_GFX in r20_tree,
+                      'R41_NODE_RELATION_CHANGED')
+              stock_node = stock_tree[STOCK_GFX]
+              r20_node = r20_tree[R20_GFX]
+              require(status(stock_node) != 'disabled' and
+                      b'qcom,regulator-cooling-device\0' in stock_node.get('compatible', b''),
+                      'STOCK_PROVIDER_INVALID')
+              require(status(r20_node) != 'disabled' and
+                      b'qcom,devfreq-vdd-cooling-device\0' in r20_node.get('compatible', b''),
+                      'R20_PROVIDER_INVALID')
+              rows = cooling_maps(stock_tree, STOCK_GFX, 'STOCK') + cooling_maps(r20_tree, R20_GFX, 'R20')
+              require(set(row['min_state'] for row in rows if row['tree'] == 'STOCK') == {1} and
+                      set(row['max_state'] for row in rows if row['tree'] == 'STOCK') == {1} and
+                      set(row['min_state'] for row in rows if row['tree'] == 'R20') == {2} and
+                      set(row['max_state'] for row in rows if row['tree'] == 'R20') == {2},
+                      'R41_STATE_RELATION_CHANGED')
+              context_paths = [STOCK_GFX.rsplit('/', 1)[0], STOCK_GFX.rsplit('/', 2)[0]]
+              properties = {k: v.hex() for k, v in sorted(stock_node.items())}
+              regulator_levels = stock_node.get('regulator-levels')
+              # Parent / ancestor supply properties are preserved as raw bytes. A missing
+              # supply is reported, never fabricated or silently accepted as patched.
+              context = {p: {k: v.hex() for k, v in sorted(stock_tree.get(p, {}).items())
+                             if 'supply' in k or k in ('compatible', 'status')}
+                         for p in context_paths}
+              fragment = ['/* R42-R2 STOCK SOURCE REFERENCE ONLY - NOT APPLICABLE AS PATCH */',
+                          '/* DTBO index 0 is an OFFLINE candidate; bootloader selection UNPROVEN */',
+                          '/* Parent: ' + context_paths[0] + ' */']
+              fragment.extend(format_comment(k, v) for k, v in sorted(stock_node.items())
+                              if k not in ('phandle', 'linux,phandle'))
+              result = {'schema': 'VEUX_R42_R2_STOCK_GFX_EVIDENCE_V1',
+                        'r39_sha256': R39_SHA256, 'r37_sha256': digest(r37.read_bytes()),
+                        'r20_dtb_sha256': R20_DTB_SHA256, 'stock_gfx_path': STOCK_GFX,
+                        'r20_gfx_path': R20_GFX, 'stock_properties_hex': properties,
+                        'stock_regulator_levels_hex': regulator_levels.hex() if regulator_levels is not None else None,
+                        'supply_context_hex': context, 'cooling_maps': rows,
+                        'source_patch_applied': False, 'kernel_built': False,
+                        'boot_ready': False, 'flash_allowed': False, 'vendor_abi_proven': False,
+                        'runtime_driver_probe_proven': False, 'source_dts_path_proven': False,
+                        'bootloader_dtbo0_choice_proven': False,
+                        'result': 'STOCK_GFX_PROPERTIES_EXTRACTED_NOT_PATCHED'}
+              out.mkdir(parents=True, exist_ok=True)
+              (out / 'R42_RESULT.json').write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
+              (out / 'R42_STOCK_GFX_PROPERTIES.dtsi.txt').write_text('\n'.join(fragment) + '\n')
+              (out / 'R42_BERICHT_DE.txt').write_text(
+                  'R42-R2: Originale Stock-Eigenschaften des aktiven smpa8/gfx-cdev und zwei Thermal-Mappings gelesen.\n'
+                  'Nur Quelleigenschaften, KEIN anwendbarer Patch. Stock-/R20 DTBO0 nur offline gemerged.\n'
+                  'Offen: originaler Quell-DTS-Pfad, Versorgung/Regler-Semantik, Runtime-Probe, Vendor-ABI.\n'
+                  'BReNE, Kernelquellen und Stockkernel unveraendert. BOOT_READY=NO; FLASH=NO.\n')
+              return result
+          
+          
+          def main():
+              p = argparse.ArgumentParser()
+              p.add_argument('--root', type=pathlib.Path, required=True)
+              p.add_argument('--out', type=pathlib.Path, required=True)
+              args = p.parse_args()
+              result = run(args.root, args.out)
+              print('R42_STOCK_SOURCE_READ_PASS', result['result'],
+                    'COOLING_MAPS=', len(result['cooling_maps']), 'BOOT_READY=NO; FLASH=NO')
+          
+          
+          if __name__ == '__main__':
+              main()
+          PY_R42_PROGRAM
+          cat > "$R42_STAGE/tests/test_r42_capture.py" <<'PY_R42_TESTS'
+          #!/usr/bin/env python3
+          """Real-R20 fixture tests and adversarial syntax/security regressions for R42-R2."""
+          import io
+          import os
+          import pathlib
+          import stat
+          import struct
+          import sys
+          import tempfile
+          import unittest
+          import warnings
+          import zipfile
+          
+          sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
+          import r42_stock_capture as g
+          
+          
+          class R42Regression(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.fixture = pathlib.Path(os.environ['R42_FIXTURE'])
+                  cls.binary = cls.fixture.read_bytes()
+                  cls.tree = g.fdt_properties(cls.binary)
+          
+              def test_real_r20_hash(self):
+                  self.assertEqual(g.digest(self.binary), g.R20_DTB_SHA256)
+          
+              def test_real_r20_fdt_nodes(self):
+                  self.assertEqual(len(self.tree), 1829)
+                  self.assertIn(g.R20_GFX, self.tree)
+                  self.assertEqual(g.status(self.tree[g.R20_GFX]), 'okay')
+          
+              def test_real_r20_gpu_cooling_refs(self):
+                  rows = g.cooling_maps(self.tree, g.R20_GFX, 'R20')
+                  self.assertEqual([r['min_state'] for r in rows], [2, 2])
+                  self.assertEqual([r['max_state'] for r in rows], [2, 2])
+                  self.assertTrue(all(r['phandle'] == 81 for r in rows))
+          
+              def test_real_r20_provider_compatible(self):
+                  self.assertIn(b'qcom,devfreq-vdd-cooling-device\0', self.tree[g.R20_GFX]['compatible'])
+          
+              def test_invalid_magic_rejected(self):
+                  b = bytearray(self.binary)
+                  b[0] ^= 255
+                  with self.assertRaisesRegex(ValueError, 'FDT_HEADER'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_total_length_rejected(self):
+                  b = bytearray(self.binary)
+                  b[4:8] = struct.pack('>I', 39)
+                  with self.assertRaisesRegex(ValueError, 'FDT_HEADER'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_structure_bounds_rejected(self):
+                  b = bytearray(self.binary)
+                  b[36:40] = struct.pack('>I', len(b))
+                  with self.assertRaisesRegex(ValueError, 'FDT_STRUCT_BOUNDS'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_invalid_string_bounds_rejected(self):
+                  b = bytearray(self.binary)
+                  b[32:36] = struct.pack('>I', len(b))
+                  with self.assertRaisesRegex(ValueError, 'FDT_STRING_BOUNDS'):
+                      g.fdt_properties(bytes(b))
+          
+              def test_phandle_validation(self):
+                  with self.assertRaisesRegex(ValueError, 'INVALID_PROVIDER_PHANDLE'):
+                      g.phandle({'phandle': b'\0\1'})
+                  with self.assertRaisesRegex(ValueError, 'INVALID_PROVIDER_PHANDLE_ZERO'):
+                      g.phandle({'phandle': b'\0\0\0\0'})
+          
+              def test_disabled_status(self):
+                  self.assertEqual(g.status({}), 'okay')
+                  self.assertEqual(g.status({'status': b'disabled\0'}), 'disabled')
+          
+              def test_ambiguous_cooling_cell_rejected(self):
+                  tree = {g.R20_GFX: {'phandle': struct.pack('>I', 81)},
+                          '/soc/thermal-zones/z/cooling-maps/a': {'cooling-device': struct.pack('>II', 81, 2)}}
+                  with self.assertRaisesRegex(ValueError, 'COOLING_CELLS_AMBIGUOUS'):
+                      g.cooling_maps(tree, g.R20_GFX, 'R20')
+          
+              def test_zero_cooling_maps_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'COOLING_REFERENCES_NOT_TWO'):
+                      g.cooling_maps({g.R20_GFX: {'phandle': struct.pack('>I', 81)}}, g.R20_GFX, 'R20')
+          
+              def test_property_comment_formatting(self):
+                  self.assertIn('"okay"', g.format_comment('status', b'okay\0'))
+                  self.assertIn('0x00000002', g.format_comment('cells', struct.pack('>I', 2)))
+                  self.assertIn('[01 02 03]', g.format_comment('raw', b'\x01\x02\x03'))
+          
+              @staticmethod
+              def fake_zip(names, symlink=False):
+                  out = io.BytesIO()
+                  with warnings.catch_warnings():
+                      warnings.simplefilter('ignore', UserWarning)
+                      with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                          for idx, name in enumerate(names):
+                              info = zipfile.ZipInfo(name)
+                              if symlink and idx == 0:
+                                  info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                              z.writestr(info, b'data')
+                  out.seek(0)
+                  return out
+          
+              def test_zip_duplicate_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_DUPLICATE_MEMBERS'):
+                      g.members(self.fake_zip(['test.txt', 'test.txt']), ['test.txt'])
+          
+              def test_zip_traversal_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_UNSAFE_PATH'):
+                      g.members(self.fake_zip(['../test.txt']), ['../test.txt'])
+          
+              def test_zip_symlink_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_UNSAFE_SYMLINK'):
+                      g.members(self.fake_zip(['test.txt'], symlink=True), ['test.txt'])
+          
+              def test_zip_missing_member_rejected(self):
+                  with self.assertRaisesRegex(ValueError, 'ZIP_REQUIRED_MISSING'):
+                      g.members(self.fake_zip(['test.txt']), ['missing.txt'])
+          
+              def test_original_r39_nested_r20(self):
+                  root = pathlib.Path(os.environ['R42_ROOT'])
+                  real_zip = (root / 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip').read_bytes()
+                  self.assertEqual(g.digest(real_zip), g.R39_SHA256)
+                  r38 = g.members(io.BytesIO(real_zip),
+                                  ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])
+                  dtb = g.members(io.BytesIO(r38['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip']),
+                                  ['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+                  self.assertEqual(g.digest(dtb), g.R20_DTB_SHA256)
+          
+          
+          if __name__ == '__main__':
+              unittest.main()
+          PY_R42_TESTS
+          printf '%s  %s\n' '4dbb740edb849ccbd007503a6eac05f43f62c707a9b251e4eeee4480b0729cbe' "$R42_STAGE/scripts/r42_stock_capture.py" \
+            'fa344f4bcafa1d959ee074f7585653d0a50bb415c809608f4f65b0d8aabdddfd' "$R42_STAGE/tests/test_r42_capture.py" | sha256sum -c -
+          python3 -B - "$R42_STAGE" <<'PY_R42_SYNTAX'
+          import ast,pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          for p in [root/'scripts/r42_stock_capture.py',root/'tests/test_r42_capture.py']:
+              ast.parse(p.read_text(encoding='utf-8'))
+          print('R42_R2_PYTHON_SYNTAX=PASS')
+          PY_R42_SYNTAX
+      - name: Check this exact workflow with actionlint and ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          unzip -p VEUX_R39_R2_MEMORY_ABI_MAIN.zip tools/actionlint > "$R42_STAGE/actionlint"
+          chmod 0755 "$R42_STAGE/actionlint"
+          "$R42_STAGE/actionlint" -version | grep -Fx '1.7.12'
+          "$R42_STAGE/actionlint" -color=false -shellcheck="$(command -v shellcheck)" \
+            .github/workflows/VEUX_R42_R2_STANDALONE_GFX_SOURCE.yml
+          echo 'R42_R2_ACTIONLINT_AND_SHELLCHECK=PASS'
+      - name: Run 18 real-fixture and adversarial regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - "$R42_STAGE" "$GITHUB_WORKSPACE" <<'PY_R42_FIXTURE'
+          import io,pathlib,sys
+          root=pathlib.Path(sys.argv[1]);repo=pathlib.Path(sys.argv[2])
+          sys.path.insert(0,str(root/'scripts'))
+          import r42_stock_capture as g
+          z=g.members(repo/'VEUX_R39_R2_MEMORY_ABI_MAIN.zip',
+                      ['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])
+          r38=io.BytesIO(z['evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip'])
+          r20=g.members(r38,['evidence/R20_VEUX.dtb'])['evidence/R20_VEUX.dtb']
+          g.require(g.digest(r20)==g.R20_DTB_SHA256,'PINNED_R20_FIXTURE_DRIFT')
+          (root/'fixtures/R20_VEUX.dtb').write_bytes(r20)
+          print('R42_R2_FIXTURE_FROM_PINNED_R39=PASS')
+          PY_R42_FIXTURE
+          export R42_FIXTURE="$R42_STAGE/fixtures/R20_VEUX.dtb"
+          export R42_ROOT="$GITHUB_WORKSPACE"
+          python3 -B -W error::ResourceWarning -m unittest discover -s "$R42_STAGE/tests" \
+            -p 'test_r42_capture.py' -v 2>&1 | tee "$R42_REPORT/R42_TESTS.log"
+          echo 'R42_R2_REGRESSION_18_OF_18=PASS'
+      - name: Extract exact Stock gfx-cdev properties and cooling maps offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          fi
+          command -v fdtoverlay
+          python3 -B "$R42_STAGE/scripts/r42_stock_capture.py" \
+            --root "$GITHUB_WORKSPACE" --out "$R42_REPORT"
+      - name: Validate evidence, hashes, nonflashable output and repository cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R42_REPORT" <<'PY_R42_GUARD'
+          import json,pathlib,sys
+          out=pathlib.Path(sys.argv[1])
+          expected={'R42_RESULT.json','R42_STOCK_GFX_PROPERTIES.dtsi.txt',
+                    'R42_BERICHT_DE.txt','R42_TESTS.log'}
+          actual={p.name for p in out.iterdir() if p.is_file()}
+          if actual!=expected: raise SystemExit('R42_UNEXPECTED_OUTPUT_FILES:'+repr(actual))
+          r=json.loads((out/'R42_RESULT.json').read_text(encoding='utf-8'))
+          if r.get('schema')!='VEUX_R42_R2_STOCK_GFX_EVIDENCE_V1':raise SystemExit('R42_SCHEMA_DRIFT')
+          if r.get('result')!='STOCK_GFX_PROPERTIES_EXTRACTED_NOT_PATCHED':raise SystemExit('R42_RESULT_DRIFT')
+          if len(r['cooling_maps'])!=4:raise SystemExit('R42_COOLING_MAP_COUNT_CHANGED')
+          for key in ('source_patch_applied','kernel_built','boot_ready','flash_allowed',
+                      'vendor_abi_proven','runtime_driver_probe_proven','source_dts_path_proven',
+                      'bootloader_dtbo0_choice_proven'):
+              if r.get(key) is not False: raise SystemExit('R42_UNSAFE_SUCCESS_FLAG:'+key)
+          print('R42_R2_GUARDS=PASS; SOURCE_PATCH=NO; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          PY_R42_GUARD
+          (cd "$R42_REPORT" && sha256sum R42_* > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+          test -z "$(git status --porcelain)"
+          if find "$R42_REPORT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' -o -name '*.dtbo' \) | grep -q .; then
+            echo 'R42_OUTPUT_CONTAINS_FLASHABLE_BINARY' >&2; exit 1
+          fi
+          echo 'R42_R2_REPOSITORY_UNCHANGED=YES; FLASH=NO'
+      - name: Upload only nonflashable verified R42 evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R42-R2-STOCK-GFX-${{ github.run_id }}
+          path: /tmp/veux-r42-r2-report/
+          retention-days: 14
+          if-no-files-found: error
