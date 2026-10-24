@@ -1,0 +1,188 @@
+name: VEUX R39 R2 - Memory GPU Cooling Null Guard and Vendor Provenance - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r39-r2-readonly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r39:
+    name: R39 pinned FDT reservations GPU cooling and RMNET provenance - NO FLASH
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R39_ZIP: VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+      R39_DEVICE: VEUX_R37_DEVICE_EVIDENCE.zip
+      R39_ZIP_SHA256: '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+      R39_DIR: /tmp/veux-r39-r2-input
+      R39_OUT: /tmp/veux-r39-r2-results
+    steps:
+      - name: Checkout main read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate immutable R39 and R37 evidence then extract safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R39_ZIP"
+          test -s "$R39_DEVICE"
+          printf '%s  %s\n' "$R39_ZIP_SHA256" "$R39_ZIP" | sha256sum -c -
+          mkdir -p "$R39_DIR" "$R39_OUT"
+          python3 - "$R39_ZIP" "$R39_DIR" <<'PY_R39_EXTRACT'
+          import pathlib,stat,sys,zipfile
+          source=pathlib.Path(sys.argv[1]);target=pathlib.Path(sys.argv[2]);total=0
+          with zipfile.ZipFile(source) as z:
+              members=z.infolist();names=[f.filename for f in members]
+              expected={
+                  'MANIFEST_SHA256.json','README_ZUERST_DE.txt',
+                  'evidence/VEUX_R30_ABI_ORIGINALMODULE_NACHWEIS_20261023.zip',
+                  'evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip',
+                  'evidence/VEUX_R38_RUN_40080527188_ERGEBNIS.zip',
+                  'scripts/r34_gate.py','scripts/r37_gate.py','scripts/r38_gate.py',
+                  'scripts/r39_gate.py','tests/test_r39.py','tools/actionlint'
+              }
+              if len(members)!=len(expected) or set(names)!=expected or len(set(names))!=len(names):
+                  raise SystemExit('R39_ZIP_MEMBER_LIST_MISMATCH_OR_DUPLICATE')
+              for m in members:
+                  p=pathlib.PurePosixPath(m.filename)
+                  if (m.is_dir() or p.is_absolute() or '..' in p.parts or
+                      '\\' in m.filename or stat.S_ISLNK(m.external_attr>>16)):
+                      raise SystemExit('R39_UNSAFE_ZIP_MEMBER')
+                  total+=m.file_size
+                  if m.file_size>7_000_000 or m.compress_size>7_000_000 or total>17_000_000:
+                      raise SystemExit('R39_ARCHIVE_SIZE_GUARD')
+              if z.testzip() is not None:raise SystemExit('R39_ARCHIVE_CRC_FAILURE')
+              z.extractall(target)
+          print('R39_ROOT_PACKAGE_EXTRACTED_SAFELY=PASS')
+          PY_R39_EXTRACT
+
+      - name: Verify SHA-256 manifest and exact original R30 and R38 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R39_DIR" <<'PY_R39_PIN'
+          import pathlib,sys
+          root=pathlib.Path(sys.argv[1]);sys.path.insert(0,str(root/'scripts'))
+          import r39_gate
+          original,bound,vendor,diff,capture,deployed,variants=r39_gate.verify_original_reports(root)
+          assert len(bound)==503 and len(vendor)==218 and len(diff)==499
+          assert capture['conclusion']['actual_loading_path_proven'] is False
+          assert original['boot_ready'] is False
+          print('R39_R30_R38_ORIGINAL_AND_PACKAGE_PIN=PASS')
+          PY_R39_PIN
+
+      - name: Static Green actionlint 1.7.12 and genuine runner ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R39_DIR/tools/actionlint"
+          "$R39_DIR/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R39_R2_*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]] || [[ "${workflows[0]}" != '.github/workflows/VEUX_R39_R2_MEMORY_ABI_GATE.yml' ]]; then
+            echo 'R39_WORKFLOW_FILENAME_MUST_MATCH_EXACTLY' >&2
+            exit 1
+          fi
+          "$R39_DIR/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R39_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+      - name: Python syntax and 64 defensive regression tests including missing gfx-cdev
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R39_DIR" <<'PY_R39_PYTHON'
+          import pathlib,sys
+          root=pathlib.Path(sys.argv[1])
+          for rel in ('scripts/r34_gate.py','scripts/r37_gate.py','scripts/r38_gate.py',
+                      'scripts/r39_gate.py','tests/test_r39.py'):
+              path=root/rel
+              compile(path.read_bytes(),str(path),'exec')
+          print('R39_PYTHON_SYNTAX=PASS')
+          PY_R39_PYTHON
+          python3 -B -W error::ResourceWarning -m unittest discover -v -s "$R39_DIR/tests" -p test_r39.py 2>&1 | tee "$R39_OUT/R39_TESTS.log"
+          echo 'R39_R2_ALL_64_REGRESSIONS=PASS'
+
+      - name: Install authentic offline fdtoverlay if absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v fdtoverlay >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends device-tree-compiler
+          fi
+          command -v fdtoverlay
+          echo 'R39_REAL_OFFLINE_FDTOVERLAY=READY'
+
+      - name: Audit actual reg ranges GPU cooling and historic module provenance offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R39_DIR/scripts/r39_gate.py" \
+            --bundle "$R39_DIR" \
+            --device-zip "$GITHUB_WORKSPACE/$R39_DEVICE" \
+            --out "$R39_OUT"
+          python3 - "$R39_OUT/R39_RESULT.json" <<'PY_R39_GUARD'
+          import json,sys
+          result=json.load(open(sys.argv[1],encoding='utf8'))
+          assert result['schema']=='VEUX_R39_PINNED_MEMORY_RESERVATION_ABI_PROVENANCE_V1'
+          assert result['status']=='R39_READONLY_RESERVED_MEMORY_GPU_COOLING_AND_HISTORICAL_MODULE_PROVENANCE_REVIEW_BOOT_BLOCKED'
+          assert result['index0_offline_merged_stock_nodes']==2652
+          assert result['index0_offline_merged_r20_nodes']==2200
+          assert result['r35_65_after_overlay_matching']==65
+          assert result['stock_bound_matching_compatible_and_status']==494
+          assert result['remaining_stock_bound_structural_exceptions']==9
+          assert result['jtag_debug_exceptions']==8
+          assert result['gfx_cooling_bound_node_missing_r20']==1
+          assert result['stock_reserved_nodes_examined']>0 and result['r20_reserved_nodes_examined']>0
+          assert result['historical_vendor_files_reviewed']==218
+          assert result['r30_loaded_build_id_matched_archive_modules']==2
+          assert result['thermals_status_difference_nodes']==9
+          for flag in ('r30_module_full_file_identity_or_load_path_proven',
+                       'vendor_modules_load_is_runtime_load_proof',
+                       'stock_vendor_boot_dtbo_composition_is_live_fdt_proof',
+                       'r20_source_changed','device_modified','brene_changed',
+                       'vendor_abi_proven','boot_ready','flash_allowed','kernel_built'):
+              assert result[flag] is False,flag
+          print('R39_MEM_INTERVALS_REVIEWED=YES; VENDOR_ABI=UNPROVEN; BOOT=NO; FLASH=NO')
+          PY_R39_GUARD
+          cat "$R39_OUT/R39_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify all report hashes with no source write no bootable files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in R39_RESULT.json R39_BERICHT_DE.txt R39_RESERVED_MEMORY.csv \
+                      R39_INTERNAL_RESERVATION_OVERLAPS.csv R39_MEMRESERVE_HEADER.csv \
+                      R39_GPU_COOLING.csv R39_R38_9_DRIVER_EXCEPTIONS.csv \
+                      R39_THERMAL_STATUS_DIFF.csv R39_VENDOR_218_REVIEW.csv \
+                      R39_TESTS.log SHA256SUMS.txt; do
+            test -s "$R39_OUT/$name"
+          done
+          (cd "$R39_OUT" && sha256sum -c SHA256SUMS.txt)
+          if find "$R39_OUT" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' -o -name '*.dtbo' -o -name '*.sh' -o -name '*.zip' \) | grep -q .; then
+            echo 'R39_FORBIDDEN_FLASHABLE_OR_RAW_FDT_ARTIFACT' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'R39_REPOSITORY_MODIFIED' >&2
+            exit 1
+          fi
+          echo 'R39_REPOSITORY_UNCHANGED=YES; BUILD=NO; FLASH=NO'
+
+      - name: Upload read-only R39 memory and historical vendor ABI evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R39-R2-MEMORY-VENDOR-REVIEW-${{ github.run_id }}
+          path: ${{ env.R39_OUT }}
+          retention-days: 14
+          if-no-files-found: error
