@@ -1,0 +1,158 @@
+name: VEUX R35 - Targeted DTB Vendor Boot Priority and Source Gate - NO BUILD NO FLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r35-readonly-priority-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: R35 pinned R34 originals plus boot-chain priority and no-flash gate
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R35_ARCHIVE: VEUX_R35_DTB_BOOT_PRIORITY_MAIN.zip
+      R35_ARCHIVE_SHA256: '9c649dbd6d90dd4c815d0bd8a827bf342797214082cd9ecd3a129cc7ada690f6'
+      R35_INPUT: /tmp/veux-r35-input
+      R35_RESULT_DIR: /tmp/veux-r35-results
+    steps:
+      - name: Checkout main read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate immutable root ZIP and safely extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$R35_ARCHIVE"
+          printf '%s  %s\n' "$R35_ARCHIVE_SHA256" "$R35_ARCHIVE" | sha256sum -c -
+          mkdir -p "$R35_INPUT" "$R35_RESULT_DIR"
+          python3 - "$R35_ARCHIVE" "$R35_INPUT" <<'PY_R35_EXTRACT'
+          from pathlib import Path, PurePosixPath
+          import stat,sys,zipfile
+          path=Path(sys.argv[1]);dest=Path(sys.argv[2]);size=0
+          with zipfile.ZipFile(path) as z:
+              infos=z.infolist()
+              names=[x.filename for x in infos if not x.is_dir()]
+              if len(names)!=13 or len(set(names))!=len(names):
+                  raise SystemExit('R35_BAD_ARCHIVE_FILE_SET_OR_DUPLICATE')
+              for item in infos:
+                  p=PurePosixPath(item.filename)
+                  if p.is_absolute() or '..' in p.parts or '\\' in item.filename or stat.S_ISLNK(item.external_attr>>16):
+                      raise SystemExit('R35_UNSAFE_ARCHIVE_PATH')
+                  size+=item.file_size
+                  if item.file_size>8_000_000 or size>26_000_000:
+                      raise SystemExit('R35_ARCHIVE_BOUNDS_EXCEEDED')
+              if z.testzip() is not None:
+                  raise SystemExit('R35_ZIP_CRC_FAILED')
+              z.extractall(dest)
+          print('R35_ARCHIVE_SAFE_EXTRACTION=PASS')
+          PY_R35_EXTRACT
+
+      - name: Verify every input file and pinned R34 original evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R35_INPUT" <<'PY_R35_MANIFEST'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])
+          sys.path.insert(0,str(root/'scripts'))
+          import r35_audit
+          proof=r35_audit.verified_bundle(root)
+          assert len(proof['files'])==12
+          print('R35_INPUT_MANIFEST_PINNED_HASHES=PASS')
+          PY_R35_MANIFEST
+
+      - name: Static Green actionlint 1.7.12 and runner ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          chmod +x "$R35_INPUT/tools/actionlint"
+          "$R35_INPUT/tools/actionlint" -version | grep -Fx '1.7.12'
+          mapfile -d '' -t workflows < <(find .github/workflows -maxdepth 1 -type f -name 'VEUX_R35_DTB_BOOT_PRIORITY_GATE*.yml' -print0)
+          if [[ "${#workflows[@]}" -ne 1 ]]; then
+            echo 'R35_REQUIRE_EXACTLY_ONE_WORKFLOW_FILE' >&2
+            exit 1
+          fi
+          "$R35_INPUT/tools/actionlint" -color=false -shellcheck="$(command -v shellcheck)" "${workflows[0]}"
+          echo 'R35_ACTIONLINT_1_7_12_SHELLCHECK=PASS'
+
+      - name: Python syntax and 65 independent positive and adversarial regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$R35_INPUT" <<'PY_R35_SYNTAX'
+          from pathlib import Path
+          import sys
+          base=Path(sys.argv[1])
+          for relative in ('scripts/r34_gate.py','scripts/r35_audit.py','tests/test_r35.py'):
+              path=base/relative
+              compile(path.read_bytes(),str(path),'exec')
+          print('R35_PYTHON_SYNTAX=PASS')
+          PY_R35_SYNTAX
+          python3 -B -W error::ResourceWarning -m unittest discover -v -s "$R35_INPUT/tests" -p test_r35.py 2>&1 | tee "$R35_RESULT_DIR/R35_TESTS.log"
+          echo 'R35_65_REGRESSION_TESTS=PASS'
+
+      - name: Independently reconstruct R34 and prioritize 65 DT and Vendor ABI findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R35_INPUT/scripts/r35_audit.py" --bundle "$R35_INPUT" --out "$R35_RESULT_DIR"
+          python3 - "$R35_RESULT_DIR/R35_RESULT.json" <<'PY_R35_GUARD'
+          import json,sys
+          r=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert r['schema']=='VEUX_R35_DT_VENDOR_BOOT_TRIAGE_V1'
+          assert r['status']=='R35_EVIDENCE_PROVEN_PRIORITY_ONLY_BOOT_BLOCKED'
+          assert r['device_nodes']==754 and r['stock_driver_bound_nodes']==503
+          assert r['stock_bound_without_r20_compatible_overlap']==65
+          assert r['unmatched_nodes_with_same_r20_path']==5
+          assert r['unmatched_nodes_without_r20_path']==60
+          assert r['historical_vendor_imports']==14648
+          assert r['historical_vendor_crc_matches']==6960
+          assert r['historical_vendor_crc_mismatches']==7653
+          assert r['historical_vendor_missing_exports']==35
+          assert r['r20_own_module_crc_matches']==307
+          for flag in ('vendor_abi_proven','r20_driver_bindings_proven','boot_ready',
+                       'flash_allowed','kernel_built','source_patch_created',
+                       'device_modified','brene_changed','bakasusu_nomount_changed'):
+              assert r[flag] is False,flag
+          print('R35_65_REPRODUCED=YES; BOOT=NO; VENDOR_ABI=UNPROVEN; FLASH=NO')
+          PY_R35_GUARD
+          cat "$R35_RESULT_DIR/R35_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: SHA checks forbid binaries and verify unchanged repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$R35_RESULT_DIR/R35_RESULT.json"
+          test -s "$R35_RESULT_DIR/R35_65_KNOTEN_PRIORITAET.csv"
+          test -s "$R35_RESULT_DIR/R35_GRUPPEN.csv"
+          (cd "$R35_RESULT_DIR" && sha256sum -c SHA256SUMS.txt)
+          if find "$R35_RESULT_DIR" -type f \( -name '*.ko' -o -name '*.img' -o -name '*.dtb' -o -name '*.sh' -o -name '*.zip' \) | grep -q .; then
+            echo 'R35_UNSAFE_OR_FLASHABLE_OUTPUT' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'R35_REPOSITORY_CHANGED' >&2
+            exit 1
+          fi
+          echo 'R35_WORKTREE_CLEAN=YES; BUILD=NO; FLASH=NO'
+
+      - name: Upload R35 read-only boot-dependency investigation report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R35-BOOT-ABI-TRIAGE-${{ github.run_id }}
+          path: /tmp/veux-r35-results/
+          retention-days: 14
+          if-no-files-found: error
