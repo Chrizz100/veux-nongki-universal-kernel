@@ -1,0 +1,535 @@
+name: VEUX R49 Early RMNET Loader and Recovery Preflight - READ ONLY NO FLASH
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r49-recovery-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r49:
+    name: Historical R30 vendor_boot plus R48 autoload decision, no device changes
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R49_STAGE: /tmp/veux-r49
+    steps:
+      - name: Checkout pinned project evidence read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Authenticate historical vendor_boot proof and materialize independent auditor
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REPOSITORY" in
+            Chrizz100/veux-nongki-universal-kernel) ;;
+            *) echo 'R49_WRONG_REPO' >&2; exit 1 ;;
+          esac
+          test -s VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+          echo '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528  VEUX_R39_R2_MEMORY_ABI_MAIN.zip' | sha256sum -c -
+          mkdir -p "$R49_STAGE/src" "$R49_STAGE/tests" "$R49_STAGE/inputs" "$R49_STAGE/out"
+          cat > "$R49_STAGE/src/r49_gate.py" <<'PY_R49_AUDITOR'
+          #!/usr/bin/env python3
+          """R49: read-only reconciliation of archived R30 vendor_boot and R48 loader evidence.
+          No device data is ingested. No boot/flash rights result from this audit.
+          """
+          import argparse
+          import csv
+          import hashlib
+          import io
+          import json
+          import pathlib
+          import stat
+          import zipfile
+          
+          R39_SHA='745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R48_ZIP_SHA='5c75f909a99ab584a715ded54d0ad9b7451d1c5d21fbb50aabe1caf91a70c0cc'
+          R30_MEMBER='evidence/VEUX_R30_ABI_ORIGINALMODULE_NACHWEIS_20261023.zip'
+          R30_REPORT='R30_ORIGINAL_GERAETEBEFUND.json'
+          R48_REPORT='R48_RESULT.json'
+          R48_MATRIX='R48_LOADER_MATRIX.csv'
+          INIT_SHA='568143f3edf386dda7a13503cea2df6cc03904cfa798e14dfab5487aa8e6403b'
+          VENDOR_RAMDISK_SHA='271a055468a48e45b5cbf3757f38e24620ba7768c572a6e3cd94ee3578473dbb'
+          R44_RUN=40168917960
+          R47_RUN=40176846693
+          R48_RUN=40193017462
+          R48_SHA='3f64fbb2aa6b924c142dbdcc80a2ba4b45df3285'
+          EXPECTED_PROPS={'rmnet_shs':'persist.vendor.data.shs_ko_load','rmnet_offload':'persist.vendor.data.offload_ko_load'}
+          EXPECTED_DIRS={'/vendor/lib/modules','/vendor/lib/modules/5.4-gki'}
+          SCHEMA='VEUX_R49_EARLY_LOADER_RECOVERY_READONLY_V1'
+          
+          
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+          
+          
+          def require(condition, msg):
+              if not condition:
+                  raise ValueError(msg)
+          
+          
+          def archive_members(raw, required, max_size=16_000_000):
+              require(len(raw) <= max_size, 'ZIP_ARCHIVE_OVERSIZE')
+              with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                  members=z.infolist()
+                  names=[x.filename for x in members]
+                  require(len(names)==len(set(names)), 'ZIP_DUPLICATE_MEMBER')
+                  require(set(required).issubset(names), 'ZIP_REQUIRED_MEMBER_MISSING')
+                  for m in members:
+                      pp=pathlib.PurePosixPath(m.filename)
+                      require(not pp.is_absolute() and '..' not in pp.parts and '\\' not in m.filename, 'ZIP_UNSAFE_MEMBER')
+                      require(not stat.S_ISLNK(m.external_attr >> 16), 'ZIP_SYMLINK_MEMBER')
+                      require(m.file_size <= max_size and m.compress_size <= max_size, 'ZIP_MEMBER_OVERSIZE')
+                  require(z.testzip() is None, 'ZIP_BAD_CRC')
+                  return {name:z.read(name) for name in required}
+          
+          
+          def r30_from_r39(raw):
+              require(digest(raw)==R39_SHA, 'R39_PIN_SHA256_INVALID')
+              inner=archive_members(raw, {R30_MEMBER})[R30_MEMBER]
+              m=archive_members(inner, {R30_REPORT})
+              return json.loads(m[R30_REPORT])
+          
+          
+          def r48_from_artifact(raw):
+              require(digest(raw)==R48_ZIP_SHA, 'R48_PIN_SHA256_INVALID')
+              m=archive_members(raw, {R48_REPORT,R48_MATRIX,'SHA256SUMS.txt'})
+              manifest={}
+              for line in m['SHA256SUMS.txt'].decode('utf-8').splitlines():
+                  require(len(line)>=67 and line[64:66]=='  ', 'R48_BAD_SHA256SUM_LINE')
+                  h,n=line[:64],line[66:]
+                  require(len(h)==64 and all(c in '0123456789abcdef' for c in h), 'R48_BAD_SHA256SUM_HASH')
+                  require(n not in manifest, 'R48_MANIFEST_DUPLICATE_NAME')
+                  manifest[n]=h
+              for n in (R48_REPORT,R48_MATRIX):
+                  require(manifest.get(n)==digest(m[n]), 'R48_INTERNAL_SHA256_MISMATCH:'+n)
+              return json.loads(m[R48_REPORT]), list(csv.DictReader(io.StringIO(m[R48_MATRIX].decode('utf-8'))))
+          
+          
+          def validate_r30(doc):
+              require(doc.get('schema')=='VEUX_R30_VENDOR_BOOT_MODULE_PROVENANCE_V1','R30_SCHEMA_INVALID')
+              require(doc.get('boot_slot_reported')=='_a', 'R30_HISTORICAL_SLOT_CHANGED')
+              require(doc.get('kernel_release')=='5.4.274-qgki-g82179e362f33','R30_HISTORICAL_KERNEL_CHANGED')
+              fs=doc.get('filesystem_init',{})
+              require(fs.get('files_discovered')==226 and fs.get('files_read')==226 and fs.get('files_unreadable')==0,'R30_SOURCE_SCAN_DRIFT')
+              files=fs.get('matching_files',[])
+              require(len(files)==1 and files[0].get('path')=='/vendor/etc/init/netmgrd.rc' and files[0].get('sha256')==INIT_SHA,'R30_INIT_SOURCE_DRIFT')
+              require(len(files[0].get('matches',[]))==8,'R30_INIT_COMMAND_COUNT_DRIFT')
+              require(doc.get('conclusion',{}).get('actual_loading_path_proven') is False,'R30_PATH_FALSELY_PROVEN')
+              parts=doc.get('vendor_boot')
+              require(isinstance(parts,list) and len(parts)==2,'R30_VENDOR_BOOT_PARTITIONS')
+              observed={}
+              for p in parts:
+                  name=p.get('partition')
+                  require(name in ('vendor_boot_a','vendor_boot_b') and name not in observed,'R30_VENDOR_BOOT_PARTITION_ID')
+                  require(p.get('status')=='PARSED_RAMDISK_METADATA' and p.get('read_only') is True,'R30_VENDOR_BOOT_NOT_PARSED')
+                  require(p.get('reported_active') is (name=='vendor_boot_a'),'R30_VENDOR_BOOT_ACTIVE_FLAG')
+                  header=p.get('header',{})
+                  require(header.get('version')==3 and header.get('vendor_ramdisk_size')==1495296 and header.get('dtb_size')==651045,'R30_VENDOR_BOOT_HEADER_CHANGED')
+                  require(p.get('vendor_ramdisk_sha256')==VENDOR_RAMDISK_SHA,'R30_VENDOR_RAMDISK_SHA_DRIFT')
+                  frag=p.get('fragments',[])
+                  require(len(frag)==1,'R30_VENDOR_RAMDISK_FRAGMENT_COUNT')
+                  f=frag[0]
+                  require(f.get('compression')=='lz4-legacy' and f.get('compressed_sha256')==VENDOR_RAMDISK_SHA,'R30_VENDOR_RAMDISK_FRAGMENT_SHA')
+                  c=f.get('cpio',{})
+                  require(c.get('cpio_trailer_seen') is True and c.get('cpio_entries_parsed')==76,'R30_VENDOR_BOOT_CPIO_NOT_VERIFIED')
+                  for key in ('module_candidates','relevant_init_rc','relevant_module_manifests','parser_diagnostics'):
+                      require(c.get(key)==[],'R30_UNEXPECTED_EARLY_RAMDISK_CONTENT:'+key)
+                  observed[name]=p
+              require(observed['vendor_boot_a']['vendor_ramdisk_sha256']==observed['vendor_boot_b']['vendor_ramdisk_sha256'],'R30_VENDOR_RAMDISK_AB_MISMATCH')
+              return observed
+          
+          
+          def validate_r48(doc, rows):
+              require(doc.get('schema')=='VEUX_R48_STOCK_INIT_RMNET_COLLISION_DECISION_V1','R48_SCHEMA_CHANGED')
+              require(doc.get('r47_source_run')==R47_RUN and doc.get('r44_source_run')==R44_RUN,'R48_UPSTREAM_PROVENANCE')
+              require(doc.get('decision')=='NO_R44_BOOT_UNTIL_INIT_LOADER_COLLISION_AND_RECOVERY_GATES_PROVEN','R48_DECISION_CHANGED')
+              require(doc.get('source_init_commands')==8 and doc.get('conditional_vendor_init_load_attempts')==4 and doc.get('conditional_vendor_init_unload_attempts')==4,'R48_INIT_MATRIX_COUNT')
+              require(doc.get('r30_public_historical_init_sha256')==INIT_SHA, 'R48_INIT_SHA_DRIFT')
+              require(doc.get('r44_pair_static_abi_proven') is True,'R48_R44_PAIR_UNPROVEN')
+              for key in ('flash_allowed','boot_ready','safe_rollback_proven','r44_vendor_autoload_collision_prevented','vendor_init_compatibility_proven',
+                          'actual_r44_boot_time_loader_execution_proven','r44_module_installation_to_device_proven','private_r46_data_included','repo_or_device_modified',
+                          'full_vendor_abi_proven','selinux_vintf_proven','bootloader_dtbo_selection_proven'):
+                  require(doc.get(key) is False, 'R48_UNSAFE_OR_DRIFT_FLAG:'+key)
+              require(isinstance(rows,list) and len(rows)==8,'R48_LOADER_MATRIX_ROWS')
+              pairs=set()
+              for row in rows:
+                  module=row.get('module'); d=row.get('module_directory'); v=row.get('property_value');a=row.get('action')
+                  require(module in EXPECTED_PROPS and d in EXPECTED_DIRS and v in ('0','1'),'R48_LOADER_MATRIX_VALUE')
+                  require(row.get('property')==EXPECTED_PROPS[module],'R48_MATRIX_CROSSWIRED_PROPERTY')
+                  require(a==('LOAD_ATTEMPT' if v=='1' else 'UNLOAD_ATTEMPT'),'R48_MATRIX_ACTION_CHANGED')
+                  key=(module,d,v)
+                  require(key not in pairs,'R48_MATRIX_DUPLICATE')
+                  pairs.add(key)
+              expected={(m,d,v) for m in EXPECTED_PROPS for d in EXPECTED_DIRS for v in ('0','1')}
+              require(pairs==expected,'R48_MATRIX_INCOMPLETE')
+              return True
+          
+          
+          def result(r30,r48,rows):
+              p=validate_r30(r30)
+              validate_r48(r48,rows)
+              return {
+                  'schema':SCHEMA,
+                  'r30_historical_capture_utc':r30.get('captured_utc'),
+                  'r30_historical_slot':'_a',
+                  'r30_historical_kernel':'5.4.274-qgki-g82179e362f33',
+                  'vendor_boot_a_and_b_ramdisk_sha_identical_in_historical_capture':True,
+                  'vendor_boot_ramdisk_sha256':VENDOR_RAMDISK_SHA,
+                  'vendor_boot_ramdisk_rmnet_candidates_in_historical_capture':0,
+                  'known_vendor_init_file':'/vendor/etc/init/netmgrd.rc',
+                  'known_vendor_init_file_sha256':INIT_SHA,
+                  'r48_verified_loader_attempts':{'load':4,'unload':4},
+                  'r48_source_run':R48_RUN,
+                  'r48_source_sha':R48_SHA,
+                  'r48_artifact_sha256':R48_ZIP_SHA,
+                  'r44_module_pair_static_abi_consistent':True,
+                  'safe_early_vendor_loader_interception_implemented':False,
+                  'safe_vendor_module_replacement_implemented':False,
+                  'bootloader_chooses_correct_dtbo_proven':False,
+                  'current_device_boot_partition_sha256_proven':False,
+                  'october19_backup_file_physically_verified_this_run':False,
+                  'backup_restore_tested':False,
+                  'host_fastboot_recovery_available_proven':False,
+                  'device_tested_with_r44':False,
+                  'private_r46_input_included':False,
+                  'repo_or_device_modified':False,
+                  'boot_ready':False,
+                  'flash_allowed':False,
+                  'decision':'R49_HISTORICAL_BOOT_CHAIN_RECONCILED_REQUIRE_PRIVATE_RECOVERY_PREFLIGHT_AND_EARLY_LOADER_STRATEGY',
+                  'note':'Vendor_boot equality and absence of rmnet candidates are historical observations, not evidence of future device boot. Do not copy 2EF0 rmnet modules or modify properties.'
+              }
+          
+          
+          def write_report(out,doc):
+              out=pathlib.Path(out);out.mkdir(parents=True,exist_ok=True)
+              (out/'R49_RESULT.json').write_text(json.dumps(doc,sort_keys=True,indent=2)+'\n',encoding='utf8')
+              (out/'R49_BERICHT_DE.txt').write_text(
+                  'R49 – BOOT-KETTE / INIT-LOADER / RUECKFALLGATES (NUR LESEN)\n'
+                  'Historischer R30-Nachweis: vendor_boot_a und vendor_boot_b haben denselben\n'
+                  'geprueften Vendor-Ramdisk-Hash; beide enthalten keine RMNET-Modulkandidaten.\n'
+                  'Die bekannte RMNET-Init-Datei liegt unter /vendor/etc/init/netmgrd.rc.\n'
+                  'R48 bestaetigt vier bedingte Lade- und vier Entladeversuche; alte Module sind\n'
+                  'nicht kompatibel mit dem R44-ABI. R44-Module sind nur statisch verifiziert.\n'
+                  'Kein Nachweis eines frueh wirksamen, sicheren Loader-Eingriffs.\n'
+                  'Historische Sicherungsmetadaten reichen NICHT zum Nachweis einer verfuegbaren\n'
+                  'Boot-Sicherung. Geraeteslot, aktueller Partitionshash, USB/Fastboot-Zugang\n'
+                  'und Wiederherstellung sind aktuell NICHT validiert.\n'
+                  'Keine BReNE-Aenderung, keine Properties umschalten, keine Vendor-Dateien ersetzen.\n'
+                  'R49 liefert zusaetzlich ein separates PRIVATES, nur-lesendes Termux-Preflight-Skript.\n'
+                  'BOOT_READY=NO; VENDOR_ABI_UNPROVEN; FLASH_ALLOWED=NO\n',encoding='utf8')
+              (out/'R49_SICHERE_NAECHSTE_SCHRITTE.md').write_text("""# R49 – Konkreter, reversibler Weg
+          
+          1. Auf dem unveraenderten, funktionierenden 2EF0-Geraet das separate R49-Termux-Preflight **nur lesend** ausfuehren. Ergebnis nur privat auswerten.
+          2. Aktuellen Slot, Partitiongroesse und – wenn sicher begrenzt – aktiven Bootpartitions-SHA-256 pruefen. Der historische 128-MiB-Dump ist damit nicht automatisch verifiziert oder verfuegbar.
+          3. Die vorhandene boot.img auf einem PC/externen Medium und deren SHA-256 verifizieren. Verfuegbaren Host-Fastboot-Zugriff und einen nachvollziehbaren Rueckspielweg separat bestaetigen.
+          4. Fruehe RMNET-Laderegeln an der belegten netmgrd.rc-Property-Grenze absichern. Ein boot-completed-Skript ist eventuell zu spaet. Eine 0-Property kann Entladeversuche ausloesen.
+          5. Bei einem spaeteren gesicherten Versuch nur die beiden originalen R44-RMNET-Dateien als Kandidaten betrachten. Vorher keine Vendor-Dateien ersetzen oder insmod ausfuehren.
+          6. Vollstaendige bootkritische Vendor-ABI, SELinux/VINTF und reale DTBO-Selektion gesondert pruefen.
+          
+          **NO FLASH / NO CHANGES / BOOT_READY=NO.**
+          """,encoding='utf8')
+              print('R49_PUBLIC_EVIDENCE=PASS; EARLY_RMNET_LOADER_SAFETY=UNPROVEN; RESTORE=UNPROVEN; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          
+          
+          def main():
+              parser=argparse.ArgumentParser()
+              parser.add_argument('--r39',required=True)
+              parser.add_argument('--r48',required=True)
+              parser.add_argument('--out',required=True)
+              x=parser.parse_args()
+              r30=r30_from_r39(pathlib.Path(x.r39).read_bytes())
+              r48,rows=r48_from_artifact(pathlib.Path(x.r48).read_bytes())
+              write_report(x.out,result(r30,r48,rows))
+          
+          
+          if __name__=='__main__':
+              main()
+          PY_R49_AUDITOR
+          cat > "$R49_STAGE/tests/test_r49_gate.py" <<'PY_R49_TESTS'
+          #!/usr/bin/env python3
+          """R49 fixture-based tests plus negative/unsafe-status cases."""
+          import copy
+          import csv
+          import io
+          import json
+          import os
+          import pathlib
+          import stat
+          import tempfile
+          import unittest
+          import zipfile
+          import r49_gate as g
+          
+          
+          def zip_bytes(entries):
+              b=io.BytesIO()
+              with zipfile.ZipFile(b,'w') as z:
+                  for name,value in entries:
+                      z.writestr(name,value)
+              return b.getvalue()
+          
+          
+          class R49Tests(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.r39=pathlib.Path(os.environ['R49_R39']).read_bytes()
+                  cls.r48zip=pathlib.Path(os.environ['R49_R48']).read_bytes()
+                  cls.r30=g.r30_from_r39(cls.r39)
+                  cls.r48,cls.rows=g.r48_from_artifact(cls.r48zip)
+          
+              def test_r39_original_sha(self):self.assertEqual(g.digest(self.r39),g.R39_SHA)
+              def test_r48_original_sha(self):self.assertEqual(g.digest(self.r48zip),g.R48_ZIP_SHA)
+              def test_r30_original_verified(self):self.assertEqual(len(g.validate_r30(self.r30)),2)
+              def test_r48_original_verified(self):self.assertTrue(g.validate_r48(self.r48,self.rows))
+              def test_r30_a_b_identical_ramdisk(self):
+                  self.assertEqual(len({x['vendor_ramdisk_sha256'] for x in self.r30['vendor_boot']}),1)
+              def test_r30_both_cpio_no_rmnet_candidate(self):
+                  for x in self.r30['vendor_boot']:
+                      self.assertEqual(x['fragments'][0]['cpio']['module_candidates'],[])
+              def test_real_boot_recovery_decision_blocks(self):
+                  r=g.result(self.r30,self.r48,self.rows)
+                  for k in ('boot_ready','flash_allowed','backup_restore_tested','safe_early_vendor_loader_interception_implemented',
+                            'october19_backup_file_physically_verified_this_run','private_r46_input_included'):
+                      self.assertIs(r[k],False)
+              def test_real_reports_no_binary_or_private_capture(self):
+                  with tempfile.TemporaryDirectory() as t:
+                      g.write_report(t,g.result(self.r30,self.r48,self.rows))
+                      names={x.name for x in pathlib.Path(t).iterdir()}
+                      self.assertEqual(names,{'R49_RESULT.json','R49_BERICHT_DE.txt','R49_SICHERE_NAECHSTE_SCHRITTE.md'})
+                      joined=''.join(x.read_text() for x in pathlib.Path(t).iterdir())
+                      self.assertNotIn('R46_DEVICE_REPORT',joined)
+                      self.assertNotIn('/data/adb/veux-rmnet',joined)
+              def test_r30_bad_schema_rejected(self):
+                  a=copy.deepcopy(self.r30);a['schema']='other'
+                  with self.assertRaisesRegex(ValueError,'R30_SCHEMA'):g.validate_r30(a)
+              def test_r30_slot_not_claimed_current(self):
+                  a=copy.deepcopy(self.r30);a['boot_slot_reported']='_b'
+                  with self.assertRaisesRegex(ValueError,'R30_HISTORICAL_SLOT'):g.validate_r30(a)
+              def test_r30_kernel_mismatch_rejected(self):
+                  a=copy.deepcopy(self.r30);a['kernel_release']='wrong'
+                  with self.assertRaisesRegex(ValueError,'R30_HISTORICAL_KERNEL'):g.validate_r30(a)
+              def test_r30_other_init_file_rejected(self):
+                  a=copy.deepcopy(self.r30);a['filesystem_init']['matching_files'][0]['path']='/data/swap/init.rc'
+                  with self.assertRaisesRegex(ValueError,'R30_INIT_SOURCE'):g.validate_r30(a)
+              def test_r30_missing_boot_partition_rejected(self):
+                  a=copy.deepcopy(self.r30);a['vendor_boot'].pop()
+                  with self.assertRaisesRegex(ValueError,'R30_VENDOR_BOOT_PARTITIONS'):g.validate_r30(a)
+              def test_r30_extra_boot_partition_rejected(self):
+                  a=copy.deepcopy(self.r30);a['vendor_boot'].append(copy.deepcopy(a['vendor_boot'][0]))
+                  with self.assertRaisesRegex(ValueError,'R30_VENDOR_BOOT_PARTITIONS'):g.validate_r30(a)
+              def test_r30_changed_ramdisk_sha_rejected(self):
+                  a=copy.deepcopy(self.r30);a['vendor_boot'][0]['vendor_ramdisk_sha256']='f'*64
+                  with self.assertRaisesRegex(ValueError,'R30_VENDOR_RAMDISK_SHA'):g.validate_r30(a)
+              def test_r30_changed_header_rejected(self):
+                  a=copy.deepcopy(self.r30);a['vendor_boot'][0]['header']['version']=4
+                  with self.assertRaisesRegex(ValueError,'R30_VENDOR_BOOT_HEADER'):g.validate_r30(a)
+              def test_r30_injected_ramdisk_module_rejected(self):
+                  a=copy.deepcopy(self.r30);a['vendor_boot'][1]['fragments'][0]['cpio']['module_candidates']=['rmnet_shs']
+                  with self.assertRaisesRegex(ValueError,'R30_UNEXPECTED_EARLY'):g.validate_r30(a)
+              def test_r30_false_loading_path_proof_rejected(self):
+                  a=copy.deepcopy(self.r30);a['conclusion']['actual_loading_path_proven']=True
+                  with self.assertRaisesRegex(ValueError,'R30_PATH_FALSELY'):g.validate_r30(a)
+              def test_r48_wrong_schema_rejected(self):
+                  a=copy.deepcopy(self.r48);a['schema']='invalid'
+                  with self.assertRaisesRegex(ValueError,'R48_SCHEMA'):g.validate_r48(a,self.rows)
+              def test_r48_false_boot_pass_rejected(self):
+                  a=copy.deepcopy(self.r48);a['boot_ready']=True
+                  with self.assertRaisesRegex(ValueError,'R48_UNSAFE'):g.validate_r48(a,self.rows)
+              def test_r48_false_recovery_pass_rejected(self):
+                  a=copy.deepcopy(self.r48);a['safe_rollback_proven']=True
+                  with self.assertRaisesRegex(ValueError,'R48_UNSAFE'):g.validate_r48(a,self.rows)
+              def test_r48_changed_init_sha_rejected(self):
+                  a=copy.deepcopy(self.r48);a['r30_public_historical_init_sha256']='0'*64
+                  with self.assertRaisesRegex(ValueError,'R48_INIT_SHA'):g.validate_r48(a,self.rows)
+              def test_r48_wrong_module_dir_rejected(self):
+                  a=copy.deepcopy(self.rows);a[0]['module_directory']='/data/local/tmp'
+                  with self.assertRaisesRegex(ValueError,'R48_LOADER_MATRIX_VALUE'):g.validate_r48(self.r48,a)
+              def test_r48_missing_loader_row_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'R48_LOADER_MATRIX_ROWS'):g.validate_r48(self.r48,self.rows[:-1])
+              def test_r48_duplicate_loader_row_rejected(self):
+                  a=copy.deepcopy(self.rows);a[1]=copy.deepcopy(a[0])
+                  with self.assertRaisesRegex(ValueError,'R48_MATRIX_DUPLICATE'):g.validate_r48(self.r48,a)
+              def test_r48_property_crosswire_rejected(self):
+                  a=copy.deepcopy(self.rows);a[0]['property']='persist.vendor.data.shs_ko_load' if a[0]['module']=='rmnet_offload' else 'persist.vendor.data.offload_ko_load'
+                  with self.assertRaisesRegex(ValueError,'R48_MATRIX_CROSSWIRED'):g.validate_r48(self.r48,a)
+              def test_r48_wrong_action_rejected(self):
+                  a=copy.deepcopy(self.rows);a[0]['action']='LOAD_ATTEMPT' if a[0]['action']=='UNLOAD_ATTEMPT' else 'UNLOAD_ATTEMPT'
+                  with self.assertRaisesRegex(ValueError,'R48_MATRIX_ACTION'):g.validate_r48(self.r48,a)
+              def test_r48_artifact_hash_bitflip_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'R48_PIN_SHA256'):
+                      g.r48_from_artifact(self.r48zip[:-1]+b'!')
+              def test_r39_archive_hash_bitflip_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'R39_PIN_SHA256'):
+                      g.r30_from_r39(self.r39[:-1]+b'!')
+              def test_zip_duplicate_rejected(self):
+                  import warnings
+                  with warnings.catch_warnings():
+                      warnings.simplefilter('ignore',UserWarning)
+                      raw=zip_bytes([('a','one'),('a','two')])
+                  with self.assertRaisesRegex(ValueError,'ZIP_DUPLICATE'):g.archive_members(raw,{'a'})
+              def test_zip_path_traversal_rejected(self):
+                  raw=zip_bytes([('../a','bytes')])
+                  with self.assertRaisesRegex(ValueError,'ZIP_UNSAFE'):g.archive_members(raw,{'../a'})
+              def test_zip_symlink_rejected(self):
+                  b=io.BytesIO()
+                  with zipfile.ZipFile(b,'w') as z:
+                      info=zipfile.ZipInfo('a');info.create_system=3;info.external_attr=(stat.S_IFLNK|0o777)<<16;z.writestr(info,'b')
+                  with self.assertRaisesRegex(ValueError,'ZIP_SYMLINK'):g.archive_members(b.getvalue(),{'a'})
+              def test_zip_required_member_missing_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'ZIP_REQUIRED_MEMBER_MISSING'):g.archive_members(zip_bytes([('a','b')]),{'c'})
+              def test_zip_oversize_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'ZIP_ARCHIVE_OVERSIZE'):g.archive_members(zip_bytes([('a','b')]),{'a'},max_size=10)
+          
+          
+          if __name__=='__main__':unittest.main()
+          PY_R49_TESTS
+          printf '%s  %s
+          ' 'b2a9d28434b20a87f87cc46365bd3dbd75a9bc157d43b58099f4748991945ddc' "$R49_STAGE/src/r49_gate.py" 'efaa9908a1017de37c43a0475e2bd9b07200315bfe0b0d63d0aa802999e2d315' "$R49_STAGE/tests/test_r49_gate.py" | sha256sum -c -
+          python3 -B - "$R49_STAGE" <<'PY_R49_AST'
+          import ast,pathlib,sys
+          p=pathlib.Path(sys.argv[1])
+          for file in [p/'src/r49_gate.py',p/'tests/test_r49_gate.py']:
+              ast.parse(file.read_text(encoding='utf8'))
+          print('R49_EMBEDDED_PYTHON_AST=PASS')
+          PY_R49_AST
+      - name: Actionlint 1.7.12, strict YAML parser and actual six Bash blocks ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -p VEUX_R39_R2_MEMORY_ABI_MAIN.zip tools/actionlint > "$R49_STAGE/actionlint"
+          chmod 0755 "$R49_STAGE/actionlint"
+          "$R49_STAGE/actionlint" -version | grep -Fx '1.7.12'
+          "$R49_STAGE/actionlint" -color=false -shellcheck='' .github/workflows/VEUX_R49_EARLY_RMNET_RECOVERY_PREFLIGHT_GATE.yml | tee "$R49_STAGE/out/R49_ACTIONLINT.log"
+          python3 -B - "$R49_STAGE" <<'PY_R49_LINT'
+          import hashlib,pathlib,subprocess,sys,yaml
+          root=pathlib.Path(sys.argv[1]);file=pathlib.Path('.github/workflows/VEUX_R49_EARLY_RMNET_RECOVERY_PREFLIGHT_GATE.yml')
+          class Strict(yaml.SafeLoader):pass
+          def unique(loader,node):
+              out={}
+              for k,v in node.value:
+                  key=loader.construct_object(k)
+                  if key in out:raise ValueError('DUPLICATE_YAML_KEY:'+str(key))
+                  out[key]=loader.construct_object(v)
+              return out
+          Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,unique)
+          doc=yaml.load(file.read_text(),Loader=Strict)
+          if list(doc['jobs'])!=['r49']:raise SystemExit('R49_WRONG_JOB_LIST')
+          steps=doc['jobs']['r49']['steps']
+          expected=[
+          'Checkout pinned project evidence read-only',
+          'Authenticate historical vendor_boot proof and materialize independent auditor',
+          'Actionlint 1.7.12, strict YAML parser and actual six Bash blocks ShellCheck',
+          'Verify original R48-R2 run and fetch exact SHA256-pinned GitHub artifact',
+          'Run 34 genuine R30/R48 and adversarial regressions',
+          'Evaluate early vendor loader constraints and recovery gates read-only',
+          'Strict result guards, SHA256 manifest and no-flash enforcement',
+          'Upload R49 public text results with fail-if-missing']
+          if [x['name'] for x in steps]!=expected:raise SystemExit('R49_STEP_LIST_CHANGED')
+          blocks=[x['run'] for x in steps if 'run' in x]
+          if len(blocks)!=6:raise SystemExit('R49_BASH_BLOCK_COUNT_DRIFT')
+          checks=[]
+          for i,script in enumerate(blocks,1):
+              for cmd in (['bash','-n','-'],['shellcheck','--shell=bash','--severity=warning','-']):
+                  p=subprocess.run(cmd,input=script,text=True,capture_output=True)
+                  if p.returncode:raise SystemExit('R49_BASH_OR_SHELLCHECK_FAIL:'+str(i)+':'+p.stdout+p.stderr)
+              checks.append(str(i)+' bash-n=PASS shellcheck=PASS sha256='+hashlib.sha256(script.encode()).hexdigest())
+          (root/'out/R49_BASH_SHELLCHECK.log').write_text('\n'.join(checks)+'\n')
+          print('R49_STRICT_YAML_AND_ALL_SIX_SHELLCHECK_BASH_RUN_BLOCKS=PASS')
+          PY_R49_LINT
+      - name: Verify original R48-R2 run and fetch exact SHA256-pinned GitHub artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          api_get() {
+            suffix="$1"
+            output="$2"
+            curl --fail --silent --show-error --location --retry 2 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "${api}/${suffix}" --output "$output"
+            test -s "$output"
+          }
+          api_get 'actions/runs/40193017462' "$R49_STAGE/inputs/R48_RUN.json"
+          api_get 'actions/artifacts/12599285054' "$R49_STAGE/inputs/R48_META.json"
+          python3 -B - "$R49_STAGE/inputs" <<'PY_R49_META'
+          import json,pathlib,sys
+          folder=pathlib.Path(sys.argv[1]);run=json.loads((folder/'R48_RUN.json').read_text());art=json.loads((folder/'R48_META.json').read_text())
+          if not (run.get('id')==40193017462 and run.get('head_sha')=='3f64fbb2aa6b924c142dbdcc80a2ba4b45df3285' and run.get('head_branch')=='main' and run.get('status')=='completed' and run.get('conclusion')=='success'):
+              raise SystemExit('R49_R48_ORIGINAL_RUN_NOT_SUCCESS_OR_SHA_MISMATCH')
+          if not (art.get('id')==12599285054 and art.get('name')=='VEUX-R48-LOADER-DECISION-40193017462' and art.get('expired') is False and art.get('digest')=='sha256:5c75f909a99ab584a715ded54d0ad9b7451d1c5d21fbb50aabe1caf91a70c0cc'):
+              raise SystemExit('R49_R48_ARTIFACT_PIN_INVALID')
+          print('R49_ORIGINAL_R48_SUCCESS_AND_SHA256_METADATA=PASS')
+          PY_R49_META
+          api_get 'actions/artifacts/12599285054/zip' "$R49_STAGE/inputs/R48_ORIGINAL.zip"
+          printf '%s  %s\n' '5c75f909a99ab584a715ded54d0ad9b7451d1c5d21fbb50aabe1caf91a70c0cc' "$R49_STAGE/inputs/R48_ORIGINAL.zip" | sha256sum -c -
+          echo 'R49_R48_OFFICIAL_ARTIFACT_DOWNLOADED_SHA256_PINNED=PASS' 
+      - name: Run 34 genuine R30/R48 and adversarial regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$R49_STAGE/src"
+          export R49_R39="$GITHUB_WORKSPACE/VEUX_R39_R2_MEMORY_ABI_MAIN.zip"
+          export R49_R48="$R49_STAGE/inputs/R48_ORIGINAL.zip"
+          python3 -B -W error::ResourceWarning -m unittest discover -s "$R49_STAGE/tests" -p 'test_r49_gate.py' -v 2>&1 | tee "$R49_STAGE/out/R49_TESTS.log"
+          grep -F 'Ran 34 tests' "$R49_STAGE/out/R49_TESTS.log"
+          grep -Fx 'OK' "$R49_STAGE/out/R49_TESTS.log"
+          echo 'R49_34_OF_34_NEGATIVE_AND_HISTORICAL_REGRESSIONS=PASS' 
+      - name: Evaluate early vendor loader constraints and recovery gates read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R49_STAGE/src/r49_gate.py" \
+            --r39 "$GITHUB_WORKSPACE/VEUX_R39_R2_MEMORY_ABI_MAIN.zip" \
+            --r48 "$R49_STAGE/inputs/R48_ORIGINAL.zip" \
+            --out "$R49_STAGE/out" | tee "$R49_STAGE/out/R49_EXECUTION.log"
+          cat "$R49_STAGE/out/R49_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+          echo 'R49_HISTORICAL_BOOT_PROVENANCE_AUDITED=PASS' 
+      - name: Strict result guards, SHA256 manifest and no-flash enforcement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - "$R49_STAGE/out" <<'PY_R49_FINAL'
+          import hashlib,json,pathlib,sys
+          out=pathlib.Path(sys.argv[1]);result=json.loads((out/'R49_RESULT.json').read_text())
+          expected={'R49_ACTIONLINT.log','R49_BASH_SHELLCHECK.log','R49_TESTS.log','R49_EXECUTION.log','R49_RESULT.json','R49_BERICHT_DE.txt','R49_SICHERE_NAECHSTE_SCHRITTE.md'}
+          files={p.name for p in out.iterdir() if p.is_file()}
+          if files!=expected:raise SystemExit('R49_ARTIFACT_FILE_LIST_MISMATCH:'+str(files^expected))
+          if result.get('schema')!='VEUX_R49_EARLY_LOADER_RECOVERY_READONLY_V1' or result.get('r48_source_run')!=40193017462:
+              raise SystemExit('R49_RESULT_SCHEMA_OR_SOURCE')
+          if result.get('vendor_boot_a_and_b_ramdisk_sha_identical_in_historical_capture') is not True or result.get('vendor_boot_ramdisk_rmnet_candidates_in_historical_capture')!=0:
+              raise SystemExit('R49_HISTORICAL_VENDOR_BOOT_UNVERIFIED')
+          for key in ('boot_ready','flash_allowed','backup_restore_tested','safe_early_vendor_loader_interception_implemented',
+                      'safe_vendor_module_replacement_implemented','current_device_boot_partition_sha256_proven',
+                      'october19_backup_file_physically_verified_this_run','host_fastboot_recovery_available_proven',
+                      'device_tested_with_r44','private_r46_input_included','repo_or_device_modified'):
+              if result.get(key) is not False:raise SystemExit('R49_UNSAFE_SUCCESS_FLAG:'+key)
+          for p in out.iterdir():
+              if p.suffix in ('.ko','.img','.dtb','.dtbo','.elf','.bin') or p.name in ('Image','vmlinux'):
+                  raise SystemExit('R49_FLASH_OR_BINARY_OUTPUT_FORBIDDEN')
+              content=p.read_text(encoding='utf8')
+              for private in ('R46_DEVICE_REPORT.txt','/data/adb/veux-rmnet/','KERNEL_NOTES_SHA256='):
+                  if private in content:raise SystemExit('R49_PRIVATE_DEVICE_EVIDENCE_LEAK')
+          checks=[hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name for p in sorted(out.iterdir()) if p.is_file()]
+          (out/'SHA256SUMS.txt').write_text('\n'.join(checks)+'\n')
+          print('R49_OUTPUT_SCOPE_SHA256_AND_FAIL_CLOSED_GATES=PASS; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          PY_R49_FINAL
+          (cd "$R49_STAGE/out" && sha256sum -c SHA256SUMS.txt)
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'R49_NO_REPO_CHANGE_NO_DEVICE_CHANGE_NO_FLASH=PASS' 
+      - name: Upload R49 public text results with fail-if-missing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R49-BOOT-LOADER-RECOVERY-${{ github.run_id }}
+          path: /tmp/veux-r49/out/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
