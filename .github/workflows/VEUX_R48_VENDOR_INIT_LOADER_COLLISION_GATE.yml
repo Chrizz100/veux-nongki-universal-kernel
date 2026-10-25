@@ -1,4 +1,4 @@
-name: VEUX R48 R44 RMNET vendor init loader conflict decision - READ ONLY NO FLASH
+name: VEUX R48-R2 verified loader decision and strict artifact - NO FLASH
 'on':
   workflow_dispatch:
 permissions:
@@ -509,6 +509,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: VEUX-R48-LOADER-DECISION-${{ github.run_id }}
-          path: ${{ runner.temp }}/veux-r48/out/
+          path: ${{ env.R48_STAGE }}/out/
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
