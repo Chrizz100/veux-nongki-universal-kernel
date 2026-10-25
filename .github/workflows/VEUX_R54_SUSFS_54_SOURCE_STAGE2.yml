@@ -1,0 +1,314 @@
+name: VEUX R54 SUSFS 5.4 twelve-source stage2 - R53 ORIGINAL VERIFIED NO BUILD NO FLASH
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r54-stage2-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  source_stage2:
+    name: Replay 9 R53 Git blobs and add pinned SUSFS 5.4 core/header trio
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R54_STAGE: /tmp/veux-r54
+    steps:
+    - name: Checkout project evidence read-only
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+        fetch-depth: 1
+        path: project
+    - name: Checkout pinned original VEUX 5.4.274 source
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        repository: dereference23/kernel_xiaomi_sm6375
+        ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+        fetch-depth: 1
+        persist-credentials: false
+        path: kernel
+    - name: Checkout pinned Midori SUSFS 5.4 source
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        repository: midori01/susfs4ksu
+        ref: cfde03eed16a39775a341d16d3f6601bed11b11a
+        fetch-depth: 1
+        persist-credentials: false
+        path: midori
+    - name: Materialize and pin complete R54 auditor with tests
+      shell: bash
+      run: "set -euo pipefail\nmkdir -p \"$R54_STAGE/scripts\" \"$R54_STAGE/tests\" \"$R54_STAGE/out\" \"$R54_STAGE/inputs\"\
+        \ncat > \"$R54_STAGE/scripts/r54_stage2.py\" <<'PY_R54_SOURCE'\n#!/usr/bin/env python3\n\"\"\"R54: compose exact R53\
+        \ stage1 patch and pinned SUSFS 5.4 auxiliary sources.\nRead-only to project and to device; writes only within isolated\
+        \ checkout/out.\nNo complete SUSFS port, compiler, flashing or installation.\n\"\"\"\nfrom __future__ import annotations\n\
+        import argparse\nimport hashlib\nimport io\nimport json\nfrom pathlib import Path, PurePosixPath\nimport re\nimport\
+        \ stat\nimport subprocess\nimport sys\nimport zipfile\n\nSOURCE_SHA = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'\n\
+        MIDORI_SHA = 'cfde03eed16a39775a341d16d3f6601bed11b11a'\nR53_RUN_ID = 40224649799\nR53_COMMIT = 'e7c4ff01d06b96caad0dbcd2a19334241b4317a4'\n\
+        R53_ARTIFACT_ID = 12611060765\nR53_ARTIFACT_NAME = 'VEUX-R53-SUSFS54-STAGE1-PARTIAL-40224649799'\nR53_ZIP_SHA256 =\
+        \ 'e39cb10cc0ab5f532728b4126b538ca04eb0f6bb5f675dc9f88ff624dd3258ab'\nR53_PATCH_SHA256 = 'fddd2fe0cc309d1da32d1d3500b27a74ff93c79ae07243a67dea0f21691f389d'\n\
+        R53_ARCHIVE_FILES = {'R53_ACTIONLINT.log','R53_PATCH_RESULT.json','R53_SHELLCHECK.log','R53_STAGE_RUN.log','R53_TESTS.log','SHA256SUMS.txt','START_HIER_NOFLASH.txt','VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch'}\n\
+        NEW_INPUTS = {\n 'fs/susfs.c': ('kernel_patches/fs/susfs.c','a29c4b03e63c4f1f351adee7efbfa66cf03012d2'),\n 'include/linux/susfs.h':\
+        \ ('kernel_patches/include/linux/susfs.h','58128c796967308f412c0c9740253a1dce875f56'),\n 'include/linux/susfs_def.h':\
+        \ ('kernel_patches/include/linux/susfs_def.h','b448edb9019bb10c7b65acf0806579dbe9e12323'),\n}\nR53_NAMES = {'block/ioprio.c','fs/Makefile','fs/notify/fdinfo.c','fs/proc/cmdline.c','fs/proc/fd.c','fs/proc_namespace.c','fs/readdir.c','fs/statfs.c','kernel/kallsyms.c'}\n\
+        STAGE2_NAMES = R53_NAMES | set(NEW_INPUTS)\n# Literal line numbers in git-blob pinned Midori SUSFS c, checked independently.\n\
+        SUSFS_C_WHITESPACE_LINES = {43,44,136,308,682}\n\nclass GateError(RuntimeError): pass\n\ndef run(argv: list[str],\
+        \ cwd: Path, input: str|None=None, timeout=120) -> str:\n r=subprocess.run(argv,cwd=cwd,text=True,input=input,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,check=False)\n\
+        \ if r.returncode: raise GateError(f'COMMAND_FAIL:{\" \".join(argv)}: {(r.stderr or r.stdout)[-1200:]}')\n return\
+        \ r.stdout\n\ndef digest(blob:bytes)->str: return hashlib.sha256(blob).hexdigest()\n\ndef gitblob(source:Path,filename:Path|str)->str:\n\
+        \ return run(['git','hash-object',str(Path(filename).resolve())],source).strip()\n\ndef hex64(x)->bool: return bool(re.fullmatch(r'[0-9a-f]{64}',x))\n\
+        \ndef validate_r53_zip(data: bytes)->tuple[dict,str]:\n if digest(data)!=R53_ZIP_SHA256:raise GateError('R53_ORIGINAL_ZIP_SHA256_MISMATCH')\n\
+        \ if len(data)>200000:raise GateError('R53_ZIP_OVERSIZED')\n try:\n  with zipfile.ZipFile(io.BytesIO(data)) as z:\n\
+        \   members=z.infolist();names=[m.filename for m in members]\n   if len(set(names))!=len(names) or set(names)!=R53_ARCHIVE_FILES:\n\
+        \    raise GateError('R53_ARCHIVE_MEMBER_SET_WRONG')\n   if any(m.file_size>220000 or stat.S_ISLNK(m.external_attr>>16)\
+        \ or '/' in m.filename or '\\\\' in m.filename for m in members):\n    raise GateError('R53_ARCHIVE_MEMBER_UNSAFE')\n\
+        \   if sum(m.file_size for m in members)>350000:raise GateError('R53_ARCHIVE_DECOMPRESS_SIZE_INVALID')\n   if z.testzip()\
+        \ is not None:raise GateError('R53_ZIP_INTEGRITY_FAIL')\n   manifest=z.read('SHA256SUMS.txt').decode('utf-8')\n  \
+        \ want={}\n   for ln in manifest.splitlines():\n    if '  ' not in ln: raise GateError('R53_MANIFEST_MALFORMED')\n\
+        \    val,name=ln.split('  ',1)\n    if name in want or not hex64(val):raise GateError('R53_MANIFEST_BAD_ENTRY')\n\
+        \    want[name]=val\n   if set(want)!=R53_ARCHIVE_FILES-{'SHA256SUMS.txt'}:raise GateError('R53_MANIFEST_INCOMPLETE')\n\
+        \   for name,val in want.items():\n    if digest(z.read(name))!=val:raise GateError('R53_MANIFEST_MISMATCH:'+name)\n\
+        \   report=json.loads(z.read('R53_PATCH_RESULT.json'))\n   patch=z.read('VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch').decode('utf-8')\n\
+        \ except (zipfile.BadZipFile,UnicodeError,KeyError,json.JSONDecodeError) as e:\n  raise GateError('R53_ARCHIVE_INVALID:'+str(e))\
+        \ from e\n validate_r53_report(report,patch)\n return report,patch\n\ndef validate_r53_report(report:dict,patch:str)->None:\n\
+        \ if not isinstance(report,dict) or report.get('schema')!='VEUX_R53_SUSFS_5_4_STAGE1_V1' or report.get('status')!='PARTIAL_SOURCE_PATCH_APPLIED_TO_PINNED_ANCESTOR':\n\
+        \  raise GateError('R53_RESULT_SCHEMA_INVALID')\n if (report.get('kernel_source_commit')!=SOURCE_SHA or report.get('midori_commit')!=MIDORI_SHA\
+        \ or report.get('patch_sha256')!=R53_PATCH_SHA256):\n  raise GateError('R53_SOURCE_OR_PATCH_PIN_MISMATCH')\n if digest(patch.encode('utf-8'))!=R53_PATCH_SHA256\
+        \ or report.get('patched_file_count')!=9:\n  raise GateError('R53_PARTIAL_PATCH_MISMATCH')\n rows=report.get('patched_files')\n\
+        \ if not isinstance(rows,list) or {row.get('file') for row in rows}!=R53_NAMES or len(rows)!=9:\n  raise GateError('R53_PATCH_SCOPE_MISMATCH')\n\
+        \ for row in rows:\n  if not re.fullmatch('[0-9a-f]{40}',row.get('old_git_blob','')) or not re.fullmatch('[0-9a-f]{40}',row.get('new_git_blob','')):\n\
+        \   raise GateError('R53_GIT_BLOB_INVALID')\n for k in ('susfs_5_4_full_port_complete','susfs_c_and_headers_integrated','compile_performed','boot_ready','flash_allowed','r44_walt_recomposed'):\n\
+        \  if report.get(k) is not False:raise GateError('R53_UNSAFE_CLAIM:'+k)\n if set(re.findall(r'(?m)^diff --git a/(\\\
+        S+) b/\\1$',patch))!=R53_NAMES:\n  raise GateError('R53_PATCH_DIFF_SCOPE_INVALID')\n\ndef clean_pinned_susfs_c(data:bytes)->tuple[bytes,list[int]]:\n\
+        \ try:txt=data.decode('utf-8')\n except UnicodeDecodeError as e:raise GateError('SUSFS_C_NOT_UTF8') from e\n if '\\\
+        r' in txt or not txt.endswith('\\n'):raise GateError('SUSFS_C_LINE_ENDINGS_CHANGED')\n lines=txt.splitlines(keepends=True)\n\
+        \ offending={i+1 for i,line in enumerate(lines) if line[:-1].endswith((' ','\\t'))}\n if offending!=SUSFS_C_WHITESPACE_LINES:\n\
+        \  raise GateError('SUSFS_C_WHITESPACE_SCOPE_CHANGED:'+str(offending))\n # Normalize exactly 5 existing upstream trailing\
+        \ whitespace issues, not other code.\n cleaned=''.join(line[:-1].rstrip(' \\t')+'\\n' for line in lines)\n return\
+        \ cleaned.encode('utf-8'),sorted(offending)\n\ndef stage(source:Path,midori:Path,r53_zip:Path,out:Path)->dict:\n source,midori,r53_zip,out=source.resolve(),midori.resolve(),r53_zip.resolve(),out.resolve()\n\
+        \ if run(['git','rev-parse','HEAD'],source).strip()!=SOURCE_SHA:raise GateError('WRONG_5_4_ANCESTOR')\n if run(['git','rev-parse','HEAD'],midori).strip()!=MIDORI_SHA:raise\
+        \ GateError('WRONG_MIDORI_5_4')\n for directory in (source,midori):\n  if run(['git','status','--porcelain','--untracked-files=all'],directory).strip():raise\
+        \ GateError('DIRTY_INPUT_GIT_REPO:'+str(directory))\n preexisting={'R54_ACTIONLINT.log','R54_SHELLCHECK.log','R54_TESTS.log','R54_STAGE.log'}\n\
+        \ if out.exists() and any(p.name not in preexisting or not p.is_file() or p.is_symlink() for p in out.iterdir()):\n\
+        \  raise GateError('OUTPUT_DIR_NOT_EMPTY')\n if not r53_zip.is_file() or r53_zip.is_symlink():raise GateError('R53_ZIP_MISSING_OR_SYMLINK')\n\
+        \ report,patch=validate_r53_zip(r53_zip.read_bytes())\n for row in report['patched_files']:\n  p=source/row['file']\n\
+        \  if not p.is_file() or p.is_symlink() or gitblob(source,p)!=row['old_git_blob']:\n   raise GateError('R53_SOURCE_PREIMAGE_DRIFT:'+row['file'])\n\
+        \ for dst in NEW_INPUTS:\n  p=source/dst\n  if p.exists() or p.is_symlink():raise GateError('SUSFS_FILE_EXISTS_UNEXPECTEDLY:'+dst)\n\
+        \ additions=[]\n for dest,(src,expected_blob) in NEW_INPUTS.items():\n  inp=midori/src\n  if not inp.is_file() or\
+        \ inp.is_symlink() or gitblob(midori,inp)!=expected_blob:\n   raise GateError('SUSFS_5_4_UPSTREAM_BLOB_MISMATCH:'+src)\n\
+        \  blob=inp.read_bytes()\n  if dest=='fs/susfs.c':cleaned,corrections=clean_pinned_susfs_c(blob)\n  else:\n   if b'\\\
+        r' in blob or not blob.endswith(b'\\n') or any(line.endswith((b' ',b'\\t')) for line in blob.split(b'\\n')):\n   \
+        \ raise GateError('SUSFS_HEADER_UNEXPECTED_WHITESPACE:'+src)\n   cleaned,corrections=blob,[]\n  additions.append((dest,expected_blob,cleaned,corrections))\n\
+        \ # Both source and artifacts are now verified: perform isolated changes.\n run(['git','apply','--check','-'],source,input=patch)\n\
+        \ run(['git','apply','-'],source,input=patch)\n for row in report['patched_files']:\n  if gitblob(source,source/row['file'])!=row['new_git_blob']:\n\
+        \   raise GateError('R53_POSTIMAGE_WRONG:'+row['file'])\n for dest,prehash,cleaned,corrections in additions:\n  target=source/dest\n\
+        \  target.parent.mkdir(parents=True,exist_ok=True)\n  with target.open('xb') as handle:handle.write(cleaned)\n  if\
+        \ target.read_bytes()!=cleaned:raise GateError('SOURCE_FILE_WRITE_MISMATCH:'+dest)\n  if dest.endswith('susfs.h')\
+        \ and b'#define SUSFS_VERSION \"v2.3.0\"' not in cleaned:raise GateError('SUSFS_VERSION_UNEXPECTED')\n # Show the\
+        \ new files in the diff without staging any commits or mutating user repo.\n run(['git','add','-N','--',*sorted(NEW_INPUTS)],source)\n\
+        \ run(['git','diff','--check'],source)\n modified=set(run(['git','diff','--name-only','--no-renames'],source).splitlines())\n\
+        \ if modified!=STAGE2_NAMES:raise GateError('STAGE2_SCOPE_WRONG:'+str(modified^STAGE2_NAMES))\n diff=run(['git','diff','--binary','--no-ext-diff','--no-renames','--',*sorted(STAGE2_NAMES)],source)\n\
+        \ if len(diff)<=len(patch) or len(diff)>350000 or not diff.startswith('diff --git '):raise GateError('STAGE2_PATCH_INVALID_SIZE')\n\
+        \ if set(re.findall(r'(?m)^diff --git a/(\\S+) b/\\1$',diff))!=STAGE2_NAMES:\n  raise GateError('STAGE2_DIFF_INCORRECT_FILES')\n\
+        \ for k in NEW_INPUTS:\n  segment=diff.split('diff --git a/'+k+' b/'+k,1)\n  if len(segment)!=2 or 'new file mode\
+        \ 100644' not in segment[1].split('diff --git ',1)[0]:\n   raise GateError('SUSFS_ADDITION_NOT_INCLUDED:'+k)\n meta={\n\
+        \  'schema':'VEUX_R54_SUSFS54_STAGE2_SOURCE_COMPOSITION_V1','status':'12_FILES_PATCHED_ON_5_4_ANCESTOR_NO_BUILD',\n\
+        \  'source_commit':SOURCE_SHA,'midori_commit':MIDORI_SHA,'r53_run':R53_RUN_ID,\n  'r53_artifact_id':R53_ARTIFACT_ID,'r53_zip_sha256':R53_ZIP_SHA256,\n\
+        \  'r53_patch_sha256':R53_PATCH_SHA256,'files_changed':12,\n  'r53_nine_file_postimages_verified':True,'new_files':[],\n\
+        \  'patch_sha256':digest(diff.encode('utf-8')),\n  'upstream_whitespace_corrections_exact':sum(len(x[3]) for x in\
+        \ additions),\n  'source_changes_committed':False,'r44_walt_recomposed':False,\n  'susfs_complete':False,'baka_su_uapi6_integrated':False,'nomount_v22_integrated':False,\n\
+        \  'build_performed':False,'device_tested':False,'boot_ready':False,'flash_allowed':False,\n }\n for dst,upsha,contents,corrections\
+        \ in additions:\n  meta['new_files'].append({'file':dst,'upstream_git_blob':upsha,'final_git_blob':gitblob(source,source/dst),\n\
+        \                            'sha256':digest(contents),'whitespace_lines_corrected':corrections})\n out.mkdir(parents=True,exist_ok=True)\n\
+        \ (out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').write_text(diff,encoding='utf-8')\n (out/'R54_RESULT.json').write_text(json.dumps(meta,indent=2,sort_keys=True)+'\\\
+        n',encoding='utf-8')\n (out/'START_HIER_NOFLASH.txt').write_text(\n  'R54: Echtes SUSFS 5.4 Stage2-Quellpatch auf\
+        \ gepinntem Ancestor. 9 R53-Aenderungen + 3 '\n  'Midori-5.4-Quelldateien. 5 upstream Whitespacekorrekturen an fs/susfs.c.\
+        \ '\\\n  'Noch KEINE Integration komplexer VFS/Mount/SELinux/KernelSU Hooks. KEIN R44 WALT '\n  'Rebuild, KEIN Kernel-Build,\
+        \ KEIN Flash. BReNE unveraendert. '\\\n  'NO BOOT RELEASE.\\n',encoding='utf-8')\n return meta\n\ndef main()->int:\n\
+        \ p=argparse.ArgumentParser();p.add_argument('--source',required=True,type=Path);p.add_argument('--midori',required=True,type=Path);p.add_argument('--r53',required=True,type=Path);p.add_argument('--out',required=True,type=Path)\n\
+        \ a=p.parse_args()\n try:res=stage(a.source,a.midori,a.r53,a.out)\n except (GateError,OSError,subprocess.TimeoutExpired,ValueError)\
+        \ as e:\n  print('R54_STAGE2_BLOCKED:'+str(e),file=sys.stderr);return 2\n print('R54_SUSFS54_STAGE2_REAL_12_FILE_PATCH=PASS;\
+        \ SUSFS_COMPLETE=NO; BOOT_READY=NO; FLASH_ALLOWED=NO')\n print('R54_PATCH_SHA256='+res['patch_sha256']);return 0\n\
+        \nif __name__=='__main__':sys.exit(main())\nPY_R54_SOURCE\ncat > \"$R54_STAGE/tests/test_r54_stage2.py\" <<'PY_R54_TESTS'\n\
+        #!/usr/bin/env python3\nfrom __future__ import annotations\nimport hashlib\nimport io\nimport json\nimport os\nimport\
+        \ stat\nfrom pathlib import Path\nimport shutil\nimport subprocess\nimport sys\nimport tempfile\nimport unittest\n\
+        from unittest import mock\nimport zipfile\nimport warnings\n\nimport r54_stage2 as g\n\n\ndef git(repo:Path,*args:str)->str:\n\
+        \ r=subprocess.run(['git',*args],cwd=repo,capture_output=True,text=True,check=True)\n return r.stdout.strip()\n\n\
+        class R54Tests(unittest.TestCase):\n @classmethod\n def setUpClass(cls):\n  cls.root=Path(tempfile.mkdtemp(prefix='r54_test_fixture_'))\n\
+        \  cls.src=cls.root/'base';cls.src.mkdir()\n  cls.mid=cls.root/'upstream';cls.mid.mkdir()\n  for p in (cls.src,cls.mid):\n\
+        \   git(p,'init','-q');git(p,'config','user.email','ci@example.invalid');git(p,'config','user.name','CI Fixture')\n\
+        \  cls.old={};cls.new={}\n  for i,filename in enumerate(sorted(g.R53_NAMES)):\n   p=cls.src/filename;p.parent.mkdir(parents=True,exist_ok=True)\n\
+        \   p.write_text(f'original line {i}\\nold value {i}\\n',encoding='utf-8')\n  git(cls.src,'add','.');git(cls.src,'commit','-qm','clean\
+        \ synthetic ancestor')\n  cls.src_sha=git(cls.src,'rev-parse','HEAD')\n  for i,name in enumerate(sorted(g.R53_NAMES)):\n\
+        \   p=cls.src/name\n   cls.old[name]=git(cls.src,'hash-object',name)\n   p.write_text(p.read_text().replace(f'old\
+        \ value {i}',f'new value {i}'),encoding='utf-8')\n   cls.new[name]=git(cls.src,'hash-object',name)\n  cls.patch=git(cls.src,'diff','--binary','--no-ext-diff','--no-renames')+'\\\
+        n'\n  git(cls.src,'restore','--worktree','.')\n  cls.blob_files={}\n  for dest,(origin,expected) in g.NEW_INPUTS.items():\n\
+        \   p=cls.mid/origin;p.parent.mkdir(parents=True,exist_ok=True)\n   if dest=='fs/susfs.c':\n    p.write_text('source\
+        \ start\\n'+''.join(f'line {i}' + ('  ' if i in (3,4,5,6,7) else '')+'\\n' for i in range(2,11)),encoding='utf8')\n\
+        \   elif dest.endswith('/susfs.h'):\n    p.write_text('#define SUSFS_VERSION \"v2.3.0\"\\n',encoding='utf8')\n   else:p.write_text('#define\
+        \ SUSFS_X 1\\n',encoding='utf8')\n   cls.blob_files[dest]=(origin,git(cls.mid,'hash-object',origin))\n  git(cls.mid,'add','.');git(cls.mid,'commit','-qm','synthetic\
+        \ pinned upstream')\n  cls.mid_sha=git(cls.mid,'rev-parse','HEAD')\n  rows=[{'file':name,'old_git_blob':cls.old[name],'new_git_blob':cls.new[name]}\
+        \ for name in sorted(g.R53_NAMES)]\n  cls.report={\n   'schema':'VEUX_R53_SUSFS_5_4_STAGE1_V1','status':'PARTIAL_SOURCE_PATCH_APPLIED_TO_PINNED_ANCESTOR',\n\
+        \   'kernel_source_commit':cls.src_sha,'midori_commit':cls.mid_sha,\n   'patch_sha256':g.digest(cls.patch.encode()),'patched_file_count':9,'patched_files':rows,\n\
+        \   'susfs_5_4_full_port_complete':False,'susfs_c_and_headers_integrated':False,\n   'compile_performed':False,'boot_ready':False,'flash_allowed':False,'r44_walt_recomposed':False,\n\
+        \  }\n  names=g.R53_ARCHIVE_FILES\n  manifest={}\n  for k in names-{'SHA256SUMS.txt'}:\n   if k=='R53_PATCH_RESULT.json':blob=(json.dumps(cls.report)+'\\\
+        n').encode()\n   elif k=='VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch':blob=cls.patch.encode()\n   else:blob=(k+' synthetic\\\
+        n').encode()\n   manifest[k]=blob\n  manifest['SHA256SUMS.txt']=''.join(g.digest(v)+'  '+k+'\\n' for k,v in sorted(manifest.items())).encode()\n\
+        \  buf=io.BytesIO()\n  with zipfile.ZipFile(buf,'w',zipfile.ZIP_DEFLATED) as z:\n   for k,v in manifest.items():z.writestr(k,v)\n\
+        \  cls.zipbytes=buf.getvalue()\n  cls.settings={\n   'SOURCE_SHA':cls.src_sha,'MIDORI_SHA':cls.mid_sha,\n   'R53_ZIP_SHA256':g.digest(cls.zipbytes),\n\
+        \   'R53_PATCH_SHA256':g.digest(cls.patch.encode()),\n   'NEW_INPUTS':cls.blob_files,\n   'SUSFS_C_WHITESPACE_LINES':{3,4,5,6,7},\n\
+        \  }\n\n @classmethod\n def tearDownClass(cls):shutil.rmtree(cls.root,ignore_errors=True)\n\n def setUp(self):\n \
+        \ self.temp=Path(tempfile.mkdtemp(prefix='r54_case_'))\n  self.addCleanup(shutil.rmtree,self.temp,ignore_errors=True)\n\
+        \  self.src=self.temp/'kernel';self.mid=self.temp/'midori'\n  shutil.copytree(type(self).src,self.src)\n  shutil.copytree(type(self).mid,self.mid)\n\
+        \  self.arc=self.temp/'r53.zip';self.arc.write_bytes(type(self).zipbytes)\n  self.out=self.temp/'out';self.out.mkdir()\n\
+        \  self.patches=[]\n  for k,v in type(self).settings.items():\n   p=mock.patch.object(g,k,v);p.start();self.addCleanup(p.stop)\n\
+        \n def run_stage(self):return g.stage(self.src,self.mid,self.arc,self.out)\n\n def test_original_r53_artifact_real_integrity(self):\n\
+        \  p=os.getenv('R54_REAL_R53')\n  if not p: self.skipTest('real R53 archive path unavailable')\n  with mock.patch.object(g,'R53_ZIP_SHA256','e39cb10cc0ab5f532728b4126b538ca04eb0f6bb5f675dc9f88ff624dd3258ab'),\\\
+        \n       mock.patch.object(g,'R53_PATCH_SHA256','fddd2fe0cc309d1da32d1d3500b27a74ff93c79ae07243a67dea0f21691f389d'),\\\
+        \n       mock.patch.object(g,'SOURCE_SHA','b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'),\\\n       mock.patch.object(g,'MIDORI_SHA','cfde03eed16a39775a341d16d3f6601bed11b11a'):\n\
+        \   r,patch=g.validate_r53_zip(Path(p).read_bytes())\n   self.assertEqual(r['patched_file_count'],9)\n   self.assertEqual(len(patch),31284)\n\
+        \n def test_replay_and_3_new_source_files_real_diff(self):\n  result=self.run_stage()\n  self.assertEqual(result['files_changed'],12)\n\
+        \  self.assertEqual(result['upstream_whitespace_corrections_exact'],5)\n  self.assertEqual(set(g.STAGE2_NAMES),set(git(self.src,'diff','--name-only').splitlines()))\n\
+        \  self.assertEqual(result['r53_nine_file_postimages_verified'],True)\n  self.assertEqual(len(result['new_files']),3)\n\
+        \  self.assertFalse(result['flash_allowed'])\n  self.assertEqual(result['patch_sha256'],g.digest((self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').read_bytes()))\n\
+        \  # Reapply the *generated* patch to a pristine independent checkout.\n  replay=self.temp/'replay';shutil.copytree(type(self).src,replay)\n\
+        \  git(replay,'apply','--check',str(self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'))\n  git(replay,'apply',str(self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'))\n\
+        \  self.assertEqual(set(g.STAGE2_NAMES),set(git(replay,'diff','--name-only').splitlines()) | {x for x in g.NEW_INPUTS})\n\
+        \  for row in result['new_files']:\n   self.assertEqual(git(replay,'hash-object',row['file']),row['final_git_blob'])\n\
+        \n def test_no_flash_or_compiler_flags(self):\n  r=self.run_stage()\n  for field in ('r44_walt_recomposed','susfs_complete','baka_su_uapi6_integrated','nomount_v22_integrated','build_performed','device_tested','boot_ready','flash_allowed'):\n\
+        \   self.assertIs(r[field],False)\n def test_strict_clean_diff_pass(self):\n  self.run_stage();self.assertEqual(git(self.src,'diff','--check'),'')\n\
+        \ def test_invalid_zip_rejected(self):\n  self.arc.write_bytes(self.arc.read_bytes()+b'corrupt');\n  with self.assertRaisesRegex(g.GateError,'R53_ORIGINAL_ZIP_SHA256'):self.run_stage()\n\
+        \ def test_zip_wrong_manifest_rejected(self):\n  b=self.arc.read_bytes();buf=io.BytesIO()\n  with zipfile.ZipFile(io.BytesIO(b))\
+        \ as z,zipfile.ZipFile(buf,'w') as out:\n   for n in z.namelist():out.writestr(n,b'wrong' if n=='R53_PATCH_RESULT.json'\
+        \ else z.read(n))\n  self.arc.write_bytes(buf.getvalue())\n  with mock.patch.object(g,'R53_ZIP_SHA256',g.digest(self.arc.read_bytes())):\n\
+        \   with self.assertRaisesRegex(g.GateError,'R53_MANIFEST_MISMATCH'):self.run_stage()\n def test_zip_duplicate_member_rejected(self):\n\
+        \  buf=io.BytesIO()\n  with warnings.catch_warnings():\n   warnings.simplefilter('ignore',UserWarning)\n   with zipfile.ZipFile(buf,'w')\
+        \ as z:\n    z.writestr('R53_PATCH_RESULT.json',b'a');z.writestr('R53_PATCH_RESULT.json',b'b')\n  with mock.patch.object(g,'R53_ZIP_SHA256',g.digest(buf.getvalue())):\n\
+        \   with self.assertRaisesRegex(g.GateError,'R53_ARCHIVE_MEMBER_SET_WRONG'):g.validate_r53_zip(buf.getvalue())\n def\
+        \ test_zip_symlink_rejected(self):\n  raw=type(self).zipbytes\n  buf=io.BytesIO()\n  with zipfile.ZipFile(io.BytesIO(raw))\
+        \ as src,zipfile.ZipFile(buf,'w') as dst:\n   for name in src.namelist():\n    zi=zipfile.ZipInfo(name)\n    if name=='R53_TESTS.log':zi.external_attr=(stat.S_IFLNK|0o777)<<16\n\
+        \    dst.writestr(zi,src.read(name))\n  with mock.patch.object(g,'R53_ZIP_SHA256',g.digest(buf.getvalue())):\n   with\
+        \ self.assertRaisesRegex(g.GateError,'R53_ARCHIVE_MEMBER_UNSAFE'):g.validate_r53_zip(buf.getvalue())\n def test_missing_upstream_blob_detected(self):\n\
+        \  (self.mid/'kernel_patches/fs/susfs.c').write_text('tampered\\n')\n  with self.assertRaisesRegex(g.GateError,'DIRTY_INPUT_GIT_REPO'):self.run_stage()\n\
+        \ def test_wrong_upstream_blob_detected_even_if_clean(self):\n  with mock.patch.dict(g.NEW_INPUTS,{'fs/susfs.c':('kernel_patches/fs/susfs.c','0'*40)}):\n\
+        \   with self.assertRaisesRegex(g.GateError,'SUSFS_5_4_UPSTREAM_BLOB_MISMATCH'):self.run_stage()\n def test_wrong_kernel_commit_blocked(self):\n\
+        \  with mock.patch.object(g,'SOURCE_SHA','f'*40):\n   with self.assertRaisesRegex(g.GateError,'WRONG_5_4_ANCESTOR'):self.run_stage()\n\
+        \ def test_wrong_midori_commit_blocked(self):\n  with mock.patch.object(g,'MIDORI_SHA','f'*40):\n   with self.assertRaisesRegex(g.GateError,'WRONG_MIDORI_5_4'):self.run_stage()\n\
+        \ def test_dirty_kernel_blocked(self):\n  (self.src/'extra.txt').write_text('unknown')\n  with self.assertRaisesRegex(g.GateError,'DIRTY_INPUT_GIT_REPO'):self.run_stage()\n\
+        \ def test_existing_susfs_file_blocked(self):\n  (self.src/'fs/susfs.c').write_text('already patched\\n')\n  # Untracked\
+        \ state blocks before collision check, still safe.\n  with self.assertRaisesRegex(g.GateError,'DIRTY_INPUT_GIT_REPO|SUSFS_FILE_EXISTS'):self.run_stage()\n\
+        \ def test_unexpected_output_blocked(self):\n  (self.out/'other').write_text('bad')\n  with self.assertRaisesRegex(g.GateError,'OUTPUT_DIR_NOT_EMPTY'):self.run_stage()\n\
+        \ def test_r53_postimage_drift_detected(self):\n  bad=dict(type(self).report);bad['patched_files']=[dict(x) for x\
+        \ in bad['patched_files']];bad['patched_files'][0]['new_git_blob']='f'*40\n  # Unit-level fake report detected only\
+        \ once replay finishes.\n  orig=g.validate_r53_zip\n  with mock.patch.object(g,'validate_r53_zip',lambda b:(bad,type(self).patch)):\n\
+        \   with self.assertRaisesRegex(g.GateError,'R53_POSTIMAGE_WRONG'):self.run_stage()\n def test_whitespace_scope_drift(self):\n\
+        \  with mock.patch.object(g,'SUSFS_C_WHITESPACE_LINES',{43,44}):\n   with self.assertRaisesRegex(g.GateError,'SUSFS_C_WHITESPACE_SCOPE_CHANGED'):self.run_stage()\n\
+        \ def test_headers_unexpected_version_blocked(self):\n  inp=self.mid/'kernel_patches/include/linux/susfs.h'\n  inp.write_text('#define\
+        \ SUSFS_VERSION \"v2.1.0\"\\n')\n  git(self.mid,'add','.');git(self.mid,'commit','-qm','updated header fixture')\n\
+        \  # Keep self-contained current candidate checksum proof, then fail exact version gate.\n  with mock.patch.object(g,'MIDORI_SHA',git(self.mid,'rev-parse','HEAD')):\n\
+        \   with mock.patch.dict(g.NEW_INPUTS,{'include/linux/susfs.h':('kernel_patches/include/linux/susfs.h',git(self.mid,'hash-object','kernel_patches/include/linux/susfs.h'))}):\n\
+        \    with mock.patch.object(g,'validate_r53_zip',lambda b:(type(self).report,type(self).patch)):\n     with self.assertRaisesRegex(g.GateError,'SUSFS_VERSION_UNEXPECTED'):self.run_stage()\n\
+        \ def test_git_blob_mismatch_after_r53_detected(self):\n  bad=dict(type(self).report);bad['patched_files']=[dict(x)\
+        \ for x in bad['patched_files']];bad['patched_files'][0]['old_git_blob']='0'*40\n  with mock.patch.object(g,'validate_r53_zip',lambda\
+        \ b:(bad,type(self).patch)):\n   with self.assertRaisesRegex(g.GateError,'R53_SOURCE_PREIMAGE_DRIFT'):self.run_stage()\n\
+        \ def test_invalid_r53_decision_rejected(self):\n  bad=dict(type(self).report);bad['boot_ready']=True\n  with self.assertRaisesRegex(g.GateError,'R53_UNSAFE_CLAIM'):g.validate_r53_report(bad,type(self).patch)\n\
+        \ def test_error_has_no_partition_or_rom_writes(self):\n  with self.assertRaisesRegex(g.GateError,'SUSFS_FILE_EXISTS|DIRTY_INPUT_GIT_REPO'):\n\
+        \   (self.src/'fs/susfs.c').write_text('already\\n');self.run_stage()\n  forbidden=('/dev/block','/vendor/etc/init','/data/adb/')\n\
+        \  module=Path(g.__file__).read_text()\n  for text in forbidden:self.assertNotIn(text,module)\n\nif __name__=='__main__':unittest.main()\n\
+        PY_R54_TESTS\nprintf '%s  %s\\n' \\\n  '2db5bcf7efc1057d40ecd9393c7c26bec7d47b660cfca9175a75d0e5eeaeeef7' \"$R54_STAGE/scripts/r54_stage2.py\"\
+        \ \\\n  'c26248cc3adc9047a8b0469c65fd5f3b4a60a2dd7aced0c0fd92cf44d3f4c31d' \"$R54_STAGE/tests/test_r54_stage2.py\"\
+        \ | sha256sum -c -\npython3 -B - \"$R54_STAGE\" <<'PY_R54_AST'\nimport ast,sys,pathlib\np=pathlib.Path(sys.argv[1])\n\
+        for name in ('scripts/r54_stage2.py','tests/test_r54_stage2.py'):\n    ast.parse((p/name).read_text(encoding='utf8'),\
+        \ filename=name)\nprint('R54_PINNED_EMBEDDED_PROGRAMS_AST=PASS')\nPY_R54_AST\n"
+    - name: Strict actionlint 1.7.12 and independent ShellCheck
+      shell: bash
+      run: "set -euo pipefail\nzipfile=project/VEUX_R39_R2_MEMORY_ABI_MAIN.zip\ntest -s \"$zipfile\"\nprintf '%s  %s\\n' '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'\
+        \ \"$zipfile\" | sha256sum -c -\nunzip -p \"$zipfile\" tools/actionlint > \"$R54_STAGE/actionlint\"\nchmod 0755 \"\
+        $R54_STAGE/actionlint\"\n\"$R54_STAGE/actionlint\" -version | grep -Fx '1.7.12'\n\"$R54_STAGE/actionlint\" -color=false\
+        \ -shellcheck='' project/.github/workflows/VEUX_R54_SUSFS_54_SOURCE_STAGE2.yml | tee \"$R54_STAGE/out/R54_ACTIONLINT.log\"\
+        \npython3 -B - \"$R54_STAGE\" <<'PY_R54_LINT'\nimport pathlib,subprocess,sys,yaml,hashlib\nstage=pathlib.Path(sys.argv[1]);wf=pathlib.Path('project/.github/workflows/VEUX_R54_SUSFS_54_SOURCE_STAGE2.yml')\n\
+        class Strict(yaml.SafeLoader):pass\ndef unique(loader,node):\n    output={}\n    for k,v in node.value:\n        key=loader.construct_object(k)\n\
+        \        if key in output:raise ValueError('DUPLICATE_YAML_KEY:'+str(key))\n        output[key]=loader.construct_object(v)\n\
+        \    return output\nStrict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,unique)\na=yaml.load(wf.read_text(encoding='utf8'),Loader=Strict)\n\
+        assert isinstance(a,dict) and 'on' in a and list(a['on'])==['workflow_dispatch']\nsteps=a['jobs']['source_stage2']['steps']\n\
+        expected=['Checkout project evidence read-only','Checkout pinned original VEUX 5.4.274 source',\n 'Checkout pinned\
+        \ Midori SUSFS 5.4 source','Materialize and pin complete R54 auditor with tests',\n 'Strict actionlint 1.7.12 and\
+        \ independent ShellCheck','Authenticate R53 original and download artifact',\n 'Run real-artifact and adversarial\
+        \ 5.4 source regressions',\n 'Replay R53 source patch and add exactly 3 pinned SUSFS 5.4 source files',\n 'Final scope\
+        \ and no-flash checks with SHA256','Upload R54 source patch ONLY']\nif [s['name'] for s in steps]!=expected:raise\
+        \ SystemExit('R54_STEPS_CHANGED')\nblocks=[(s['name'],s['run']) for s in steps if 'run' in s]\nif len(blocks)!=6:raise\
+        \ SystemExit('R54_BASH_COUNT_NOT_SIX')\nlines=[]\nfor i,(name,body) in enumerate(blocks,1):\n    for command in (['bash','-n','-'],['shellcheck','--shell=bash','--severity=warning','-']):\n\
+        \        r=subprocess.run(command,input=body,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)\n        if\
+        \ r.returncode:raise SystemExit('R54_SHELL_ERROR:'+name+':'+r.stdout+r.stderr)\n    lines.append(str(i)+' bash-n shellcheck\
+        \ PASS '+hashlib.sha256(body.encode()).hexdigest())\n(stage/'out/R54_SHELLCHECK.log').write_text('\\n'.join(lines)+'\\\
+        n',encoding='utf8')\nprint('R54_YAML_AND_ALL_SIX_BASH_BLOCKS=PASS')\nPY_R54_LINT\n"
+    - name: Authenticate R53 original and download artifact
+      shell: bash
+      env:
+        GH_API_TOKEN: ${{ github.token }}
+      run: "set -euo pipefail\napi=\"https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel\"\napi_get() {\n\
+        \  curl --fail --silent --show-error --location --retry 2 --retry-delay 2 \\\n    --connect-timeout 20 --max-time\
+        \ 120 \\\n    -H \"Authorization: Bearer $GH_API_TOKEN\" \\\n    -H 'Accept: application/vnd.github+json' \\\n   \
+        \ -H 'X-GitHub-Api-Version: 2022-11-28' \\\n    \"$api/$1\" --output \"$2\"\n}\napi_get 'actions/runs/40224649799'\
+        \ \"$R54_STAGE/inputs/R53_RUN.json\"\napi_get 'actions/artifacts/12611060765' \"$R54_STAGE/inputs/R53_META.json\"\n\
+        python3 -B - \"$R54_STAGE/inputs\" <<'PY_R54_API'\nimport json,pathlib,sys\np=pathlib.Path(sys.argv[1]);run=json.loads((p/'R53_RUN.json').read_text());meta=json.loads((p/'R53_META.json').read_text())\n\
+        if not (run.get('id')==40224649799 and run.get('head_sha')=='e7c4ff01d06b96caad0dbcd2a19334241b4317a4'\n        and\
+        \ run.get('head_branch')=='main' and run.get('status')=='completed' and run.get('conclusion')=='success'):\n    raise\
+        \ SystemExit('R54_R53_RUN_PIN_INVALID')\nif not (meta.get('id')==12611060765 and meta.get('name')=='VEUX-R53-SUSFS54-STAGE1-PARTIAL-40224649799'\n\
+        \        and meta.get('digest')=='sha256:e39cb10cc0ab5f532728b4126b538ca04eb0f6bb5f675dc9f88ff624dd3258ab'\n     \
+        \   and meta.get('expired') is False and meta.get('workflow_run',{}).get('head_sha')=='e7c4ff01d06b96caad0dbcd2a19334241b4317a4'):\n\
+        \    raise SystemExit('R54_R53_ARTIFACT_METADATA_PIN_INVALID')\nprint('R54_R53_RUN_AND_ARTIFACT_ID_AND_DIGEST=PASS')\n\
+        PY_R54_API\napi_get 'actions/artifacts/12611060765/zip' \"$R54_STAGE/inputs/R53_ORIGINAL.zip\"\nprintf '%s  %s\\n'\
+        \ 'e39cb10cc0ab5f532728b4126b538ca04eb0f6bb5f675dc9f88ff624dd3258ab' \"$R54_STAGE/inputs/R53_ORIGINAL.zip\" | sha256sum\
+        \ -c -\necho 'R54_AUTHENTIC_R53_ORIGINAL_SOURCE_ARTIFACT=PASS'\n"
+    - name: Run real-artifact and adversarial 5.4 source regressions
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PYTHONPATH="$R54_STAGE/scripts" R54_REAL_R53="$R54_STAGE/inputs/R53_ORIGINAL.zip"
+
+        python3 -B -W error::ResourceWarning -m unittest discover -s "$R54_STAGE/tests" -p ''test_r54_stage2.py'' -v 2>&1
+        | tee "$R54_STAGE/out/R54_TESTS.log"
+
+        grep -F ''Ran 21 tests'' "$R54_STAGE/out/R54_TESTS.log"
+
+        grep -Fx ''OK'' "$R54_STAGE/out/R54_TESTS.log"
+
+        echo ''R54_21_SOURCE_AND_ARTIFACT_REGRESSIONS=PASS''
+
+        '
+    - name: Replay R53 source patch and add exactly 3 pinned SUSFS 5.4 source files
+      shell: bash
+      run: "set -euo pipefail\npython3 -B \"$R54_STAGE/scripts/r54_stage2.py\" \\\n  --source kernel --midori midori \\\n\
+        \  --r53 \"$R54_STAGE/inputs/R53_ORIGINAL.zip\" \\\n  --out \"$R54_STAGE/out\" | tee \"$R54_STAGE/out/R54_STAGE.log\"\
+        \ngrep -F 'R54_SUSFS54_STAGE2_REAL_12_FILE_PATCH=PASS;' \"$R54_STAGE/out/R54_STAGE.log\"\ncat \"$R54_STAGE/out/START_HIER_NOFLASH.txt\"\
+        \ >> \"$GITHUB_STEP_SUMMARY\"\n"
+    - name: Final scope and no-flash checks with SHA256
+      shell: bash
+      run: "set -euo pipefail\npython3 -B - \"$R54_STAGE/out\" <<'PY_R54_FINAL'\nimport hashlib,json,pathlib,re,sys\nout=pathlib.Path(sys.argv[1]);r=json.loads((out/'R54_RESULT.json').read_text(encoding='utf8'))\n\
+        expected={'R54_ACTIONLINT.log','R54_SHELLCHECK.log','R54_TESTS.log','R54_STAGE.log',\n          'R54_RESULT.json','START_HIER_NOFLASH.txt','VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'}\n\
+        actual={x.name for x in out.iterdir() if x.is_file()}\nif actual!=expected:raise SystemExit('R54_WRONG_OUTPUT_SET:'+str(actual^expected))\n\
+        if not (r.get('schema')=='VEUX_R54_SUSFS54_STAGE2_SOURCE_COMPOSITION_V1' and\n        r.get('files_changed')==12 and\
+        \ r.get('upstream_whitespace_corrections_exact')==5 and\n        r.get('r53_run')==40224649799 and r.get('r53_nine_file_postimages_verified')\
+        \ is True and\n        len(r.get('new_files',[]))==3 and r.get('source_commit')=='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'):\n\
+        \    raise SystemExit('R54_PINNED_12_FILE_SOURCE_PROOF_FAILED')\nfor key in ('source_changes_committed','r44_walt_recomposed','susfs_complete','baka_su_uapi6_integrated',\n\
+        \            'nomount_v22_integrated','build_performed','device_tested','boot_ready','flash_allowed'):\n    if r.get(key)\
+        \ is not False:raise SystemExit('R54_UNSAFE_SUCCESS_FLAG:'+key)\npatch=(out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').read_bytes()\n\
+        if hashlib.sha256(patch).hexdigest()!=r.get('patch_sha256'):\n    raise SystemExit('R54_PATCH_HASH_MISMATCH')\nfor\
+        \ filename in out.iterdir():\n    if filename.is_file() and (filename.suffix in ('.ko','.bin','.elf','.dtb','.dtbo','.img')\
+        \ or filename.name in ('Image','vmlinux')):\n        raise SystemExit('R54_FLASHABLE_OUTPUT_FORBIDDEN')\nchecks=[]\n\
+        for item in sorted(out.iterdir()):\n    if item.is_file():checks.append(hashlib.sha256(item.read_bytes()).hexdigest()+'\
+        \  '+item.name)\n(out/'SHA256SUMS.txt').write_text('\\n'.join(checks)+'\\n',encoding='utf8')\nprint('R54_COMPLETE_12_FILE_SOURCE_PATCH_AND_NO_FLASH_GATES=PASS')\n\
+        PY_R54_FINAL\n(cd \"$R54_STAGE/out\" && sha256sum -c SHA256SUMS.txt)\nstatus=$(git -C project status --porcelain --untracked-files=all)\n\
+        test -z \"$status\"\necho 'R54_REPOSITORY_UNCHANGED=YES; NO_KERNEL_BUILD=YES; NO_FLASH=YES'\n"
+    - name: Upload R54 source patch ONLY
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R54-SUSFS54-12-SOURCE-FILES-NOFLASH-${{ github.run_id }}
+        path: /tmp/veux-r54/out/
+        retention-days: 14
+        compression-level: 6
+        if-no-files-found: error
