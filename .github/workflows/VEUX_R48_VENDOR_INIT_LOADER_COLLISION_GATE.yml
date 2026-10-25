@@ -1,0 +1,514 @@
+name: VEUX R48 R44 RMNET vendor init loader conflict decision - READ ONLY NO FLASH
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r48-vendor-init-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r48:
+    name: Pinned historical OEM init commands plus R47 ABI, no device writes
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R48_STAGE: /tmp/veux-r48
+    steps:
+      - name: Checkout repository strictly read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Authenticate historical R39 public evidence and prepare pinned reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+          echo '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528  VEUX_R39_R2_MEMORY_ABI_MAIN.zip' | sha256sum -c -
+          mkdir -p "$R48_STAGE/src" "$R48_STAGE/tests" "$R48_STAGE/inputs" "$R48_STAGE/out"
+          cat > "$R48_STAGE/src/r48_gate.py" <<'R48_SOURCE'
+          #!/usr/bin/env python3
+          """R48: pin preexisting public R30 init evidence and R47 results; no device changes."""
+          import argparse
+          import csv
+          import hashlib
+          import io
+          import json
+          import pathlib
+          import re
+          import stat
+          import zipfile
+
+          R39_SHA = '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R47_ZIP_SHA = 'dc0d648951679e8a7081b7364f01d2d9d941b27b1e98310b76199b25324eec51'
+          R30_INNER = 'evidence/VEUX_R30_ABI_ORIGINALMODULE_NACHWEIS_20261023.zip'
+          R30_REPORT = 'R30_ORIGINAL_GERAETEBEFUND.json'
+          INIT_SHA = '568143f3edf386dda7a13503cea2df6cc03904cfa798e14dfab5487aa8e6403b'
+          R44_SHA = '1e4938c8c9ce33fff743b405ae85de17a204150b'
+          R47_SOURCE_SHA = 'fa39bae7ce0674f08cd276b8c7991317c7303ef0'
+          R47_RUN = 40176846693
+          R44_RUN = 40168917960
+          R47_ARTIFACT = 12592631872
+          RMNET_SHA = {'rmnet_shs':'3d69e8d5cd33675c3b8e4174c8c8260199eac91ade6f47e45bf966e3c698e516',
+                       'rmnet_offload':'0c290be4656ffed3dd0763650d270d79353ab830f73740748b03e21c83ad05cb'}
+          RMNET_BID = {'rmnet_shs':'d0fb60306c710f6b','rmnet_offload':'ee0395e9f972741c'}
+          RMNET_CRC = {'rmnet_shs':108, 'rmnet_offload':32}
+          MOD_PROP = {'rmnet_shs':'persist.vendor.data.shs_ko_load','rmnet_offload':'persist.vendor.data.offload_ko_load'}
+          LOCATIONS = {'/vendor/lib/modules','/vendor/lib/modules/5.4-gki'}
+          CMD = re.compile(r'exec u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe (?P<op>-a|-r) -d (?P<dir>/vendor/lib/modules(?:/5\.4-gki)?) (?P<module>rmnet_shs|rmnet_offload)\Z')
+          TRIGGER = re.compile(r'on property:(?P<property>persist\.vendor\.data\.(?:shs_ko_load|offload_ko_load))=(?P<value>[01])\Z')
+
+
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+
+
+          def require(cond, message):
+              if not cond:
+                  raise ValueError(message)
+
+
+          def safe_archive(raw, required, size_cap=12_000_000):
+              require(len(raw) <= size_cap, 'ZIP_SIZE_TOO_LARGE')
+              with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                  info=z.infolist()
+                  names=[m.filename for m in info]
+                  require(len(names)==len(set(names)), 'ZIP_DUPLICATE_MEMBER')
+                  for m in info:
+                      path=pathlib.PurePosixPath(m.filename)
+                      require(not path.is_absolute() and '..' not in path.parts and '\\' not in m.filename and not m.filename.startswith('/'), 'ZIP_UNSAFE_NAME')
+                      require(not stat.S_ISLNK(m.external_attr>>16), 'ZIP_SYMLINK')
+                      require(m.file_size <= size_cap and m.compress_size <= size_cap, 'ZIP_UNSAFE_SIZE')
+                  require(set(required).issubset(names),'ZIP_REQUIRED_MISSING')
+                  require(z.testzip() is None,'ZIP_CRC')
+                  return {k:z.read(k) for k in required}
+
+
+          def original_report(r39):
+              require(digest(r39)==R39_SHA, 'R39_SHA256_CHANGED')
+              nested=safe_archive(r39,{R30_INNER})[R30_INNER]
+              return json.loads(safe_archive(nested,{R30_REPORT})[R30_REPORT])
+
+
+          def original_r47(artifact):
+              require(digest(artifact)==R47_ZIP_SHA,'R47_ARTIFACT_SHA256_CHANGED')
+              m=safe_archive(artifact,{'R47_RESULT.json','SHA256SUMS.txt'})
+              manifest=m['SHA256SUMS.txt'].decode('utf-8')
+              row=next((x for x in manifest.splitlines() if x.endswith('  R47_RESULT.json')),None)
+              require(row is not None,'R47_RESULT_MANIFEST_MISSING')
+              require(row.split('  ',1)[0]==digest(m['R47_RESULT.json']),'R47_MANIFEST_MISMATCH')
+              return json.loads(m['R47_RESULT.json'])
+
+
+          def validate_r47(result):
+              require(result.get('schema')=='VEUX_R47_R44_RMNET_BINARY_ELF_PROVENANCE_V1','R47_SCHEMA')
+              require(result.get('result')=='R44_RMNET_140_OF_140_CRC_MATCH_AND_BYTE_IDENTITY','R47_RESULT')
+              require(result.get('r44_source_run')==R44_RUN and result.get('r44_source_sha')==R44_SHA,'R47_R44_PROVENANCE')
+              require(result.get('module_pair_byteidentical_to_r31') is True,'R47_IDENTITY')
+              require(result.get('boot_ready') is False and result.get('flash_allowed') is False,'R47_UNSAFE_STATUS')
+              modules=result.get('modules')
+              require(isinstance(modules,list) and len(modules)==2,'R47_MODULE_COUNT')
+              names=set()
+              for row in modules:
+                  name=row['name']
+                  require(name in RMNET_SHA and name not in names,'R47_MODULE_UNKNOWN_OR_DUPLICATE')
+                  names.add(name)
+                  require(row.get('sha256')==RMNET_SHA[name] and row.get('build_id')==RMNET_BID[name],'R47_MODULE_HASH_OR_BUILD_ID')
+                  require(row.get('matched_imports')==RMNET_CRC[name] and row.get('symbol_imports')==RMNET_CRC[name],'R47_MODULE_CRC_IMPORTS')
+                  require(row.get('crc_mismatches')==0 and row.get('missing_exports')==0,'R47_MODULE_ABI_MISMATCH')
+                  require(row.get('vermagic')=='5.4.274~positron SMP preempt mod_unload modversions aarch64','R47_VERMAGIC')
+                  require(row.get('depends')=='','R47_KO_DEPENDS')
+              return modules
+
+
+          def init_matrix(original):
+              require(original.get('schema')=='VEUX_R30_VENDOR_BOOT_MODULE_PROVENANCE_V1','R30_SCHEMA_CHANGED')
+              fs=original.get('filesystem_init')
+              require(isinstance(fs,dict),'R30_INIT_NOT_FOUND')
+              matches=[file for file in fs.get('matching_files',[]) if file.get('path')=='/vendor/etc/init/netmgrd.rc']
+              require(len(matches)==1 and matches[0].get('sha256')==INIT_SHA,'R30_INIT_ORIGIN_MISMATCH')
+              rows=matches[0].get('matches',[])
+              require(isinstance(rows,list) and len(rows)==8,'R30_COMMAND_COUNT')
+              parsed=[]
+              for row in rows:
+                  mt=CMD.fullmatch(row.get('text',''))
+                  tr=TRIGGER.fullmatch(row.get('section',''))
+                  require(mt is not None and tr is not None,'R30_COMMAND_FORMAT')
+                  d=mt.groupdict(); t=tr.groupdict()
+                  require(d['dir'] in LOCATIONS,'R30_DIR')
+                  require(t['property']==MOD_PROP[d['module']],'R30_PROPERTY_MODULE_CROSSWIRE')
+                  require((t['value']=='1')==(d['op']=='-a'),'R30_COMMAND_ACTION_CROSSWIRE')
+                  require(isinstance(row.get('line'),int) and row['line']>0,'R30_LINE')
+                  parsed.append({'module':d['module'],'property':t['property'],'property_value':t['value'],
+                                 'action':'LOAD_ATTEMPT' if d['op']=='-a' else 'UNLOAD_ATTEMPT',
+                                 'module_directory':d['dir'],'source_line':row['line']})
+              keys=[(x['module'],x['property_value'],x['module_directory']) for x in parsed]
+              expected={(n,v,d) for n in RMNET_SHA for v in ['0','1'] for d in LOCATIONS}
+              require(set(keys)==expected and len(keys)==len(set(keys)),'R30_LOADER_MATRIX_MISMATCH')
+              return sorted(parsed,key=lambda x:(x['module'],x['property_value'],x['module_directory']))
+
+
+          def decision(r30,r47):
+              matrix=init_matrix(r30)
+              mods=validate_r47(r47)
+              return {
+                'schema':'VEUX_R48_STOCK_INIT_RMNET_COLLISION_DECISION_V1',
+                'r30_public_historical_init_sha256':INIT_SHA,
+                'r47_source_run':R47_RUN,
+                'r47_source_artifact':R47_ARTIFACT,
+                'r44_source_run':R44_RUN,
+                'r44_source_commit':R44_SHA,
+                'modules':[{'name':m['name'],'sha256':m['sha256'],'build_id':m['build_id'],'verified_imports':m['matched_imports']} for m in mods],
+                'source_init_commands':len(matrix),
+                'conditional_vendor_init_load_attempts':sum(x['action']=='LOAD_ATTEMPT' for x in matrix),
+                'conditional_vendor_init_unload_attempts':sum(x['action']=='UNLOAD_ATTEMPT' for x in matrix),
+                'per_module_load_candidates':{n:sorted({x['module_directory'] for x in matrix if x['module']==n and x['action']=='LOAD_ATTEMPT'}) for n in RMNET_SHA},
+                'r44_pair_static_abi_proven':True,
+                'stock_init_conditional_vendor_load_paths_present':True,
+                'actual_r44_boot_time_loader_execution_proven':False,
+                'r44_module_installation_to_device_proven':False,
+                'r44_vendor_autoload_collision_prevented':False,
+                'vendor_init_compatibility_proven':False,
+                'full_vendor_abi_proven':False,
+                'device_runtime_tested':False,
+                'safe_rollback_proven':False,
+                'bootloader_dtbo_selection_proven':False,
+                'selinux_vintf_proven':False,
+                'boot_ready':False,'flash_allowed':False,
+                'kernel_built':False,'repo_or_device_modified':False,
+                'private_r46_data_included':False,
+                'decision':'NO_R44_BOOT_UNTIL_INIT_LOADER_COLLISION_AND_RECOVERY_GATES_PROVEN',
+                'evidence_note':'R30 is a historical source scan already in the public R39 package. The R46 private device report is NOT ingested here. Property settings and loader success on a future R44 boot cannot be inferred.'
+              },matrix
+
+
+          def run(root,r47file,out):
+              r30=original_report(pathlib.Path(root).read_bytes())
+              r47=original_r47(pathlib.Path(r47file).read_bytes())
+              result,matrix=decision(r30,r47)
+              out=pathlib.Path(out);out.mkdir(parents=True,exist_ok=True)
+              (out/'R48_RESULT.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+              with (out/'R48_LOADER_MATRIX.csv').open('w',encoding='utf-8',newline='') as f:
+                  cw=csv.DictWriter(f,fieldnames=['module','property','property_value','action','module_directory','source_line'])
+                  cw.writeheader();cw.writerows(matrix)
+              report=[
+                'R48 – OEM INIT/RMNET LOADER – ENTSCHEIDUNG',
+                'R30 historische Original-Datei-Quelle (aus bereits oeffentlichem R39-Belegpaket) geprueft.',
+                'R47 originale GitHub-Binaerpruefung mit bekanntem SHA256 geprueft.',
+                'Bei Property=1 versucht Vendor-init pro RMNET-Modul ZWEI Modulverzeichnisse.',
+                'Bei Property=0 gibt es entsprechende modprobe -r Befehle.',
+                'DIES IST KEIN NACHWEIS, DASS DIESE KOMMANDOS BEIM R44 BOOT LAUFEN ODER ERFOLGREICH SIND.',
+                'R44-RMNET-Module: statische 140/140 CRC-Symbolimport-Pruefung. KEIN Laufzeitnachweis.',
+                'Keine Weiterverwendung der alten 2EF0-Module fuer R44.',
+                'Kein eigenmaechtiges persist.vendor.data.* Umschalten, kein Aendern von /vendor oder /data/adb.',
+                'Kein insmod/modprobe, kein Flash, keine Device-Auslesung, keine private R46-Datei hier.',
+                'Vor R44-Geraeteboot: bootzeitige Modulreihenfolge nachweisen/absichern, SELinux/VINTF pruefen,',
+                'Bootloader DTBO-Auswahl, Stock-boot-Backup und dokumentierte Recovery-Prozedur verifizieren.',
+                'BOOT_READY=NO; VENDOR_ABI_UNPROVEN; FLASH_ALLOWED=NO.'
+              ]
+              (out/'R48_BERICHT_DE.txt').write_text('\n'.join(report)+'\n',encoding='utf-8')
+              policy=[
+                '# R48 – Bedingungen fuer einen spaeteren R44-Gerätetest',
+                '',
+                '1. Sicheres boot.img-Backup fuer den tatsaechlich aktiven A/B-Slot und getesteter Wiederherstellungsweg.',
+                '2. R44-Modulpaar nur aus R44-authentifizierten Binardateien; alte 2EF0-Module strikt ausschliessen.',
+                '3. Vor dem Boot: Init-/Property-Ladepfade so kontrollieren, dass keine inkompatiblen Vendor-rmnet.ko geladen werden. Eine reine `boot-completed.d`-Anpassung ist fuer fruehe Init-Befehle nicht hinreichend.',
+                '4. Keinen Kernel-Only-Workaround oder unbewiesenen persist-property-Zwang. Keine vendor/init Veraenderung ohne getestete Reversibilitaet.',
+                '5. Vollstaendige Vendor-ABI nur fuer real benoetigte Module sowie Bootloader DTBO, SELinux, VINTF, SU/SUSFS/NoMount gesondert pruefen.',
+                '6. Boot- und Recovery-Gates getrennt protokollieren. **R48 gibt keinen Boot und keinen Flash frei.**',
+                '',
+                'Private R46-Gerätedaten gehoeren nur in den Chat, nicht in GitHub.',
+              ]
+              (out/'R48_SICHERE_LOADER_STRATEGIE.md').write_text('\n'.join(policy)+'\n',encoding='utf-8')
+              print('R48_PUBLIC_INIT_EVIDENCE=PASS; R47_R44_STATIC_PAIR=PASS; CONDITIONAL_AUTOLOAD_COLLISION=UNRESOLVED; BOOT_READY=NO; FLASH_ALLOWED=NO')
+              return result
+
+          if __name__=='__main__':
+              p=argparse.ArgumentParser()
+              p.add_argument('--r39',required=True);p.add_argument('--r47-artifact',required=True);p.add_argument('--out',required=True)
+              a=p.parse_args();run(a.r39,a.r47_artifact,a.out)
+          R48_SOURCE
+          cat > "$R48_STAGE/tests/test_r48_gate.py" <<'R48_TESTS'
+          import copy
+          import csv
+          import io
+          import json
+          import os
+          import pathlib
+          import stat
+          import tempfile
+          import unittest
+          import zipfile
+          import r48_gate as g
+
+
+          def fakezip(mapping,symlink=False):
+              s=io.BytesIO()
+              with zipfile.ZipFile(s,'w',zipfile.ZIP_DEFLATED) as z:
+                  for key,value in mapping.items():
+                      info=zipfile.ZipInfo(key)
+                      info.external_attr=((stat.S_IFLNK | 0o777) if symlink else (stat.S_IFREG | 0o644))<<16
+                      z.writestr(info,value)
+              return s.getvalue()
+
+          class R48(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  cls.r39=pathlib.Path(os.environ['R48_R39']).read_bytes()
+                  cls.r47zip=pathlib.Path(os.environ['R48_R47']).read_bytes()
+                  cls.r30=g.original_report(cls.r39)
+                  cls.r47=g.original_r47(cls.r47zip)
+
+              def orig(self):return copy.deepcopy(self.r30)
+              def previous(self):return copy.deepcopy(self.r47)
+              def rows(self,o):return o['filesystem_init']['matching_files'][0]['matches']
+              def test_genuine_r39_sha(self):self.assertEqual(g.digest(self.r39),g.R39_SHA)
+              def test_genuine_r47_sha(self):self.assertEqual(g.digest(self.r47zip),g.R47_ZIP_SHA)
+              def test_original_public_init(self):self.assertEqual(g.init_matrix(self.r30).__len__(),8)
+              def test_public_source_has_four_load_calls(self):
+                  rows=g.init_matrix(self.r30)
+                  self.assertEqual(sum(x['action']=='LOAD_ATTEMPT' for x in rows),4)
+              def test_public_source_has_four_unload_calls(self):
+                  rows=g.init_matrix(self.r30)
+                  self.assertEqual(sum(x['action']=='UNLOAD_ATTEMPT' for x in rows),4)
+              def test_each_module_has_two_load_paths(self):
+                  rows=g.init_matrix(self.r30)
+                  for name in g.MOD_PROP:
+                      self.assertEqual({x['module_directory'] for x in rows if x['module']==name and x['action']=='LOAD_ATTEMPT'},g.LOCATIONS)
+              def test_bad_source_schema_rejected(self):
+                  o=self.orig();o['schema']='wrong'
+                  with self.assertRaisesRegex(ValueError,'R30_SCHEMA'):g.init_matrix(o)
+              def test_bad_source_hash_rejected(self):
+                  o=self.orig();o['filesystem_init']['matching_files'][0]['sha256']='0'*64
+                  with self.assertRaisesRegex(ValueError,'ORIGIN'):g.init_matrix(o)
+              def test_missing_command_rejected(self):
+                  o=self.orig();self.rows(o).pop()
+                  with self.assertRaisesRegex(ValueError,'COUNT'):g.init_matrix(o)
+              def test_duplicate_command_rejected(self):
+                  o=self.orig();self.rows(o)[0]=copy.deepcopy(self.rows(o)[1])
+                  with self.assertRaisesRegex(ValueError,'MATRIX'):g.init_matrix(o)
+              def test_crosswired_property_rejected(self):
+                  o=self.orig();self.rows(o)[0]['section']='on property:persist.vendor.data.offload_ko_load=1'
+                  with self.assertRaisesRegex(ValueError,'CROSSWIRE'):g.init_matrix(o)
+              def test_crosswired_action_rejected(self):
+                  o=self.orig();self.rows(o)[0]['section']='on property:persist.vendor.data.shs_ko_load=0'
+                  with self.assertRaisesRegex(ValueError,'CROSSWIRE'):g.init_matrix(o)
+              def test_other_dir_not_accepted(self):
+                  o=self.orig();self.rows(o)[0]['text']=self.rows(o)[0]['text'].replace('/vendor/lib/modules','/data/adb/modules')
+                  with self.assertRaisesRegex(ValueError,'FORMAT'):g.init_matrix(o)
+              def test_line_number_must_be_integer(self):
+                  o=self.orig();self.rows(o)[0]['line']=-1
+                  with self.assertRaisesRegex(ValueError,'LINE'):g.init_matrix(o)
+              def test_extra_source_file_same_path_rejected(self):
+                  o=self.orig();o['filesystem_init']['matching_files'].append(copy.deepcopy(o['filesystem_init']['matching_files'][0]))
+                  with self.assertRaisesRegex(ValueError,'ORIGIN'):g.init_matrix(o)
+              def test_r47_modules_valid(self):self.assertEqual(len(g.validate_r47(self.r47)),2)
+              def test_r47_wrong_version_rejected(self):
+                  o=self.previous();o['schema']='another'
+                  with self.assertRaisesRegex(ValueError,'SCHEMA'):g.validate_r47(o)
+              def test_r47_wrong_sha_rejected(self):
+                  o=self.previous();o['modules'][0]['sha256']='0'*64
+                  with self.assertRaisesRegex(ValueError,'HASH'):g.validate_r47(o)
+              def test_r47_wrong_build_id_rejected(self):
+                  o=self.previous();o['modules'][0]['build_id']='abcd'
+                  with self.assertRaisesRegex(ValueError,'BUILD_ID'):g.validate_r47(o)
+              def test_r47_wrong_crc_rejected(self):
+                  o=self.previous();o['modules'][0]['matched_imports']=101
+                  with self.assertRaisesRegex(ValueError,'IMPORTS'):g.validate_r47(o)
+              def test_r47_extra_missing_export_rejected(self):
+                  o=self.previous();o['modules'][0]['missing_exports']=1
+                  with self.assertRaisesRegex(ValueError,'ABI'):g.validate_r47(o)
+              def test_r47_modified_vermagic_rejected(self):
+                  o=self.previous();o['modules'][0]['vermagic']='5.4.274'
+                  with self.assertRaisesRegex(ValueError,'VERMAGIC'):g.validate_r47(o)
+              def test_r47_new_depends_rejected(self):
+                  o=self.previous();o['modules'][0]['depends']='foo'
+                  with self.assertRaisesRegex(ValueError,'DEPENDS'):g.validate_r47(o)
+              def test_r47_duplicate_modules_rejected(self):
+                  o=self.previous();o['modules'][0]=copy.deepcopy(o['modules'][1])
+                  with self.assertRaisesRegex(ValueError,'DUPLICATE'):g.validate_r47(o)
+              def test_r47_unpinned_source_rejected(self):
+                  o=self.previous();o['r44_source_sha']='0'*40
+                  with self.assertRaisesRegex(ValueError,'PROVENANCE'):g.validate_r47(o)
+              def test_zip_traversal_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'UNSAFE'):g.safe_archive(fakezip({'../bad.txt':b'x'}),{'../bad.txt'})
+              def test_zip_duplicate_rejected(self):
+                  s=io.BytesIO()
+                  import warnings
+                  with warnings.catch_warnings():
+                      warnings.simplefilter('ignore',UserWarning)
+                      with zipfile.ZipFile(s,'w') as z:z.writestr('x','1');z.writestr('x','2')
+                  with self.assertRaisesRegex(ValueError,'DUPLICATE'):g.safe_archive(s.getvalue(),{'x'})
+              def test_zip_symlink_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'SYMLINK'):g.safe_archive(fakezip({'a':b'abc'},True),{'a'})
+              def test_zip_missing_required_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'MISSING'):g.safe_archive(fakezip({'a':b'abc'}),{'b'})
+              def test_zip_oversize_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'SIZE_TOO_LARGE'):g.safe_archive(b'X'*200,{'a'},size_cap=100)
+              def test_r39_changed_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'R39_SHA256'):g.original_report(self.r39[:-1]+b'X')
+              def test_r47_changed_rejected(self):
+                  with self.assertRaisesRegex(ValueError,'R47_ARTIFACT_SHA256'):g.original_r47(self.r47zip[:-1]+b'X')
+              def test_public_decision_blocks_boot(self):
+                  r,rows=g.decision(self.r30,self.r47)
+                  self.assertEqual(r['decision'],'NO_R44_BOOT_UNTIL_INIT_LOADER_COLLISION_AND_RECOVERY_GATES_PROVEN')
+                  self.assertFalse(r['boot_ready']);self.assertFalse(r['flash_allowed'])
+                  self.assertTrue(r['stock_init_conditional_vendor_load_paths_present'])
+                  self.assertFalse(r['private_r46_data_included'])
+              def test_public_no_private_r46_fields(self):
+                  r,_=g.decision(self.r30,self.r47)
+                  raw=json.dumps(r)
+                  for forbidden in ('/data/adb/veux-rmnet/','R46_DEVICE_REPORT.txt','KERNEL_NOTES_SHA256','2e124406b6a371e0918ef95b362dc2eeeb9c10272f81dc75b526cdad46664611'):
+                      self.assertNotIn(forbidden,raw)
+              def test_real_output_and_matrix(self):
+                  with tempfile.TemporaryDirectory() as tmp:
+                      t=pathlib.Path(tmp);r39=t/'r39.zip';r47=t/'r47.zip';r39.write_bytes(self.r39);r47.write_bytes(self.r47zip)
+                      g.run(r39,r47,t/'out')
+                      doc=json.loads((t/'out/R48_RESULT.json').read_text())
+                      with (t/'out/R48_LOADER_MATRIX.csv').open() as f:rows=list(csv.DictReader(f))
+                      self.assertEqual(len(rows),8);self.assertEqual(doc['conditional_vendor_init_load_attempts'],4)
+                      self.assertNotIn('rmnet_shs.ko',set(x.name for x in (t/'out').iterdir()))
+
+          if __name__=='__main__':unittest.main()
+          R48_TESTS
+          printf '%s  %s\n' \
+            'b5296bf24d62b5825064263792493ecbebd858dd34944b73c1513916171188dd' "$R48_STAGE/src/r48_gate.py" \
+            '9c6aad251ee05f4dd536e04b50f353d04111d41daca393f2750aee3028438f50' "$R48_STAGE/tests/test_r48_gate.py" \
+            | sha256sum -c -
+          python3 -B - "$R48_STAGE" <<'R48_AST'
+          import ast,pathlib,sys
+          stage=pathlib.Path(sys.argv[1])
+          for p in [stage/'src/r48_gate.py',stage/'tests/test_r48_gate.py']:
+              ast.parse(p.read_text(encoding='utf-8'),filename=str(p))
+          print('R48_EMBEDDED_PYTHON_SYNTAX=PASS')
+          R48_AST
+      - name: Validate exact YAML via actionlint, every Bash block via ShellCheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -p VEUX_R39_R2_MEMORY_ABI_MAIN.zip tools/actionlint > "$R48_STAGE/actionlint"
+          chmod 0755 "$R48_STAGE/actionlint"
+          "$R48_STAGE/actionlint" -version | grep -Fx '1.7.12'
+          "$R48_STAGE/actionlint" -color=false -shellcheck='' .github/workflows/VEUX_R48_VENDOR_INIT_LOADER_COLLISION_GATE.yml | tee "$R48_STAGE/out/R48_ACTIONLINT.log"
+          command -v shellcheck >/dev/null
+          python3 -B - "$R48_STAGE" <<'R48_LINT'
+          import hashlib,pathlib,subprocess,sys,yaml
+          stage=pathlib.Path(sys.argv[1])
+          class Strict(yaml.SafeLoader):pass
+          def unique(loader,node):
+              out={}
+              for key,val in node.value:
+                  k=loader.construct_object(key)
+                  if k in out:raise ValueError('YAML_DUPLICATE_KEY:'+str(k))
+                  out[k]=loader.construct_object(val)
+              return out
+          Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,unique)
+          yaml_path=pathlib.Path('.github/workflows/VEUX_R48_VENDOR_INIT_LOADER_COLLISION_GATE.yml')
+          obj=yaml.load(yaml_path.read_text(encoding='utf-8'),Loader=Strict)
+          steps=obj['jobs']['r48']['steps']
+          blocks=[(s['name'],s['run']) for s in steps if isinstance(s,dict) and isinstance(s.get('run'),str)]
+          if len(blocks)!=6:raise SystemExit('R48_SHELL_BLOCK_COUNT_INVALID:'+str(len(blocks)))
+          lines=[]
+          for i,(name,code) in enumerate(blocks,1):
+              for cmd in (['bash','-n','-'],['shellcheck','--shell=bash','--severity=warning','-']):
+                  res=subprocess.run(cmd,input=code,text=True,capture_output=True,timeout=40)
+                  if res.returncode:raise SystemExit('R48_LINT_FAIL:'+name+':'+res.stderr+res.stdout)
+              lines.append(str(i)+' '+name+' bash-n=PASS shellcheck=PASS sha256='+hashlib.sha256(code.encode()).hexdigest())
+          (stage/'out/R48_BASH_SHELLCHECK.log').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print('R48_ACTIONLINT_AND_SHELLCHECK_ALL_6_BLOCKS=PASS')
+          R48_LINT
+      - name: Check exact R47 SUCCESS and download pinned public result artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          api="https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel"
+          api_get() {
+            curl --fail --silent --show-error --location --retry 2 --retry-delay 2 \
+              --connect-timeout 15 --max-time 180 \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "${api}/$1" -o "$2"
+          }
+          api_get 'actions/runs/40176846693' "$R48_STAGE/inputs/R47_RUN.json"
+          api_get 'actions/artifacts/12592631872' "$R48_STAGE/inputs/R47_ARTIFACT_META.json"
+          python3 -B - "$R48_STAGE/inputs" <<'R48_META'
+          import json,pathlib,sys
+          p=pathlib.Path(sys.argv[1]);run=json.loads((p/'R47_RUN.json').read_text())
+          if not (run.get('id')==40176846693 and run.get('head_sha')=='fa39bae7ce0674f08cd276b8c7991317c7303ef0' and run.get('status')=='completed' and run.get('conclusion')=='success'):
+              raise SystemExit('R48_R47_SOURCE_RUN_INVALID')
+          a=json.loads((p/'R47_ARTIFACT_META.json').read_text())
+          if not (a.get('id')==12592631872 and a.get('name')=='VEUX-R47-RMNET-ELF-ABI-40176846693' and a.get('expired') is False and a.get('digest')=='sha256:dc0d648951679e8a7081b7364f01d2d9d941b27b1e98310b76199b25324eec51'):
+              raise SystemExit('R48_R47_SOURCE_ARTIFACT_INVALID')
+          print('R48_R47_PINNED_RUN_AND_ARTIFACT=PASS')
+          R48_META
+          api_get 'actions/artifacts/12592631872/zip' "$R48_STAGE/inputs/R47_RESULT_ORIGINAL.zip"
+          printf '%s  %s\n' 'dc0d648951679e8a7081b7364f01d2d9d941b27b1e98310b76199b25324eec51' "$R48_STAGE/inputs/R47_RESULT_ORIGINAL.zip" | sha256sum -c -
+      - name: Test historical init parser, source pins, collisions and no-flash guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          export R48_R39="$GITHUB_WORKSPACE/VEUX_R39_R2_MEMORY_ABI_MAIN.zip"
+          export R48_R47="$R48_STAGE/inputs/R47_RESULT_ORIGINAL.zip"
+          export PYTHONPATH="$R48_STAGE/src"
+          python3 -B -W error::ResourceWarning -m unittest discover -s "$R48_STAGE/tests" -p 'test_r48_gate.py' -v 2>&1 | tee "$R48_STAGE/out/R48_TESTS.log"
+          grep -F 'Ran 35 tests' "$R48_STAGE/out/R48_TESTS.log"
+          grep -Fx 'OK' "$R48_STAGE/out/R48_TESTS.log"
+          echo 'R48_35_ADVERSARIAL_REGRESSIONS=PASS'
+      - name: Prove conditional OEM RMNET loader matrix and issue precise NO-BOOT decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R48_STAGE/src/r48_gate.py" \
+            --r39 VEUX_R39_R2_MEMORY_ABI_MAIN.zip \
+            --r47-artifact "$R48_STAGE/inputs/R47_RESULT_ORIGINAL.zip" \
+            --out "$R48_STAGE/out" | tee "$R48_STAGE/out/R48_EXECUTION.log"
+          cat "$R48_STAGE/out/R48_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail closed for any runtime or flash claims, verify output and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - "$R48_STAGE/out" <<'R48_GUARD'
+          import csv,hashlib,json,pathlib,sys
+          p=pathlib.Path(sys.argv[1]);data=json.loads((p/'R48_RESULT.json').read_text(encoding='utf-8'))
+          expected={'R48_ACTIONLINT.log','R48_BASH_SHELLCHECK.log','R48_TESTS.log','R48_EXECUTION.log',
+                    'R48_RESULT.json','R48_LOADER_MATRIX.csv','R48_BERICHT_DE.txt','R48_SICHERE_LOADER_STRATEGIE.md'}
+          found={a.name for a in p.iterdir() if a.is_file()}
+          if found!=expected:raise SystemExit('R48_OUTPUT_SCOPE_DRIFT:'+str(found^expected))
+          if (data.get('schema')!='VEUX_R48_STOCK_INIT_RMNET_COLLISION_DECISION_V1' or
+              data.get('decision')!='NO_R44_BOOT_UNTIL_INIT_LOADER_COLLISION_AND_RECOVERY_GATES_PROVEN' or
+              data.get('source_init_commands')!=8 or data.get('conditional_vendor_init_load_attempts')!=4 or
+              data.get('conditional_vendor_init_unload_attempts')!=4 or
+              data.get('private_r46_data_included') is not False):
+              raise SystemExit('R48_DECISION_UNEXPECTED')
+          for name in ('actual_r44_boot_time_loader_execution_proven','r44_module_installation_to_device_proven',
+                       'r44_vendor_autoload_collision_prevented','vendor_init_compatibility_proven',
+                       'full_vendor_abi_proven','device_runtime_tested','safe_rollback_proven',
+                       'bootloader_dtbo_selection_proven','selinux_vintf_proven','boot_ready','flash_allowed',
+                       'kernel_built','repo_or_device_modified'):
+              if data.get(name) is not False:raise SystemExit('R48_UNSAFE_TRUE:'+name)
+          with (p/'R48_LOADER_MATRIX.csv').open() as f:
+              if len(list(csv.DictReader(f)))!=8:raise SystemExit('R48_CSV_ROWS')
+          for f in p.rglob('*'):
+              if f.is_file() and (f.suffix in ('.ko','.img','.dtb','.dtbo','.bin','.elf') or f.name in ('vmlinux','Image')):
+                  raise SystemExit('R48_FORBIDDEN_BINARY_OUTPUT')
+          checks=[hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name for f in sorted(p.iterdir()) if f.is_file()]
+          (p/'SHA256SUMS.txt').write_text('\n'.join(checks)+'\n',encoding='utf-8')
+          print('R48_FINAL_GATES=PASS; VENDOR_INIT_AUTOLOAD_POLICY_UNRESOLVED; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          R48_GUARD
+          (cd "$R48_STAGE/out" && sha256sum -c SHA256SUMS.txt)
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'R48_REPO_UNCHANGED=YES; DEVICE_UNTOUCHED=YES; R46_PRIVATE_REPORT_NOT_PUBLISHED=YES'
+      - name: Upload R48 public decision texts only, never private captures or modules
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R48-LOADER-DECISION-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r48/out/
+          retention-days: 14
+          if-no-files-found: warn
