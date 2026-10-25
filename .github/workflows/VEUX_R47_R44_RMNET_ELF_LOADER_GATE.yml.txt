@@ -1,0 +1,754 @@
+name: VEUX R47 R44 RMNET Binary ELF and Loader ABI Gate - NO BUILD NO FLASH
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r47-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r47:
+    name: R44 original .ko + Module.symvers / immutable proof / NO FLASH
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 29
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R47_ROOT: /tmp/veux-r47
+    steps:
+    - name: Checkout exact project repository read-only
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+    - name: Authenticate existing R31 package and create self-contained R47 auditor
+      shell: bash
+      run: |
+        set -euo pipefail
+        printf '%s  %s\n' \
+          '8c37937e745fa9b335bd2a3a3719c73387891d5ec830f695455ca2659ff88de7' \
+          'VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip' | sha256sum -c -
+        mkdir -p "$R47_ROOT/src" "$R47_ROOT/tests" "$R47_ROOT/inputs" "$R47_ROOT/fixtures" "$R47_ROOT/out"
+        cat > "$R47_ROOT/src/r47_gate.py" <<'R47_PYTHON_GATE'
+        #!/usr/bin/env python3
+        """VEUX R47: only reads pinned R44 ELF modules / Module.symvers and emits text evidence.
+        Never imports private device report, mutates kernel sources, installs modules, or flashes.
+        """
+        import argparse
+        import csv
+        import hashlib
+        import io
+        import json
+        import pathlib
+        import re
+        import stat
+        import struct
+        import sys
+        import zipfile
+
+        R44_REPO_SHA = '1e4938c8c9ce33fff743b405ae85de17a204150b'
+        R44_SYMVERS_SHA = '5131e75259d76acd00e08143d76d22d04d1ec86b18b0d70b84fa05b7e1e4049d'
+        R44_ZIP_SHA = '47d414172d0227bbbfda85671a21dcce35872f2c35d0ffb371cd5f6f1dfdcf6e'
+        R44_DIAG_ZIP_SHA = '8d117d66953ca7cb24546b89680e0ff368ea99e5cb4f2eada7f9c2bdc9ad672f'
+        R44_PROOF_ZIP_SHA = '82108d1caed1ecc861c38dd96b5a16a151f74d2c5728140624a1007e6401a6a3'
+        R31_ZIP_SHA = '8c37937e745fa9b335bd2a3a3719c73387891d5ec830f695455ca2659ff88de7'
+        R44_MODULES = {
+            'rmnet_shs': {
+                'path': 'techpack/datarmnet-ext/shs/rmnet_shs.ko',
+                'r31_path': 'modules/r20/rmnet_shs.ko',
+                'bytes': 3901544, 'sha256': '3d69e8d5cd33675c3b8e4174c8c8260199eac91ade6f47e45bf966e3c698e516',
+                'expected_imports': 108,
+            },
+            'rmnet_offload': {
+                'path': 'techpack/datarmnet-ext/offload/rmnet_offload.ko',
+                'r31_path': 'modules/r20/rmnet_offload.ko',
+                'bytes': 2080832, 'sha256': '0c290be4656ffed3dd0763650d270d79353ab830f73740748b03e21c83ad05cb',
+                'expected_imports': 32,
+            },
+        }
+        EXPECTED_VERMAGIC = '5.4.274~positron SMP preempt mod_unload modversions aarch64'
+        EXPECTED_CRC_LAYOUT = 0x0bcef28c
+        HEX64 = re.compile(r'[0-9a-f]{64}\Z')
+
+
+        def ensure(cond, why):
+            if not cond:
+                raise ValueError(why)
+
+
+        def sha(data):
+            return hashlib.sha256(data).hexdigest()
+
+
+        def hash_file(path):
+            h = hashlib.sha256()
+            with pathlib.Path(path).open('rb') as f:
+                for chunk in iter(lambda: f.read(1 << 20), b''):
+                    h.update(chunk)
+            return h.hexdigest()
+
+
+        def pinned_file(path, expected, max_size):
+            p = pathlib.Path(path)
+            ensure(p.is_file() and not p.is_symlink(), 'PINNED_FILE_MISSING_OR_SYMLINK:' + p.name)
+            ensure(0 < p.stat().st_size <= max_size, 'PINNED_FILE_SIZE:' + p.name)
+            ensure(hash_file(p) == expected, 'PINNED_FILE_SHA256:' + p.name)
+            return p
+
+
+        def zip_validate(z, max_count=400, max_total=2_000_000_000):
+            ms = z.infolist()
+            ensure(0 < len(ms) <= max_count, 'ZIP_MEMBER_COUNT')
+            names = [m.filename for m in ms]
+            ensure(len(names) == len(set(names)), 'ZIP_DUPLICATE_MEMBER')
+            total = 0
+            for m in ms:
+                n = m.filename
+                pp = pathlib.PurePosixPath(n)
+                ensure(n and not n.startswith('/') and '\\' not in n and '..' not in pp.parts and not pp.is_absolute(), 'ZIP_UNSAFE_PATH')
+                ensure(not stat.S_ISLNK(m.external_attr >> 16), 'ZIP_SYMLINK')
+                ensure(m.file_size >= 0 and m.file_size <= 800_000_000, 'ZIP_OVERSIZED_MEMBER')
+                total += m.file_size
+            ensure(total <= max_total, 'ZIP_EXCESSIVE_TOTAL')
+            return ms
+
+
+        def require_exact(z, name, max_uncompressed):
+            infos = [i for i in z.infolist() if i.filename == name]
+            ensure(len(infos) == 1, 'ZIP_EXACT_MEMBER_MISSING_OR_AMBIGUOUS:' + name)
+            ensure(infos[0].file_size <= max_uncompressed, 'ZIP_MEMBER_TOO_BIG:' + name)
+            return z.read(infos[0])
+
+
+        def require_unique_suffix(z, suffix, max_uncompressed):
+            infos = [i for i in z.infolist() if i.filename == suffix or i.filename.endswith('/' + suffix)]
+            ensure(len(infos) == 1, 'ZIP_SUFFIX_MISSING_OR_AMBIGUOUS:' + suffix)
+            ensure(infos[0].file_size <= max_uncompressed, 'ZIP_MEMBER_TOO_BIG:' + suffix)
+            return infos[0].filename, z.read(infos[0])
+
+
+        def parse_symvers(data):
+            ensure(data and len(data) < 2_000_000, 'SYMVERS_SIZE')
+            seen = {}
+            for ix, raw in enumerate(data.splitlines(), 1):
+                f = raw.decode('utf-8', 'strict').split('\t')
+                ensure(len(f) >= 4 and re.fullmatch(r'0x[0-9a-fA-F]{8}', f[0]) is not None,
+                       'SYMVERS_ROW_INVALID:' + str(ix))
+                name = f[1]
+                ensure(re.fullmatch(r'[A-Za-z0-9_]+', name) is not None, 'SYMVERS_SYMBOL_INVALID')
+                ensure(name not in seen, 'SYMVERS_DUPLICATE_SYMBOL:' + name)
+                seen[name] = {'crc': int(f[0], 16), 'provider': f[2], 'export': f[3]}
+            ensure(len(seen) > 10000, 'SYMVERS_TOO_FEW')
+            return seen
+
+
+        def _elf_sections(data):
+            ensure(isinstance(data, bytes) and len(data) >= 64 and data[:4] == b'\x7fELF', 'ELF_MAGIC')
+            ensure(data[4:6] == b'\x02\x01', 'ELF_REQUIRES_ELF64_LITTLE_ENDIAN')
+            ensure(struct.unpack_from('<H', data, 16)[0] == 1, 'ELF_NOT_RELOCATABLE')
+            ensure(struct.unpack_from('<H', data, 18)[0] == 183, 'ELF_NOT_AARCH64')
+            e_shoff = struct.unpack_from('<Q', data, 40)[0]
+            e_shentsize, e_shnum, e_shstrndx = struct.unpack_from('<HHH', data, 58)
+            ensure(e_shentsize == 64 and 3 < e_shnum <= 256 and e_shstrndx < e_shnum,
+                   'ELF_SECTION_TABLE_INVALID')
+            ensure(e_shoff > 0 and e_shoff + e_shentsize * e_shnum <= len(data), 'ELF_SECTION_TABLE_BOUNDS')
+            raw = []
+            for i in range(e_shnum):
+                h = struct.unpack_from('<IIQQQQIIQQ', data, e_shoff + i * e_shentsize)
+                ensure(h[4] + h[5] <= len(data) or h[1] == 8, 'ELF_SECTION_BOUNDS')
+                raw.append(h)
+            h = raw[e_shstrndx]
+            names = data[h[4]:h[4]+h[5]]
+            sections = {}
+            for h in raw:
+                start = h[0]
+                ensure(start < len(names), 'ELF_SECTION_NAME_BOUNDS')
+                end = names.find(b'\0', start)
+                ensure(end >= 0, 'ELF_SECTION_UNTERMINATED')
+                name = names[start:end].decode('ascii', 'strict')
+                ensure(name not in sections or not name, 'ELF_SECTION_NAME_DUPLICATE')
+                sections[name] = (h, b'' if h[1] == 8 else data[h[4]:h[4]+h[5]])
+            for needed in ('__versions', '.modinfo', '.note.gnu.build-id', '.symtab', '.strtab'):
+                ensure(needed in sections, 'ELF_SECTION_MISSING:' + needed)
+            return sections
+
+
+        def parse_elf_module(data, expected_name):
+            sections = _elf_sections(data)
+            vm = sections['__versions'][1]
+            ensure(vm and len(vm) % 64 == 0 and len(vm) < 50_000, 'ELF_VERSIONS_ALIGNMENT')
+            versions = {}
+            for p in range(0, len(vm), 64):
+                crc = struct.unpack_from('<Q', vm, p)[0]
+                rawname = vm[p+8:p+64]
+                ensure(b'\0' in rawname, 'ELF_VERSION_NAME_NOT_TERMINATED')
+                name = rawname.split(b'\0', 1)[0].decode('ascii', 'strict')
+                ensure(re.fullmatch('[A-Za-z0-9_]+', name) is not None, 'ELF_VERSION_NAME_INVALID')
+                ensure(name not in versions, 'ELF_VERSION_DUPLICATE')
+                versions[name] = crc
+            info = sections['.modinfo'][1].split(b'\0')
+            params = {}
+            for t in info:
+                if not t or b'=' not in t: continue
+                k,v=t.split(b'=',1)
+                key=k.decode('ascii','strict')
+                if key in ('name','vermagic','depends','intree'):
+                    ensure(key not in params, 'ELF_MODINFO_DUPLICATE:' + key)
+                    params[key] = v.decode('utf-8','strict')
+            ensure(params.get('name') == expected_name, 'ELF_MODULE_NAME_DIFFERENT')
+            ensure(params.get('vermagic') == EXPECTED_VERMAGIC, 'ELF_VERMAGIC_DIFFERENT')
+            ensure(params.get('depends', '') == '', 'ELF_UNEXPECTED_KO_DEPENDENCIES')
+            ensure(params.get('intree', '') == 'Y', 'ELF_NOT_INTREE')
+            note = sections['.note.gnu.build-id'][1]
+            ensure(len(note) >= 16, 'ELF_BUILDID_NOTE_TOO_SMALL')
+            nsz, dsz, typ = struct.unpack_from('<III', note, 0)
+            n_padded = (nsz + 3) & ~3
+            d_padded = (dsz + 3) & ~3
+            ensure(typ == 3 and nsz == 4 and 0 < dsz <= 32, 'ELF_BUILDID_NOTE_HEADER')
+            ensure(12 + n_padded + d_padded <= len(note) and note[12:16] == b'GNU\0', 'ELF_BUILDID_NOTE_BOUNDS')
+            build_id = note[12 + n_padded: 12 + n_padded + dsz].hex()
+            # Parse the actual ELF symtab rather than equating __versions with all undefined symbols.
+            symhead = sections['.symtab'][0]
+            symdata = sections['.symtab'][1]
+            strings = sections['.strtab'][1]
+            ensure(symhead[9] == 24 and len(symdata) % 24 == 0, 'ELF_SYMTAB_INVALID')
+            undef = set()
+            for j in range(0, len(symdata), 24):
+                st_name, _st_info, _st_other, st_shndx, _st_value, _st_size = struct.unpack_from('<IBBHQQ', symdata, j)
+                if st_shndx != 0 or st_name == 0: continue
+                ensure(st_name < len(strings), 'ELF_UNDEFINED_NAME_BOUNDS')
+                end = strings.find(b'\0', st_name)
+                ensure(end >= 0, 'ELF_UNDEFINED_NAME_UNTERMINATED')
+                sym = strings[st_name:end].decode('ascii','strict')
+                ensure(re.fullmatch('[A-Za-z0-9_]+', sym) is not None, 'ELF_UNDEFINED_NAME_INVALID')
+                undef.add(sym)
+            ensure(undef == set(versions) - {'module_layout'}, 'ELF_VERSIONS_UNDEFINED_MISMATCH')
+            return {'build_id': build_id, 'modinfo': params, 'versions': versions, 'undefined_count': len(undef)}
+
+
+        def compare_module(name, module_bytes, symvers, known_sha):
+            spec = R44_MODULES[name]
+            ensure(len(module_bytes) == spec['bytes'] and sha(module_bytes) == spec['sha256'], 'R44_MODULE_BYTES_OR_HASH_DIFFERENT:' + name)
+            ensure(known_sha == spec['sha256'], 'R44_BUILD_REPORT_HASH_DIFFERENT:' + name)
+            module = parse_elf_module(module_bytes, name)
+            vv = module['versions']
+            ensure(len(vv) == spec['expected_imports'], 'R44_IMPORT_COUNT_DIFFERENT:' + name)
+            ensure(vv.get('module_layout') == EXPECTED_CRC_LAYOUT, 'R44_MODULE_LAYOUT_DIFFERENT')
+            rows = []
+            for symbol, actual in sorted(vv.items()):
+                expected = symvers.get(symbol)
+                ensure(expected is not None, 'R44_MISSING_EXPORT:' + symbol)
+                ensure(actual == expected['crc'], 'R44_MODULE_CRC_MISMATCH:' + symbol)
+                rows.append({'module': name, 'symbol': symbol, 'module_crc': '0x%08x' % actual,
+                             'kernel_crc': '0x%08x' % expected['crc'], 'provider': expected['provider'],
+                             'result': 'MATCH'})
+            summary = {'name':name, 'sha256':sha(module_bytes), 'bytes':len(module_bytes),
+                       'build_id':module['build_id'], 'vermagic':module['modinfo']['vermagic'],
+                       'depends':module['modinfo'].get('depends',''), 'symbol_imports':len(rows),
+                       'matched_imports':len(rows), 'missing_exports':0, 'crc_mismatches':0,
+                       'undefined_elf_symbols':module['undefined_count']}
+            return summary, rows
+
+
+        def audit_inputs(r31, r44linked, r44diags, r44proof, run):
+            ensure(run.get('id') == 40168917960 and run.get('status') == 'completed' and
+                   run.get('conclusion') == 'success' and run.get('head_sha') == R44_REPO_SHA and
+                   run.get('head_branch') == 'main', 'R44_SOURCE_RUN_NOT_PROVEN')
+            with zipfile.ZipFile(io.BytesIO(r44diags)) as z:
+                zip_validate(z)
+                build = json.loads(require_exact(z,'R20_BUILD_RESULT.json',40_000).decode())
+            with zipfile.ZipFile(io.BytesIO(r44proof)) as z:
+                zip_validate(z)
+                proof = json.loads(require_exact(z,'R44_FULL_BUILD_RESULT.json',20_000).decode())
+            ensure(build.get('status') == 'R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH' and
+                   build.get('module_symvers_sha256') == R44_SYMVERS_SHA and
+                   build.get('modules_built') is True and build.get('vmlinux_linked') is True, 'R44_BUILD_REPORT_INVALID')
+            ensure(proof.get('status') == 'R44_PATCHED_FULL_ARM64_BUILD_SUCCESS_NO_FLASH' and
+                   proof.get('r20_full_image_proven') is True and
+                   proof.get('module_count') == 6 and
+                   proof.get('vendor_abi_proven') is False and proof.get('flash_allowed') is False,
+                   'R44_SOURCE_PATCH_PROOF_INVALID')
+            build_files = {v['path']:v for v in build['module_files']}
+            ensure(len(build_files) == len(build['module_files']) == 6, 'R44_BUILD_MODULE_SET_INVALID')
+            with zipfile.ZipFile(io.BytesIO(r31)) as z:
+                zip_validate(z)
+                r31_modules = {name: require_exact(z, spec['r31_path'], spec['bytes'])
+                               for name,spec in R44_MODULES.items()}
+            with zipfile.ZipFile(io.BytesIO(r44linked)) as z:
+                zip_validate(z)
+                symname, symdata = require_unique_suffix(z,'Module.symvers',1_000_000)
+                ensure(sha(symdata) == R44_SYMVERS_SHA, 'R44_ORIGINAL_SYMVERS_SHA_INVALID')
+                exports = parse_symvers(symdata)
+                ensure(exports['module_layout']['crc'] == EXPECTED_CRC_LAYOUT, 'R44_LAYOUT_EXPORT_NOT_PINNED')
+                results=[]; rows=[]; origins=[]
+                for name,spec in R44_MODULES.items():
+                    member, actual = require_unique_suffix(z, spec['path'], 6_000_000)
+                    rec = build_files.get(spec['path'])
+                    ensure(rec is not None and rec.get('sha256') == spec['sha256'] and rec.get('bytes') == spec['bytes'],
+                           'R44_OFFICIAL_BUILD_MODULE_RECORD_MISMATCH:'+name)
+                    ensure(actual == r31_modules[name], 'R31_VS_R44_BYTE_IDENTITY_NOT_PROVEN:'+name)
+                    summary, imports = compare_module(name, actual, exports, rec['sha256'])
+                    results.append(summary); rows += imports; origins.append({'module':name,'artifact_member':member,
+                        'baseline_member':spec['r31_path'],'byteidentical':True})
+            ensure(sum(s['symbol_imports'] for s in results) == 140, 'R44_140_IMPORTS_NOT_PROVEN')
+            return {'schema':'VEUX_R47_R44_RMNET_BINARY_ELF_PROVENANCE_V1',
+                    'result':'R44_RMNET_140_OF_140_CRC_MATCH_AND_BYTE_IDENTITY',
+                    'r44_source_run':40168917960,'r44_source_sha':R44_REPO_SHA,
+                    'r44_module_symvers_sha256':R44_SYMVERS_SHA,
+                    'modules':results,'artifact_origins':origins,'r44_symvers_member':symname,
+                    'module_pair_byteidentical_to_r31':True,
+                    'historical_2ef0_modules_suitable_for_r44':False,
+                    'runtime_module_load_tested':False,
+                    'device_loader_path_proven':False,
+                    'vendor_rom_init_compatibility_proven':False,
+                    'complete_vendor_abi_proven':False,
+                    'bootloader_dtbo_selection_proven':False,
+                    'boot_ready':False,'flash_allowed':False,'source_modified':False,
+                    'kernel_built':False}, rows
+
+
+        def main():
+            ap=argparse.ArgumentParser()
+            for opt in ('r31','r44-linked','r44-diags','r44-proof','r44-run','out'):
+                ap.add_argument('--'+opt,required=True)
+            args=ap.parse_args()
+            out = pathlib.Path(args.out)
+            out.mkdir(parents=True,exist_ok=True)
+            r31 = pinned_file(args.r31, R31_ZIP_SHA, 10_000_000).read_bytes()
+            linked = pinned_file(args.r44_linked, R44_ZIP_SHA, 300_000_000).read_bytes()
+            diags = pinned_file(args.r44_diags, R44_DIAG_ZIP_SHA, 100_000).read_bytes()
+            proof = pinned_file(args.r44_proof, R44_PROOF_ZIP_SHA, 100_000).read_bytes()
+            run = json.loads(pathlib.Path(args.r44_run).read_text())
+            result, imports = audit_inputs(r31,linked,diags,proof,run)
+            (out/'R47_RESULT.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+            (out/'R47_MODULE_ELF.json').write_text(json.dumps(result['modules'],indent=2,sort_keys=True)+'\n')
+            with (out/'R47_RMNET_140_IMPORTS.csv').open('w',newline='') as f:
+                wr=csv.DictWriter(f,fieldnames=['module','symbol','module_crc','kernel_crc','provider','result'])
+                wr.writeheader();wr.writerows(imports)
+            lines=[
+              'VEUX R47 – R44 echte RMNET-Binaerdateien und CRCs geprueft',
+              'Quelle: unveraendertes GitHub-R44-Original-Artefakt (SHA-256 gepinnt) + R31-Binaerbeleg.',
+              'R44 Module.symvers ebenfalls mit der originalen SHA-256-Pruefsumme gepinnt.',
+              'rmnet_shs 108/108 Kernel-Importe, rmnet_offload 32/32; kein CRC-Konflikt, kein fehlender Export.',
+              'Beide R44 .ko byteidentisch zum bereits geprueften R31-Paar.',
+              'ELF=AArch64 ET_REL, intree=Y, vermagic=5.4.274~positron, keine .ko depends.',
+              'WICHTIG: Weder auf dem R44-Kernel geladen noch durch ROM-Init oder BakaSU getestet.',
+              'R46 privater Geraetebericht wurde NICHT in GitHub hochgeladen.',
+              'Alte 2EF0 .ko duerfen wegen R45 CRC-Abweichungen nicht in R44 uebernommen werden.',
+              'Weitere Boot-Gates: Loader-Interaktion, Vendor-ABI, DTBO-Bootloader, SELinux/VINTF, Root-Integration, Backup/Recovery.',
+              'BOOT_READY=NO; VENDOR_ABI_UNPROVEN; FLASH_ALLOWED=NO; KEINE FLASHDATEIEN.'
+            ]
+            (out/'R47_BERICHT_DE.txt').write_text('\n'.join(lines)+'\n')
+            print('R47_R44_BINARY_IMPORTS_140_OF_140=PASS; R44_R31_BITIDENTITY=PASS; BOOT_READY=NO; FLASH_ALLOWED=NO')
+
+
+        if __name__ == '__main__':
+            try: main()
+            except Exception as e:
+                print('R47_FAIL_CLOSED:'+str(e),file=sys.stderr)
+                raise SystemExit(2)
+        R47_PYTHON_GATE
+        cat > "$R47_ROOT/tests/test_r47_gate.py" <<'R47_PYTHON_TESTS'
+        """R47 adversarial tests with genuine locally supplied R44 ELF binaries / symvers."""
+        import copy
+        import io
+        import json
+        import os
+        import pathlib
+        import stat
+        import struct
+        import unittest
+        import zipfile
+
+        import r47_gate as g
+
+
+        class R47EvidenceTests(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                here = pathlib.Path(os.environ['R47_FIXTURES'])
+                cls.modules = {name:(here/(name+'.ko')).read_bytes() for name in g.R44_MODULES}
+                cls.symdata = (here/'R44_Module.symvers').read_bytes()
+                cls.sym = g.parse_symvers(cls.symdata)
+                cls.diag = (here/'VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip').read_bytes()
+                cls.proof = (here/'VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip').read_bytes()
+                cls.r31 = (here/'VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip').read_bytes()
+                cls.run_meta = {'id':40168917960,'status':'completed','conclusion':'success',
+                           'head_sha':g.R44_REPO_SHA, 'head_branch':'main'}
+                cls.link=cls.make_link_zip()
+
+            @classmethod
+            def make_link_zip(cls, module=None, data=None):
+                b=io.BytesIO()
+                with zipfile.ZipFile(b,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=1) as z:
+                    z.writestr('Module.symvers',cls.symdata if data is None else data)
+                    for name,sp in g.R44_MODULES.items():
+                        z.writestr(sp['path'],cls.modules[name] if name!=module else b'BAD')
+                return b.getvalue()
+
+            def test_r44_genuine_symvers_sha(self):
+                self.assertEqual(g.sha(self.symdata),g.R44_SYMVERS_SHA)
+
+            def test_r31_original_zip_sha(self):
+                self.assertEqual(g.sha(self.r31),g.R31_ZIP_SHA)
+
+            def test_r44_real_diag_sha(self):
+                self.assertEqual(g.sha(self.diag),g.R44_DIAG_ZIP_SHA)
+
+            def test_r44_real_proof_sha(self):
+                self.assertEqual(g.sha(self.proof),g.R44_PROOF_ZIP_SHA)
+
+            def test_complete_genuine_material_audit(self):
+                report, rows=g.audit_inputs(self.r31,self.link,self.diag,self.proof,self.run_meta)
+                self.assertEqual(len(rows),140)
+                self.assertEqual([m['matched_imports'] for m in report['modules']],[108,32])
+                self.assertTrue(report['module_pair_byteidentical_to_r31'])
+                for p in ('boot_ready','flash_allowed','runtime_module_load_tested','device_loader_path_proven','complete_vendor_abi_proven'):
+                    self.assertFalse(report[p])
+
+            def test_real_elf_arm64_shs(self):
+                m=g.parse_elf_module(self.modules['rmnet_shs'],'rmnet_shs')
+                self.assertEqual(m['build_id'],'d0fb60306c710f6b')
+                self.assertEqual(len(m['versions']),108)
+                self.assertEqual(m['undefined_count'],107)
+
+            def test_real_elf_arm64_offload(self):
+                m=g.parse_elf_module(self.modules['rmnet_offload'],'rmnet_offload')
+                self.assertEqual(m['build_id'],'ee0395e9f972741c')
+                self.assertEqual(len(m['versions']),32)
+                self.assertEqual(m['undefined_count'],31)
+
+            def test_both_modinfo_exact_5_4(self):
+                for name,data in self.modules.items():
+                    m=g.parse_elf_module(data,name)
+                    self.assertEqual(m['modinfo']['depends'],'')
+                    self.assertEqual(m['modinfo']['vermagic'],g.EXPECTED_VERMAGIC)
+
+            def test_real_crc_modules_all_matched(self):
+                for name,data in self.modules.items():
+                    s, rows=g.compare_module(name,data,self.sym,g.R44_MODULES[name]['sha256'])
+                    self.assertEqual(s['symbol_imports'],g.R44_MODULES[name]['expected_imports'])
+                    self.assertTrue(all(x['result']=='MATCH' for x in rows))
+
+            def test_crc_mismatch_detected(self):
+                sy=copy.deepcopy(self.sym)
+                sy['module_layout']['crc'] ^= 1
+                with self.assertRaisesRegex(ValueError,'R44_MODULE_CRC_MISMATCH'):
+                    g.compare_module('rmnet_shs',self.modules['rmnet_shs'],sy,g.R44_MODULES['rmnet_shs']['sha256'])
+
+            def test_crc_export_missing_detected(self):
+                sy=dict(self.sym); sy.pop('memcpy')
+                with self.assertRaisesRegex(ValueError,'R44_MISSING_EXPORT'):
+                    g.compare_module('rmnet_shs',self.modules['rmnet_shs'],sy,g.R44_MODULES['rmnet_shs']['sha256'])
+
+            def test_crc_wrong_binary_hash_detected(self):
+                with self.assertRaisesRegex(ValueError,'R44_MODULE_BYTES_OR_HASH_DIFFERENT'):
+                    g.compare_module('rmnet_shs',self.modules['rmnet_shs'][:-1]+b'X',self.sym,g.R44_MODULES['rmnet_shs']['sha256'])
+
+            def test_crc_wrong_build_report_detected(self):
+                with self.assertRaisesRegex(ValueError,'R44_BUILD_REPORT_HASH_DIFFERENT'):
+                    g.compare_module('rmnet_shs',self.modules['rmnet_shs'],self.sym,'0'*64)
+
+            def test_short_elf_rejected(self):
+                with self.assertRaisesRegex(ValueError,'ELF_MAGIC'):
+                    g.parse_elf_module(b'', 'rmnet_shs')
+
+            def test_wrong_elf_endian_rejected(self):
+                p=bytearray(self.modules['rmnet_shs']);p[5]=2
+                with self.assertRaisesRegex(ValueError,'ELF_REQUIRES_ELF64'):
+                    g.parse_elf_module(bytes(p),'rmnet_shs')
+
+            def test_wrong_elf_machine_rejected(self):
+                p=bytearray(self.modules['rmnet_shs']);struct.pack_into('<H',p,18,62)
+                with self.assertRaisesRegex(ValueError,'ELF_NOT_AARCH64'):
+                    g.parse_elf_module(bytes(p),'rmnet_shs')
+
+            def test_wrong_elf_type_rejected(self):
+                p=bytearray(self.modules['rmnet_shs']);struct.pack_into('<H',p,16,2)
+                with self.assertRaisesRegex(ValueError,'ELF_NOT_RELOCATABLE'):
+                    g.parse_elf_module(bytes(p),'rmnet_shs')
+
+            def test_wrong_module_name_rejected(self):
+                with self.assertRaisesRegex(ValueError,'ELF_MODULE_NAME_DIFFERENT'):
+                    g.parse_elf_module(self.modules['rmnet_shs'],'rmnet_offload')
+
+            def test_elf_bad_section_bounds_rejected(self):
+                p=bytearray(self.modules['rmnet_shs']);struct.pack_into('<Q',p,40,len(p)+100)
+                with self.assertRaisesRegex(ValueError,'ELF_SECTION_TABLE_BOUNDS'):
+                    g.parse_elf_module(bytes(p),'rmnet_shs')
+
+            def test_elf_invalid_sections_rejected(self):
+                p=bytearray(self.modules['rmnet_offload']);struct.pack_into('<H',p,58,10)
+                with self.assertRaisesRegex(ValueError,'ELF_SECTION_TABLE_INVALID'):
+                    g.parse_elf_module(bytes(p),'rmnet_offload')
+
+            def test_elf_modinfo_vermagic_change_rejected(self):
+                p=self.modules['rmnet_offload']
+                self.assertIn(b'5.4.274~positron',p)
+                b=p.replace(b'5.4.274~positron',b'5.4.273~positron',1)
+                with self.assertRaisesRegex(ValueError,'ELF_VERMAGIC_DIFFERENT'):
+                    g.parse_elf_module(b,'rmnet_offload')
+
+            def test_elf_modinfo_depends_change_rejected(self):
+                p=self.modules['rmnet_offload']
+                self.assertIn(b'depends=\x00',p)
+                b=p.replace(b'depends=\x00',b'depends=x',1)
+                with self.assertRaisesRegex(ValueError,'ELF_UNEXPECTED_KO_DEPENDENCIES'):
+                    g.parse_elf_module(b,'rmnet_offload')
+
+            def test_bad_symvers_row_rejected(self):
+                with self.assertRaisesRegex(ValueError,'SYMVERS_ROW_INVALID'):
+                    g.parse_symvers(self.symdata+b'garbage\n')
+
+            def test_duplicate_symvers_export_rejected(self):
+                with self.assertRaisesRegex(ValueError,'SYMVERS_DUPLICATE_SYMBOL'):
+                    g.parse_symvers(self.symdata + self.symdata.splitlines(True)[0])
+
+            def test_missing_symvers_rows_rejected(self):
+                with self.assertRaisesRegex(ValueError,'SYMVERS_TOO_FEW'):
+                    g.parse_symvers(self.symdata.splitlines(True)[0])
+
+            def test_r44_wrong_run_conclusion_rejected(self):
+                bad={**self.run_meta,'conclusion':'failure'}
+                with self.assertRaisesRegex(ValueError,'R44_SOURCE_RUN_NOT_PROVEN'):
+                    g.audit_inputs(self.r31,self.link,self.diag,self.proof,bad)
+
+            def test_r44_wrong_run_sha_rejected(self):
+                bad={**self.run_meta,'head_sha':'0'*40}
+                with self.assertRaisesRegex(ValueError,'R44_SOURCE_RUN_NOT_PROVEN'):
+                    g.audit_inputs(self.r31,self.link,self.diag,self.proof,bad)
+
+            def test_r44_wrong_branch_rejected(self):
+                bad={**self.run_meta,'head_branch':'experimental'}
+                with self.assertRaisesRegex(ValueError,'R44_SOURCE_RUN_NOT_PROVEN'):
+                    g.audit_inputs(self.r31,self.link,self.diag,self.proof,bad)
+
+            def test_archive_bad_module_blob_rejected(self):
+                with self.assertRaisesRegex(ValueError,'R31_VS_R44_BYTE_IDENTITY_NOT_PROVEN'):
+                    g.audit_inputs(self.r31,self.make_link_zip(module='rmnet_shs'),self.diag,self.proof,self.run_meta)
+
+            def test_archive_wrong_symvers_blob_rejected(self):
+                with self.assertRaisesRegex(ValueError,'R44_ORIGINAL_SYMVERS_SHA_INVALID'):
+                    g.audit_inputs(self.r31,self.make_link_zip(data=self.symdata[:-1]+b'X'),self.diag,self.proof,self.run_meta)
+
+            def test_duplicate_archive_entry_rejected(self):
+                b=io.BytesIO()
+                with zipfile.ZipFile(b,'w') as z:
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore',UserWarning)
+                        z.writestr('Module.symvers',b'1');z.writestr('Module.symvers',b'2')
+                with zipfile.ZipFile(io.BytesIO(b.getvalue())) as z:
+                    with self.assertRaisesRegex(ValueError,'ZIP_DUPLICATE_MEMBER'):
+                        g.zip_validate(z)
+
+            def test_path_traversal_rejected(self):
+                b=io.BytesIO()
+                with zipfile.ZipFile(b,'w') as z:z.writestr('../evil',b'a')
+                with zipfile.ZipFile(io.BytesIO(b.getvalue())) as z:
+                    with self.assertRaisesRegex(ValueError,'ZIP_UNSAFE_PATH'):
+                        g.zip_validate(z)
+
+            def test_symlink_member_rejected(self):
+                b=io.BytesIO()
+                with zipfile.ZipFile(b,'w') as z:
+                    i=zipfile.ZipInfo('symvers');i.create_system=3;i.external_attr=(stat.S_IFLNK|0o777)<<16
+                    z.writestr(i,b'destination')
+                with zipfile.ZipFile(io.BytesIO(b.getvalue())) as z:
+                    with self.assertRaisesRegex(ValueError,'ZIP_SYMLINK'):
+                        g.zip_validate(z)
+
+            def test_missing_expected_member_rejected(self):
+                with zipfile.ZipFile(io.BytesIO(self.link)) as z:
+                    with self.assertRaisesRegex(ValueError,'ZIP_SUFFIX_MISSING_OR_AMBIGUOUS'):
+                        g.require_unique_suffix(z,'not-there.ko',2000)
+
+            def test_oversize_zip_member_rejected(self):
+                with zipfile.ZipFile(io.BytesIO(self.link)) as z:
+                    with self.assertRaisesRegex(ValueError,'ZIP_MEMBER_TOO_BIG'):
+                        g.require_unique_suffix(z,'Module.symvers',2)
+
+            def test_no_implied_device_runtime_pass(self):
+                report,_=g.audit_inputs(self.r31,self.link,self.diag,self.proof,self.run_meta)
+                for k in ('runtime_module_load_tested','device_loader_path_proven','vendor_rom_init_compatibility_proven','complete_vendor_abi_proven','boot_ready','flash_allowed'):
+                    self.assertIs(report[k],False)
+
+
+        if __name__ == '__main__':unittest.main()
+        R47_PYTHON_TESTS
+        printf '%s  %s\n' \
+          '1bc43d7d9b051f7a921ebb8dbc8190e03167e4bf39bbd0269f47572f7a0e11a1' "$R47_ROOT/src/r47_gate.py" \
+          'fd6f0438295769ed1f0c2bcb00ccbc5b512458501f5ab528d70b1060df889a85' "$R47_ROOT/tests/test_r47_gate.py" \
+           | sha256sum -c -
+        python3 -B - "$R47_ROOT/src/r47_gate.py" "$R47_ROOT/tests/test_r47_gate.py" <<'R47_PYTHON_SYNTAX'
+        import ast,pathlib,sys
+        for f in sys.argv[1:]:ast.parse(pathlib.Path(f).read_text())
+        print('R47_PINNED_PYTHON_AST=PASS')
+        R47_PYTHON_SYNTAX
+        printf '%s\n' 'R47_INPUTS_PINNED; NO_KERNEL_BUILD; NO_FLASH' > "$R47_ROOT/out/R47_STAGE.txt"
+    - name: Independent actionlint plus ShellCheck and bash -n on every exact run block
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v shellcheck >/dev/null 2>&1 || { sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends shellcheck; }
+        unzip -p VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip tools/actionlint > "$R47_ROOT/actionlint"
+        chmod 0755 "$R47_ROOT/actionlint"
+        "$R47_ROOT/actionlint" -version | grep -Fx '1.7.12'
+        "$R47_ROOT/actionlint" -color=false -shellcheck='' '.github/workflows/VEUX_R47_R44_RMNET_ELF_LOADER_GATE.yml' 2>&1 | tee "$R47_ROOT/out/R47_ACTIONLINT.log"
+        python3 -B - '.github/workflows/VEUX_R47_R44_RMNET_ELF_LOADER_GATE.yml' "$R47_ROOT/out/R47_SHELLCHECK.log" <<'R47_INDEPENDENT_LINT'
+        import pathlib,sys,subprocess,hashlib,yaml
+        p=pathlib.Path(sys.argv[1]); destination=pathlib.Path(sys.argv[2]);raw=p.read_bytes()
+        class StrictLoader(yaml.SafeLoader):pass
+        def pairs(loader,node):
+            r={}
+            for k,v in node.value:
+                name=loader.construct_object(k,deep=True)
+                if name in r:raise ValueError('DUPLICATE_YAML_KEY:'+str(name))
+                r[name]=loader.construct_object(v,deep=True)
+            return r
+        StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,pairs)
+        d=yaml.load(raw,Loader=StrictLoader)
+        assert d['permissions']=={'contents':'read','actions':'read'}
+        assert list(d['on'])==['workflow_dispatch']
+        steps=d['jobs']['r47']['steps']; expected=[
+         'Checkout exact project repository read-only',
+         'Authenticate existing R31 package and create self-contained R47 auditor',
+         'Independent actionlint plus ShellCheck and bash -n on every exact run block',
+         'Pin official R44 run and fetch original build artifacts with SHA256',
+         '36 real ELF/Symvers and negative regression tests',
+         'Audit actual R44 modules and exported CRCs, read only',
+         'Guard final results and forbid flashing or private R46 reports',
+         'Upload text-only R47 results, including failures']
+        if [x['name'] for x in steps]!=expected:raise SystemExit('R47_STEP_SCOPE_CHANGED')
+        if len([x for x in steps if 'run' in x])!=6:raise SystemExit('R47_RUN_COUNT_CHANGED')
+        log=[]
+        for index,step in enumerate(steps,1):
+            if 'run' not in step:continue
+            script=step['run'];script_path=destination.parent/('block_'+str(index).zfill(2)+'.bash')
+            script_path.write_text(script)
+            for cmd in (['bash','-n',str(script_path)], ['shellcheck','--shell=bash','--severity=warning',str(script_path)]):
+                res=subprocess.run(cmd,capture_output=True,text=True,timeout=45)
+                if res.returncode:raise SystemExit('R47_LINT_FAILED:'+str(index)+':'+res.stdout+res.stderr)
+                log.append(str(index)+':'+cmd[0]+':PASS:'+hashlib.sha256(script.encode()).hexdigest())
+            script_path.unlink()
+        destination.write_text('\n'.join(log)+'\n')
+        print('R47_ACTIONLINT_AND_ALL_EXACT_SHELLCHECK_BASH_BLOCKS=PASS')
+        R47_INDEPENDENT_LINT
+    - name: Pin official R44 run and fetch original build artifacts with SHA256
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+        api_get() {
+          local suffix="$1" out="$2"
+          curl --fail --silent --show-error --location --retry 2 --retry-delay 2 --connect-timeout 25 --max-time 900     --header "Authorization: Bearer ${GH_TOKEN}"     --header 'Accept: application/vnd.github+json'     --header 'X-GitHub-Api-Version: 2022-11-28'     "${api}/${suffix}" --output "$out"
+          test -s "$out"
+        }
+        api_get 'actions/runs/40168917960' "$R47_ROOT/inputs/R44_RUN.json"
+        api_get 'actions/artifacts/12588904912' "$R47_ROOT/inputs/R44_LARGE_META.json"
+        api_get 'actions/artifacts/12588993874' "$R47_ROOT/inputs/R44_DIAGS_META.json"
+        api_get 'actions/artifacts/12589103781' "$R47_ROOT/inputs/R44_PROOF_META.json"
+        python3 -B - "$R47_ROOT/inputs" <<'R47_API_METADATA'
+        import json,pathlib,sys
+        p=pathlib.Path(sys.argv[1])
+        r=json.loads((p/'R44_RUN.json').read_text())
+        if any([r.get('id')!=40168917960,r.get('status')!='completed',r.get('conclusion')!='success',
+                r.get('head_sha')!='1e4938c8c9ce33fff743b405ae85de17a204150b',r.get('head_branch')!='main']):
+            raise SystemExit('R47_R44_RUN_PROVENANCE_INVALID')
+        items=[('R44_LARGE_META.json',12588904912,'VEUX-R20-UNVERIFIED-LINK-OUTPUT-NO-FLASH-40168917960',
+            'sha256:47d414172d0227bbbfda85671a21dcce35872f2c35d0ffb371cd5f6f1dfdcf6e'),
+           ('R44_DIAGS_META.json',12588993874,'VEUX-R20-REAL-FULL-BUILD-DIAGNOSTICS-40168917960',
+            'sha256:8d117d66953ca7cb24546b89680e0ff368ea99e5cb4f2eada7f9c2bdc9ad672f'),
+           ('R44_PROOF_META.json',12589103781,'VEUX-R44-GPU-WALT-PROOF-40168917960',
+            'sha256:82108d1caed1ecc861c38dd96b5a16a151f74d2c5728140624a1007e6401a6a3')]
+        for f,aid,name,digest in items:
+            x=json.loads((p/f).read_text())
+            if any([x.get('id')!=aid,x.get('name')!=name,x.get('digest')!=digest,x.get('expired') is not False,
+                    x.get('workflow_run',{}).get('head_sha')!='1e4938c8c9ce33fff743b405ae85de17a204150b']):
+                raise SystemExit('R47_ARTIFACT_METADATA_NOT_PINNED:'+f)
+        print('R47_OFFICIAL_SOURCE_RUN_AND_3_ARTIFACT_METADATA=PASS')
+        R47_API_METADATA
+        api_get 'actions/artifacts/12588993874/zip' "$R47_ROOT/inputs/R44_DIAGS.zip"
+        api_get 'actions/artifacts/12589103781/zip' "$R47_ROOT/inputs/R44_PROOF.zip"
+        api_get 'actions/artifacts/12588904912/zip' "$R47_ROOT/inputs/R44_ORIGINAL_LINK_OUTPUT.zip"
+        printf '%s  %s\n'  '8d117d66953ca7cb24546b89680e0ff368ea99e5cb4f2eada7f9c2bdc9ad672f' "$R47_ROOT/inputs/R44_DIAGS.zip"  '82108d1caed1ecc861c38dd96b5a16a151f74d2c5728140624a1007e6401a6a3' "$R47_ROOT/inputs/R44_PROOF.zip"  '47d414172d0227bbbfda85671a21dcce35872f2c35d0ffb371cd5f6f1dfdcf6e' "$R47_ROOT/inputs/R44_ORIGINAL_LINK_OUTPUT.zip" | sha256sum -c -
+        echo 'R47_ALL_THREE_R44_ORIGINAL_GITHUB_ARTIFACTS=PASS'
+    - name: 36 real ELF/Symvers and negative regression tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B - "$R47_ROOT" "$GITHUB_WORKSPACE" <<'R47_FIXTURE'
+        import pathlib,sys,zipfile
+        base=pathlib.Path(sys.argv[1]);repo=pathlib.Path(sys.argv[2]);sys.path.insert(0,str(base/'src'))
+        import r47_gate as g
+        out=base/'fixtures';out.mkdir(parents=True,exist_ok=True)
+        r31=repo/'VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip'
+        with zipfile.ZipFile(r31) as z:
+            g.zip_validate(z)
+            for name,sp in g.R44_MODULES.items():
+                (out/(name+'.ko')).write_bytes(g.require_exact(z,sp['r31_path'],sp['bytes']))
+        with zipfile.ZipFile(base/'inputs/R44_ORIGINAL_LINK_OUTPUT.zip') as z:
+            g.zip_validate(z)
+            _,raw=g.require_unique_suffix(z,'Module.symvers',1000000)
+            if g.sha(raw)!=g.R44_SYMVERS_SHA:raise SystemExit('R47_R44_FIXTURE_EXPORT_PIN_FAILED')
+            (out/'R44_Module.symvers').write_bytes(raw)
+        for name,src in [('VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip','R44_DIAGS.zip'),
+                         ('VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip','R44_PROOF.zip')]:
+            (out/name).write_bytes((base/'inputs'/src).read_bytes())
+        (out/'VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip').write_bytes(r31.read_bytes())
+        print('R47_FIXTURES_FROM_PINNED_ORIGINAL_BYTES=PASS')
+        R47_FIXTURE
+        export PYTHONPATH="$R47_ROOT/src" R47_FIXTURES="$R47_ROOT/fixtures"
+        python3 -B -W error::ResourceWarning -m unittest discover -s "$R47_ROOT/tests" -p 'test_r47_gate.py' -v   2>&1 | tee "$R47_ROOT/out/R47_TESTS.log"
+        grep -F 'Ran 36 tests' "$R47_ROOT/out/R47_TESTS.log"
+        grep -Fx 'OK' "$R47_ROOT/out/R47_TESTS.log"
+        echo 'R47_36_OF_36_ELF_CRC_AND_ADVERSARIAL_REGRESSIONS=PASS'
+    - name: Audit actual R44 modules and exported CRCs, read only
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B "$R47_ROOT/src/r47_gate.py"  --r31 'VEUX_R31_WALT_RMNET_BINARY_PAIR_MAIN.zip'  --r44-linked "$R47_ROOT/inputs/R44_ORIGINAL_LINK_OUTPUT.zip"  --r44-diags "$R47_ROOT/inputs/R44_DIAGS.zip"  --r44-proof "$R47_ROOT/inputs/R44_PROOF.zip"  --r44-run "$R47_ROOT/inputs/R44_RUN.json"  --out "$R47_ROOT/out" | tee "$R47_ROOT/out/R47_EXECUTION.log"
+        cat "$R47_ROOT/out/R47_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+    - name: Guard final results and forbid flashing or private R46 reports
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B - "$R47_ROOT/out" <<'R47_FINAL_GUARD'
+        import hashlib,json,pathlib,sys
+        p=pathlib.Path(sys.argv[1]);r=json.loads((p/'R47_RESULT.json').read_text())
+        req={'R47_STAGE.txt','R47_ACTIONLINT.log','R47_SHELLCHECK.log','R47_TESTS.log',
+             'R47_EXECUTION.log','R47_RESULT.json','R47_MODULE_ELF.json','R47_RMNET_140_IMPORTS.csv','R47_BERICHT_DE.txt'}
+        actual={f.name for f in p.iterdir() if f.is_file()}
+        if actual!=req:raise SystemExit('R47_UNEXPECTED_OUTPUT_FILES:'+str(actual^req))
+        if (r.get('schema')!='VEUX_R47_R44_RMNET_BINARY_ELF_PROVENANCE_V1' or
+            r.get('result')!='R44_RMNET_140_OF_140_CRC_MATCH_AND_BYTE_IDENTITY' or
+            r.get('module_pair_byteidentical_to_r31') is not True or
+            [m['matched_imports'] for m in r['modules']] != [108,32] or
+            [m['build_id'] for m in r['modules']] != ['d0fb60306c710f6b','ee0395e9f972741c']):
+            raise SystemExit('R47_ORIGINAL_BINARY_PROOF_NOT_PASSED')
+        for k in ('runtime_module_load_tested','device_loader_path_proven',
+                  'vendor_rom_init_compatibility_proven','complete_vendor_abi_proven',
+                  'bootloader_dtbo_selection_proven','boot_ready','flash_allowed','source_modified','kernel_built',
+                  'historical_2ef0_modules_suitable_for_r44'):
+            if r.get(k) is not False:raise SystemExit('R47_UNSAFE_PASS_FLAG:'+k)
+        files=list(p.rglob('*'))
+        for f in files:
+            if f.is_file() and (f.suffix in ('.ko','.img','.dtb','.dtbo','.elf','.bin') or f.name in ('Image','vmlinux')):
+                raise SystemExit('R47_BINARY_ARTIFACT_OUTPUT_FORBIDDEN')
+        checks=[hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name for f in sorted(files) if f.is_file()]
+        (p/'SHA256SUMS.txt').write_text('\n'.join(checks)+'\n')
+        print('R47_RESULT_GUARDS=PASS; NO_KERNEL_BUILD; BOOT_READY=NO; FLASH_ALLOWED=NO')
+        R47_FINAL_GUARD
+        (cd "$R47_ROOT/out" && sha256sum -c SHA256SUMS.txt)
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'R47_REPO_UNCHANGED=YES; NO_MODULE_INSTALLED=YES; PRIVATE_R46_NOT_PUBLISHED=YES'
+    - name: Upload text-only R47 results, including failures
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R47-RMNET-ELF-ABI-${{ github.run_id }}
+        path: ${{ env.R47_ROOT }}/out/
+        retention-days: 14
+        if-no-files-found: warn
