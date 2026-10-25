@@ -1,4 +1,4 @@
-name: VEUX R53 SUSFS 5.4 isolated nine-source real patch stage1 - NO BUILD NO FLASH
+name: VEUX R53-R2 SUSFS 5.4 isolated nine-source real patch stage1 - NO BUILD NO FLASH
 'on':
   workflow_dispatch: null
 permissions:
@@ -157,7 +157,10 @@ jobs:
                 if not p.is_file() or p.is_symlink():
                     raise GateError('PINNED_PATCH_MISSING: '+name)
                 expected = MIDORI_PATCH_SHA if name == 'midori' else JACK_PATCH_SHA
-                got = run(['git','hash-object',str(p)],source).strip()
+                # GitHub Actions checks out sibling repositories as *relative* paths.
+                # Resolve the PATCH file to an absolute path before git -C kernel hash-object;
+                # without this, Git erroneously searches kernel/midori/...
+                got = run(['git','hash-object',str(p.resolve(strict=True))],source).strip()
                 if got != expected:
                     raise GateError('PATCH_BLOB_SHA_WRONG: '+name+' '+got)
                 parsed[name] = parse_file_diffs(p.read_text(encoding='utf8'))
@@ -242,6 +245,7 @@ jobs:
         PY_R53_AUDITOR
         cat > "$R53_STAGE/tests/test_r53_stage1.py" <<'PY_R53_TESTS'
         import contextlib
+        import os
         import pathlib
         import subprocess
         import tempfile
@@ -315,6 +319,20 @@ jobs:
                 subprocess.run(['git','apply',str(self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch')],cwd=base,check=True)
                 self.assertEqual(git(base,'diff','--name-only').splitlines(),sorted(g.SELECTION))
 
+            def test_sibling_relative_checkout_paths_match_github_runner(self):
+                """Reproduce the exact R53 error: source, midori, jack are relative siblings."""
+                previous=os.getcwd()
+                try:
+                    os.chdir(self.t)
+                    result=g.stage(pathlib.Path('kernel'),pathlib.Path('midori'),
+                                   pathlib.Path('jack'),pathlib.Path('out'))
+                finally:
+                    os.chdir(previous)
+                self.assertEqual(result['patched_file_count'],9)
+                self.assertEqual({x['file'] for x in result['patched_files']},set(g.SELECTION))
+                self.assertEqual(result['flash_allowed'],False)
+                self.assertTrue((self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch').is_file())
+
             def test_actual_diff_disjoint_and_bounded(self):
                 self.assertEqual(set(g.SELECTION.values()),{'midori','jack'})
                 for n in g.SELECTION:self.assertNotIn(n,g.DENIED_FILES)
@@ -387,8 +405,8 @@ jobs:
         if __name__=='__main__':unittest.main()
         PY_R53_TESTS
         printf '%s  %s\n' \
-          a1a32bfd8f7137a8d2e012a3db766124fe75064a402d0be6eef60e0057e557ad "$R53_STAGE/scripts/r53_stage1.py" \
-          d52b25a01b0cf82d2f89fa19a69dc82e898d9836bad87f6b7c150018e04fb0cf "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
+          6c46422203ac54ea6ba3e0a072080526a2c297edcdc99069e2c429536342e187 "$R53_STAGE/scripts/r53_stage1.py" \
+          91af0cc2111f17ed19e9149073cbc10a2d9bcec39bb4ad3c9eec6afbeb00ce25 "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
         python3 -B - "$R53_STAGE" <<'PY_R53_CHECK_AST'
         from pathlib import Path
         import ast,sys
@@ -437,7 +455,7 @@ jobs:
         'Checkout pinned JackA1ltman 5.4 source read-only',
         'Materialize exact embedded R53 source stage auditor and adversarial regressions',
         'Actionlint 1.7.12 and ShellCheck every exact Bash block',
-        'Run 14 actual git-apply regressions and failure scenarios',
+        'Run 15 real git-apply and sibling-path regressions',
         'Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor',
         'Strict manifest, patch-scope and permanent NO FLASH gate',
         'Upload R53 partial source patch and evidence ONLY']
@@ -453,15 +471,15 @@ jobs:
         (stage/'R53_SHELLCHECK.log').write_text('\n'.join(logs)+'\n')
         print('R53_REAL_YAML_ACTIONLINT_AND_5_OF_5_SHELLCHECK_BASH=PASS')
         PY_R53_VALIDATE_SHELL
-    - name: Run 14 actual git-apply regressions and failure scenarios
+    - name: Run 15 real git-apply and sibling-path regressions
       shell: bash
       run: |
         set -euo pipefail
         export PYTHONPATH="$R53_STAGE/scripts"
         python3 -B -W error::ResourceWarning -m unittest discover -s "$R53_STAGE/tests" -p test_r53_stage1.py -v 2>&1 | tee "$R53_STAGE/R53_TESTS.log"
-        grep -F 'Ran 14 tests' "$R53_STAGE/R53_TESTS.log"
+        grep -F 'Ran 15 tests' "$R53_STAGE/R53_TESTS.log"
         grep -Fx 'OK' "$R53_STAGE/R53_TESTS.log"
-        echo 'R53_14_GIT_APPLY_POSITIVE_AND_NEGATIVE_TESTS=PASS'
+        echo 'R53_R2_15_GIT_APPLY_AND_SIBLING_PATH_TESTS=PASS'
     - name: Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor
       shell: bash
       run: |
