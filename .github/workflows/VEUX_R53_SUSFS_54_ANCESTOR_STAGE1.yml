@@ -1,4 +1,4 @@
-name: VEUX R53-R2 SUSFS 5.4 isolated nine-source real patch stage1 - NO BUILD NO FLASH
+name: VEUX R53-R3 SUSFS 5.4 isolated nine-source real patch stage1 - NO BUILD NO FLASH
 'on':
   workflow_dispatch: null
 permissions:
@@ -54,11 +54,11 @@ jobs:
         cat > "$R53_STAGE/scripts/r53_stage1.py" <<'PY_R53_AUDITOR'
         #!/usr/bin/env python3
         """R53: isolate and apply precisely selected SUSFS 5.4 hunks on pinned ancestor.
-
+        
         This does NOT compose the final R44 source, a full SUSFS port, KSU or modules.
         """
         from __future__ import annotations
-
+        
         import argparse
         import hashlib
         import json
@@ -66,7 +66,7 @@ jobs:
         import re
         import subprocess
         import sys
-
+        
         SOURCE_PIN = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'
         MIDORI_PIN = 'cfde03eed16a39775a341d16d3f6601bed11b11a'
         JACK_PIN = 'dcd789634247c77d8549a42aef232c680a905585'
@@ -86,53 +86,69 @@ jobs:
         }
         DENIED_PREFIXES = ('security/', 'drivers/', 'arch/', 'tools/', 'include/', 'mm/')
         DENIED_FILES = {'fs/namei.c', 'fs/namespace.c', 'fs/susfs.c', 'fs/exec.c', 'fs/open.c'}
-
+        
         class GateError(RuntimeError):
             pass
-
-
+        
+        
         def run(argv: list[str], cwd: Path, *, data: str | None = None, timeout: int = 90) -> str:
             p = subprocess.run(argv, cwd=cwd, input=data, text=True, capture_output=True, timeout=timeout, check=False)
             if p.returncode:
                 raise GateError('COMMAND_FAIL ' + ' '.join(argv) + ': ' + (p.stderr or p.stdout)[-2200:])
             return p.stdout
-
-
+        
+        
         def sha(data: bytes) -> str:
             return hashlib.sha256(data).hexdigest()
-
-
-        def parse_file_diffs(contents: str) -> dict[str, tuple[str, str]]:
+        
+        
+        def parse_file_diffs(contents: str, *, selected: set[str] | None = None) -> dict[str, tuple[str, str]]:
+            """Read only chosen regular-file hunks from an authenticated upstream patch.
+        
+            The original Jack 5.4 patch also adds fs/susfs.c and new SUSFS headers
+            (new file mode, /dev/null preimages). Those files must NOT be applied in
+            the 9-file partial stage. Validate every diff path and duplicate, then
+            interpret/check normal index headers ONLY for selected source files.
+            """
             pat = re.compile(r'(?m)^diff --git a/(\S+) b/(\S+)\n')
             matches = list(pat.finditer(contents))
             if not matches or contents[:matches[0].start()].strip():
                 raise GateError('BAD_PATCH_PREFIX')
             ans: dict[str, tuple[str, str]] = {}
+            seen: set[str] = set()
             for index, match in enumerate(matches):
                 src, dest = match.groups()
                 pp = PurePosixPath(src)
                 if (src != dest or pp.is_absolute() or '..' in pp.parts or
-                        src.startswith('.') or '\\' in src or src in ans):
+                        src.startswith('.') or '\\' in src or src in seen):
                     raise GateError('UNSAFE_PATCH_PATH: ' + src)
+                seen.add(src)
                 end = matches[index+1].start() if index+1 < len(matches) else len(contents)
                 chunk = contents[match.start():end]
+                # Non-selected sections are immutable input: the *entire* upstream
+                # patch Git-blob SHA is checked independently before entering here.
+                # In particular do not parse new-file preimages as modifications.
+                if selected is not None and src not in selected:
+                    continue
                 header = re.search(r'(?m)^index ([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})(?: \d+)?$', chunk)
                 if not header or f'--- a/{src}' not in chunk or f'+++ b/{dest}' not in chunk:
                     raise GateError('BAD_PATCH_METADATA: ' + src)
-                if re.search(r'(?m)^(?:new file mode|deleted file mode|rename (?:from|to)|Binary files|GIT binary patch)',chunk):
+                if re.search(r'(?m)^(?:new file mode|deleted file mode|rename (?:from|to)|Binary files|GIT binary patch)', chunk):
                     raise GateError('UNEXPECTED_PATCH_OPERATION: ' + src)
                 ans[src] = (header.group(1), chunk.rstrip('\n') + '\n')
+            if selected is not None and set(ans) != selected:
+                raise GateError('SELECTED_PATCH_HUNKS_MISSING: '+repr(sorted(selected - set(ans))))
             return ans
-
-
+        
+        
         def validate_selection(selection: dict[str, str] = SELECTION) -> None:
             if len(selection) != 9 or set(selection.values()) != {'midori','jack'}:
                 raise GateError('SELECTION_CHANGED')
             for p in selection:
                 if p in DENIED_FILES or p.startswith(DENIED_PREFIXES) or '..' in PurePosixPath(p).parts:
                     raise GateError('DENIED_FILE: ' + p)
-
-
+        
+        
         def validate_pins(source: Path, midori: Path, jack: Path) -> None:
             if run(['git','rev-parse','HEAD'],source).strip() != SOURCE_PIN:
                 raise GateError('WRONG_SOURCE_ANCESTOR')
@@ -143,8 +159,8 @@ jobs:
             for p in (source, midori, jack):
                 if run(['git','status','--porcelain','--untracked-files=all'],p).strip():
                     raise GateError('INPUT_GIT_DIR_DIRTY: '+str(p))
-
-
+        
+        
         def stage(source: Path, midori: Path, jack: Path, out: Path) -> dict:
             validate_selection()
             validate_pins(source,midori,jack)
@@ -163,8 +179,9 @@ jobs:
                 got = run(['git','hash-object',str(p.resolve(strict=True))],source).strip()
                 if got != expected:
                     raise GateError('PATCH_BLOB_SHA_WRONG: '+name+' '+got)
-                parsed[name] = parse_file_diffs(p.read_text(encoding='utf8'))
-
+                selected = {file for file, origin in SELECTION.items() if origin == name}
+                parsed[name] = parse_file_diffs(p.read_text(encoding='utf8'), selected=selected)
+        
             # Only apply to ancestor. This is NOT yet the reconstructed R44 WALT source.
             ledger = []
             for name, origin in sorted(SELECTION.items()):
@@ -186,7 +203,7 @@ jobs:
                     raise GateError('NO_EFFECT: '+name)
                 ledger.append({'file':name,'origin':origin,'old_git_blob':before,'new_git_blob':after,
                                'patch_chunk_sha256':sha(patch.encode('utf8'))})
-
+        
             run(['git','diff','--check'],source)
             changed=set(run(['git','diff','--name-only','--no-renames'],source).splitlines())
             if changed != set(SELECTION) or len(ledger)!=len(SELECTION):
@@ -227,8 +244,8 @@ jobs:
                 'Den Patch NICHT direkt in dein laufendes Android installieren!\n'
                 'BOOT_READY=NO; FLASH_ALLOWED=NO. BReNE unveraendert.\n',encoding='utf8')
             return result
-
-
+        
+        
         def main() -> None:
             ap=argparse.ArgumentParser()
             for arg in ('source','midori','jack','out'):ap.add_argument('--'+arg,required=True,type=Path)
@@ -240,7 +257,7 @@ jobs:
                 sys.exit(2)
             print('R53_STAGE1_REAL_SOURCE_PATCH_APPLIED='+str(o['patched_file_count'])+
                   '; FULL_SUSFS_PORT=NO; R44_REBUILT=NO; FLASH_ALLOWED=NO')
-
+        
         if __name__ == '__main__':main()
         PY_R53_AUDITOR
         cat > "$R53_STAGE/tests/test_r53_stage1.py" <<'PY_R53_TESTS'
@@ -251,21 +268,21 @@ jobs:
         import tempfile
         import unittest
         from unittest.mock import patch
-
+        
         import r53_stage1 as g
-
-
+        
+        
         def git(d, *argv):
             return subprocess.check_output(['git', *argv], cwd=d, text=True).strip()
-
-
+        
+        
         def init(d):
             d.mkdir(parents=True)
             git(d,'init','-q')
             git(d,'config','user.name','VEUX Unit Test')
             git(d,'config','user.email','test@example.org')
-
-
+        
+        
         class R53Tests(unittest.TestCase):
             def setUp(self):
                 self.tmp=tempfile.TemporaryDirectory()
@@ -303,7 +320,7 @@ jobs:
                          patch.object(g,'MIDORI_PATCH_SHA',self.midori_hash),
                          patch.object(g,'JACK_PATCH_SHA',self.jack_hash)]
                 for change in changes:change.start();self.addCleanup(change.stop)
-
+        
             def test_nine_file_source_application_generates_actual_patch(self):
                 r=g.stage(self.src,self.midori,self.jack,self.out)
                 self.assertEqual(r['patched_file_count'],9)
@@ -318,7 +335,7 @@ jobs:
                 subprocess.run(['git','apply','--check',str(self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch')],cwd=base,check=True)
                 subprocess.run(['git','apply',str(self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch')],cwd=base,check=True)
                 self.assertEqual(git(base,'diff','--name-only').splitlines(),sorted(g.SELECTION))
-
+        
             def test_sibling_relative_checkout_paths_match_github_runner(self):
                 """Reproduce the exact R53 error: source, midori, jack are relative siblings."""
                 previous=os.getcwd()
@@ -332,81 +349,141 @@ jobs:
                 self.assertEqual({x['file'] for x in result['patched_files']},set(g.SELECTION))
                 self.assertEqual(result['flash_allowed'],False)
                 self.assertTrue((self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch').is_file())
-
+        
+            @staticmethod
+            def realistic_new_file_hunk():
+                # Exact metadata syntax present in Jack's authentic 5.4 patch,
+                # including /dev/null and the all-zero preimage hash.
+                return ('diff --git a/fs/susfs.c b/fs/susfs.c\n'
+                        'new file mode 100644\n'
+                        'index 0000000..7dca01d\n'
+                        '--- /dev/null\n'
+                        '+++ b/fs/susfs.c\n'
+                        '@@ -0,0 +1 @@\n'
+                        '+/* SUSFS stub fixture; NOT for device installation */\n')
+        
+            def test_jack_new_file_in_actual_patch_format_is_ignored_in_stage1(self):
+                # Prior R53-R2 failed parsing a REAL upstream fs/susfs.c section.
+                # Reproduce this with the same 'new file mode', index and /dev/null
+                # metadata, and pin the updated synthetic Jack fixture correctly.
+                f=self.jack/'Patches/Patch/susfs_patch_to_5.4.patch'
+                f.write_text(f.read_text()+self.realistic_new_file_hunk())
+                git(self.jack,'add','.');git(self.jack,'commit','-qm','add realistic jack new file')
+                with patch.object(g,'JACK_PATCH_SHA',git(self.src,'hash-object',str(f))), \
+                     patch.object(g,'JACK_PIN',git(self.jack,'rev-parse','HEAD')):
+                    r=g.stage(self.src,self.midori,self.jack,self.out)
+                self.assertEqual(r['patched_file_count'],9)
+                self.assertEqual(set(g.SELECTION),set(x['file'] for x in r['patched_files']))
+                self.assertFalse((self.src/'fs/susfs.c').exists())
+                generated=(self.out/'VEUX_R53_SUSFS54_STAGE1_PARTIAL.patch').read_text()
+                self.assertNotIn('fs/susfs.c',generated)
+        
+            def test_selection_parser_skips_unselected_new_files_but_not_selected_ones(self):
+                full=self.patch_strings['jack']+self.realistic_new_file_hunk()
+                wanted={n for n,o in g.SELECTION.items() if o=='jack'}
+                parsed=g.parse_file_diffs(full,selected=wanted)
+                self.assertEqual(set(parsed),wanted)
+                with self.assertRaisesRegex(g.GateError,'BAD_PATCH_METADATA'):
+                    g.parse_file_diffs(full)
+        
+            def test_selection_parser_still_rejects_unsafe_unselected_paths(self):
+                full=self.patch_strings['jack']+self.realistic_new_file_hunk().replace(
+                    'fs/susfs.c','../invalid/../boot.img')
+                wanted={n for n,o in g.SELECTION.items() if o=='jack'}
+                with self.assertRaisesRegex(g.GateError,'UNSAFE_PATCH_PATH'):
+                    g.parse_file_diffs(full,selected=wanted)
+        
+            def test_selection_parser_still_rejects_duplicate_unselected_paths(self):
+                f=self.realistic_new_file_hunk()
+                wanted={n for n,o in g.SELECTION.items() if o=='jack'}
+                with self.assertRaisesRegex(g.GateError,'UNSAFE_PATCH_PATH'):
+                    g.parse_file_diffs(self.patch_strings['jack']+f+f,selected=wanted)
+        
+            def test_selection_parser_rejects_malformed_selected_hunk(self):
+                bad=self.patch_strings['jack'].replace('index ','bad-index ',1)
+                wanted={n for n,o in g.SELECTION.items() if o=='jack'}
+                with self.assertRaisesRegex(g.GateError,'BAD_PATCH_METADATA'):
+                    g.parse_file_diffs(bad,selected=wanted)
+        
+            def test_selection_parser_requires_all_nine_eligible_fragments(self):
+                wanted={n for n,o in g.SELECTION.items() if o=='jack'}
+                with self.assertRaisesRegex(g.GateError,'SELECTED_PATCH_HUNKS_MISSING'):
+                    g.parse_file_diffs(self.realistic_new_file_hunk(),selected=wanted)
+        
             def test_actual_diff_disjoint_and_bounded(self):
                 self.assertEqual(set(g.SELECTION.values()),{'midori','jack'})
                 for n in g.SELECTION:self.assertNotIn(n,g.DENIED_FILES)
                 self.assertNotIn('fs/namei.c',g.SELECTION)
                 self.assertNotIn('fs/namespace.c',g.SELECTION)
                 self.assertNotIn('security/selinux/avc.c',g.SELECTION)
-
+        
             def test_malicious_patch_path_rejected(self):
                 bad=self.patch_strings['midori'].replace('block/ioprio.c','../boot.img')
                 with self.assertRaises(g.GateError):g.parse_file_diffs(bad)
-
+        
             def test_duplicate_patch_path_rejected(self):
                 chunk=self.patch_strings['jack'].split('diff --git ',2)[1]
                 duplicated=self.patch_strings['jack']+'diff --git '+chunk
                 with self.assertRaises(g.GateError):g.parse_file_diffs(duplicated)
-
+        
             def test_malformed_index_rejected(self):
                 x=self.patch_strings['midori'].replace('index ','bad-index ',1)
                 with self.assertRaises(g.GateError):g.parse_file_diffs(x)
-
+        
             def test_wrong_pin_rejected_before_any_change(self):
                 with patch.object(g,'SOURCE_PIN','f'*40):
                     with self.assertRaisesRegex(g.GateError,'WRONG_SOURCE_ANCESTOR'):
                         g.stage(self.src,self.midori,self.jack,self.out)
                 self.assertFalse(self.out.exists())
-
+        
             def test_preimage_divergence_rejected_before_applying_target(self):
                 p=self.src/'block/ioprio.c';p.write_text(p.read_text()+'bad\n')
                 with self.assertRaisesRegex(g.GateError,'DIR_DIRTY'):
                     g.stage(self.src,self.midori,self.jack,self.out)
-
+        
             def test_blob_pin_mismatch_rejected(self):
                 with patch.object(g,'MIDORI_PATCH_SHA','a'*40):
                     with self.assertRaisesRegex(g.GateError,'PATCH_BLOB_SHA_WRONG'):
                         g.stage(self.src,self.midori,self.jack,self.out)
-
+        
             def test_unsafe_selection_rejected(self):
                 with self.assertRaises(g.GateError):g.validate_selection({'fs/namei.c':'midori',**g.SELECTION})
-
+        
             def test_wrong_sources_no_apply(self):
                 p=self.midori/'kernel_patches/50_add_susfs_in_qgki-android11-5.4.patch'
                 p.write_text('corrupt')
                 with self.assertRaisesRegex(g.GateError,'DIR_DIRTY'):
                     g.stage(self.src,self.midori,self.jack,self.out)
-
+        
             def test_unexpected_existing_output_blocked(self):
                 self.out.mkdir();(self.out/'do-not-overwrite.txt').write_text('PRIVATE')
                 with self.assertRaisesRegex(g.GateError,'NONEMPTY_OUTPUT_DIR'):
                     g.stage(self.src,self.midori,self.jack,self.out)
                 self.assertEqual((self.out/'do-not-overwrite.txt').read_text(),'PRIVATE')
-
+        
             def test_no_kconfig_or_selinux_or_ksu_source_patches(self):
                 self.assertTrue(all(not p.startswith(('security/','include/','arch/','mm/')) for p in g.SELECTION))
                 self.assertEqual(len(g.SELECTION),9)
-
+        
             def test_metadata_false_flags_in_original_outputs(self):
                 import json
                 g.stage(self.src,self.midori,self.jack,self.out)
                 d=json.loads((self.out/'R53_PATCH_RESULT.json').read_text())
                 for flag in ('boot_ready','flash_allowed','susfs_5_4_full_port_complete','compile_performed','r44_walt_recomposed','baka_su_uapi6_integrated','nomount_v22_integrated'):
                     self.assertIs(d[flag],False)
-
+        
             def test_required_new_file_marker_and_blob_hex(self):
                 parts=g.parse_file_diffs(self.patch_strings['jack'])
                 old,chunk=parts['fs/Makefile']
                 self.assertTrue(self.src_file_hashes['fs/Makefile'].startswith(old))
                 self.assertTrue(chunk.startswith('diff --git a/fs/Makefile b/fs/Makefile'))
-
-
+        
+        
         if __name__=='__main__':unittest.main()
         PY_R53_TESTS
         printf '%s  %s\n' \
-          6c46422203ac54ea6ba3e0a072080526a2c297edcdc99069e2c429536342e187 "$R53_STAGE/scripts/r53_stage1.py" \
-          91af0cc2111f17ed19e9149073cbc10a2d9bcec39bb4ad3c9eec6afbeb00ce25 "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
+          1e041c5de2d9a92aea8b22612fe5346200cfbcdf2172b8eadad3a855fd97c153 "$R53_STAGE/scripts/r53_stage1.py" \
+          434b49b03043cebb1f85ffabd6eebcb7378c344187d6fd36c91b331fa88b72a2 "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
         python3 -B - "$R53_STAGE" <<'PY_R53_CHECK_AST'
         from pathlib import Path
         import ast,sys
@@ -455,7 +532,7 @@ jobs:
         'Checkout pinned JackA1ltman 5.4 source read-only',
         'Materialize exact embedded R53 source stage auditor and adversarial regressions',
         'Actionlint 1.7.12 and ShellCheck every exact Bash block',
-        'Run 15 real git-apply and sibling-path regressions',
+        'Run 21 real git-apply and original-Jack-metadata regressions',
         'Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor',
         'Strict manifest, patch-scope and permanent NO FLASH gate',
         'Upload R53 partial source patch and evidence ONLY']
@@ -471,15 +548,15 @@ jobs:
         (stage/'R53_SHELLCHECK.log').write_text('\n'.join(logs)+'\n')
         print('R53_REAL_YAML_ACTIONLINT_AND_5_OF_5_SHELLCHECK_BASH=PASS')
         PY_R53_VALIDATE_SHELL
-    - name: Run 15 real git-apply and sibling-path regressions
+    - name: Run 21 real git-apply and original-Jack-metadata regressions
       shell: bash
       run: |
         set -euo pipefail
         export PYTHONPATH="$R53_STAGE/scripts"
         python3 -B -W error::ResourceWarning -m unittest discover -s "$R53_STAGE/tests" -p test_r53_stage1.py -v 2>&1 | tee "$R53_STAGE/R53_TESTS.log"
-        grep -F 'Ran 15 tests' "$R53_STAGE/R53_TESTS.log"
+        grep -F 'Ran 21 tests' "$R53_STAGE/R53_TESTS.log"
         grep -Fx 'OK' "$R53_STAGE/R53_TESTS.log"
-        echo 'R53_R2_15_GIT_APPLY_AND_SIBLING_PATH_TESTS=PASS'
+        echo 'R53_R3_21_GIT_APPLY_AND_UPSTREAM_METADATA_TESTS=PASS'
     - name: Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor
       shell: bash
       run: |
