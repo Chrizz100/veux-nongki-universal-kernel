@@ -1,4 +1,4 @@
-name: VEUX R54 SUSFS 5.4 twelve-source stage2 - R53 ORIGINAL VERIFIED NO BUILD NO FLASH
+name: VEUX R54-R2 SUSFS 5.4 twelve-source stage2 - pinned EOF fix NO BUILD NO FLASH
 'on':
   workflow_dispatch: null
 permissions:
@@ -84,13 +84,19 @@ jobs:
         \  if report.get(k) is not False:raise GateError('R53_UNSAFE_CLAIM:'+k)\n if set(re.findall(r'(?m)^diff --git a/(\\\
         S+) b/\\1$',patch))!=R53_NAMES:\n  raise GateError('R53_PATCH_DIFF_SCOPE_INVALID')\n\ndef clean_pinned_susfs_c(data:bytes)->tuple[bytes,list[int]]:\n\
         \ try:txt=data.decode('utf-8')\n except UnicodeDecodeError as e:raise GateError('SUSFS_C_NOT_UTF8') from e\n if '\\\
-        r' in txt or not txt.endswith('\\n'):raise GateError('SUSFS_C_LINE_ENDINGS_CHANGED')\n lines=txt.splitlines(keepends=True)\n\
-        \ offending={i+1 for i,line in enumerate(lines) if line[:-1].endswith((' ','\\t'))}\n if offending!=SUSFS_C_WHITESPACE_LINES:\n\
-        \  raise GateError('SUSFS_C_WHITESPACE_SCOPE_CHANGED:'+str(offending))\n # Normalize exactly 5 existing upstream trailing\
-        \ whitespace issues, not other code.\n cleaned=''.join(line[:-1].rstrip(' \\t')+'\\n' for line in lines)\n return\
-        \ cleaned.encode('utf-8'),sorted(offending)\n\ndef stage(source:Path,midori:Path,r53_zip:Path,out:Path)->dict:\n source,midori,r53_zip,out=source.resolve(),midori.resolve(),r53_zip.resolve(),out.resolve()\n\
-        \ if run(['git','rev-parse','HEAD'],source).strip()!=SOURCE_SHA:raise GateError('WRONG_5_4_ANCESTOR')\n if run(['git','rev-parse','HEAD'],midori).strip()!=MIDORI_SHA:raise\
-        \ GateError('WRONG_MIDORI_5_4')\n for directory in (source,midori):\n  if run(['git','status','--porcelain','--untracked-files=all'],directory).strip():raise\
+        r' in txt or not txt.endswith('\\n'):raise GateError('SUSFS_C_LINE_ENDINGS_CHANGED')\n # Pinned Midori Git blob has\
+        \ exactly one excess terminal blank line. Do not trim arbitrary source.\n if not txt.endswith('\\n\\n') or txt.endswith('\\\
+        n\\n\\n'):\n  raise GateError('SUSFS_C_EOF_SCOPE_CHANGED')\n lines=txt.splitlines(keepends=True)\n offending={i+1\
+        \ for i,line in enumerate(lines) if line[:-1].endswith((' ','\\t'))}\n if offending!=SUSFS_C_WHITESPACE_LINES:\n \
+        \ raise GateError('SUSFS_C_WHITESPACE_SCOPE_CHANGED:'+str(offending))\n # Normalize exactly 5 existing upstream trailing\
+        \ whitespace issues, not other code.\n cleaned=''.join(line[:-1].rstrip(' \\t')+'\\n' for line in lines)\n # Remove\
+        \ exactly the second terminal LF, preserving all other code and blank lines.\n if not cleaned.endswith('\\n\\n') or\
+        \ cleaned.endswith('\\n\\n\\n'):\n  raise GateError('SUSFS_C_EOF_NORMALIZATION_INVARIANT')\n cleaned=cleaned[:-1]\n\
+        \ if not cleaned.endswith('\\n') or cleaned.endswith('\\n\\n'):\n  raise GateError('SUSFS_C_EOF_POSTIMAGE_INVALID')\n\
+        \ return cleaned.encode('utf-8'),sorted(offending)\n\ndef stage(source:Path,midori:Path,r53_zip:Path,out:Path)->dict:\n\
+        \ source,midori,r53_zip,out=source.resolve(),midori.resolve(),r53_zip.resolve(),out.resolve()\n if run(['git','rev-parse','HEAD'],source).strip()!=SOURCE_SHA:raise\
+        \ GateError('WRONG_5_4_ANCESTOR')\n if run(['git','rev-parse','HEAD'],midori).strip()!=MIDORI_SHA:raise GateError('WRONG_MIDORI_5_4')\n\
+        \ for directory in (source,midori):\n  if run(['git','status','--porcelain','--untracked-files=all'],directory).strip():raise\
         \ GateError('DIRTY_INPUT_GIT_REPO:'+str(directory))\n preexisting={'R54_ACTIONLINT.log','R54_SHELLCHECK.log','R54_TESTS.log','R54_STAGE.log'}\n\
         \ if out.exists() and any(p.name not in preexisting or not p.is_file() or p.is_symlink() for p in out.iterdir()):\n\
         \  raise GateError('OUTPUT_DIR_NOT_EMPTY')\n if not r53_zip.is_file() or r53_zip.is_symlink():raise GateError('R53_ZIP_MISSING_OR_SYMLINK')\n\
@@ -119,16 +125,16 @@ jobs:
         \  'source_commit':SOURCE_SHA,'midori_commit':MIDORI_SHA,'r53_run':R53_RUN_ID,\n  'r53_artifact_id':R53_ARTIFACT_ID,'r53_zip_sha256':R53_ZIP_SHA256,\n\
         \  'r53_patch_sha256':R53_PATCH_SHA256,'files_changed':12,\n  'r53_nine_file_postimages_verified':True,'new_files':[],\n\
         \  'patch_sha256':digest(diff.encode('utf-8')),\n  'upstream_whitespace_corrections_exact':sum(len(x[3]) for x in\
-        \ additions),\n  'source_changes_committed':False,'r44_walt_recomposed':False,\n  'susfs_complete':False,'baka_su_uapi6_integrated':False,'nomount_v22_integrated':False,\n\
-        \  'build_performed':False,'device_tested':False,'boot_ready':False,'flash_allowed':False,\n }\n for dst,upsha,contents,corrections\
-        \ in additions:\n  meta['new_files'].append({'file':dst,'upstream_git_blob':upsha,'final_git_blob':gitblob(source,source/dst),\n\
+        \ additions),\n  'upstream_eof_blank_lines_removed_exact':1,\n  'source_changes_committed':False,'r44_walt_recomposed':False,\n\
+        \  'susfs_complete':False,'baka_su_uapi6_integrated':False,'nomount_v22_integrated':False,\n  'build_performed':False,'device_tested':False,'boot_ready':False,'flash_allowed':False,\n\
+        \ }\n for dst,upsha,contents,corrections in additions:\n  meta['new_files'].append({'file':dst,'upstream_git_blob':upsha,'final_git_blob':gitblob(source,source/dst),\n\
         \                            'sha256':digest(contents),'whitespace_lines_corrected':corrections})\n out.mkdir(parents=True,exist_ok=True)\n\
         \ (out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').write_text(diff,encoding='utf-8')\n (out/'R54_RESULT.json').write_text(json.dumps(meta,indent=2,sort_keys=True)+'\\\
         n',encoding='utf-8')\n (out/'START_HIER_NOFLASH.txt').write_text(\n  'R54: Echtes SUSFS 5.4 Stage2-Quellpatch auf\
-        \ gepinntem Ancestor. 9 R53-Aenderungen + 3 '\n  'Midori-5.4-Quelldateien. 5 upstream Whitespacekorrekturen an fs/susfs.c.\
-        \ '\\\n  'Noch KEINE Integration komplexer VFS/Mount/SELinux/KernelSU Hooks. KEIN R44 WALT '\n  'Rebuild, KEIN Kernel-Build,\
-        \ KEIN Flash. BReNE unveraendert. '\\\n  'NO BOOT RELEASE.\\n',encoding='utf-8')\n return meta\n\ndef main()->int:\n\
-        \ p=argparse.ArgumentParser();p.add_argument('--source',required=True,type=Path);p.add_argument('--midori',required=True,type=Path);p.add_argument('--r53',required=True,type=Path);p.add_argument('--out',required=True,type=Path)\n\
+        \ gepinntem Ancestor. 9 R53-Aenderungen + 3 '\n  'Midori-5.4-Quelldateien. 5 upstream Whitespacekorrekturen und genau\
+        \ 1 EOF-Leerzeile entfernt in fs/susfs.c. '\\\n  'Noch KEINE Integration komplexer VFS/Mount/SELinux/KernelSU Hooks.\
+        \ KEIN R44 WALT '\n  'Rebuild, KEIN Kernel-Build, KEIN Flash. BReNE unveraendert. '\\\n  'NO BOOT RELEASE.\\n',encoding='utf-8')\n\
+        \ return meta\n\ndef main()->int:\n p=argparse.ArgumentParser();p.add_argument('--source',required=True,type=Path);p.add_argument('--midori',required=True,type=Path);p.add_argument('--r53',required=True,type=Path);p.add_argument('--out',required=True,type=Path)\n\
         \ a=p.parse_args()\n try:res=stage(a.source,a.midori,a.r53,a.out)\n except (GateError,OSError,subprocess.TimeoutExpired,ValueError)\
         \ as e:\n  print('R54_STAGE2_BLOCKED:'+str(e),file=sys.stderr);return 2\n print('R54_SUSFS54_STAGE2_REAL_12_FILE_PATCH=PASS;\
         \ SUSFS_COMPLETE=NO; BOOT_READY=NO; FLASH_ALLOWED=NO')\n print('R54_PATCH_SHA256='+res['patch_sha256']);return 0\n\
@@ -147,7 +153,7 @@ jobs:
         \ value {i}',f'new value {i}'),encoding='utf-8')\n   cls.new[name]=git(cls.src,'hash-object',name)\n  cls.patch=git(cls.src,'diff','--binary','--no-ext-diff','--no-renames')+'\\\
         n'\n  git(cls.src,'restore','--worktree','.')\n  cls.blob_files={}\n  for dest,(origin,expected) in g.NEW_INPUTS.items():\n\
         \   p=cls.mid/origin;p.parent.mkdir(parents=True,exist_ok=True)\n   if dest=='fs/susfs.c':\n    p.write_text('source\
-        \ start\\n'+''.join(f'line {i}' + ('  ' if i in (3,4,5,6,7) else '')+'\\n' for i in range(2,11)),encoding='utf8')\n\
+        \ start\\n'+''.join(f'line {i}' + ('  ' if i in (3,4,5,6,7) else '')+'\\n' for i in range(2,11))+'\\n',encoding='utf8')\n\
         \   elif dest.endswith('/susfs.h'):\n    p.write_text('#define SUSFS_VERSION \"v2.3.0\"\\n',encoding='utf8')\n   else:p.write_text('#define\
         \ SUSFS_X 1\\n',encoding='utf8')\n   cls.blob_files[dest]=(origin,git(cls.mid,'hash-object',origin))\n  git(cls.mid,'add','.');git(cls.mid,'commit','-qm','synthetic\
         \ pinned upstream')\n  cls.mid_sha=git(cls.mid,'rev-parse','HEAD')\n  rows=[{'file':name,'old_git_blob':cls.old[name],'new_git_blob':cls.new[name]}\
@@ -171,9 +177,10 @@ jobs:
         \n       mock.patch.object(g,'SOURCE_SHA','b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'),\\\n       mock.patch.object(g,'MIDORI_SHA','cfde03eed16a39775a341d16d3f6601bed11b11a'):\n\
         \   r,patch=g.validate_r53_zip(Path(p).read_bytes())\n   self.assertEqual(r['patched_file_count'],9)\n   self.assertEqual(len(patch),31284)\n\
         \n def test_replay_and_3_new_source_files_real_diff(self):\n  result=self.run_stage()\n  self.assertEqual(result['files_changed'],12)\n\
-        \  self.assertEqual(result['upstream_whitespace_corrections_exact'],5)\n  self.assertEqual(set(g.STAGE2_NAMES),set(git(self.src,'diff','--name-only').splitlines()))\n\
-        \  self.assertEqual(result['r53_nine_file_postimages_verified'],True)\n  self.assertEqual(len(result['new_files']),3)\n\
-        \  self.assertFalse(result['flash_allowed'])\n  self.assertEqual(result['patch_sha256'],g.digest((self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').read_bytes()))\n\
+        \  self.assertEqual(result['upstream_whitespace_corrections_exact'],5)\n  self.assertEqual(result['upstream_eof_blank_lines_removed_exact'],1)\n\
+        \  self.assertTrue((self.src/'fs/susfs.c').read_bytes().endswith(b'\\n'))\n  self.assertFalse((self.src/'fs/susfs.c').read_bytes().endswith(b'\\\
+        n\\n'))\n  self.assertEqual(set(g.STAGE2_NAMES),set(git(self.src,'diff','--name-only').splitlines()))\n  self.assertEqual(result['r53_nine_file_postimages_verified'],True)\n\
+        \  self.assertEqual(len(result['new_files']),3)\n  self.assertFalse(result['flash_allowed'])\n  self.assertEqual(result['patch_sha256'],g.digest((self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').read_bytes()))\n\
         \  # Reapply the *generated* patch to a pristine independent checkout.\n  replay=self.temp/'replay';shutil.copytree(type(self).src,replay)\n\
         \  git(replay,'apply','--check',str(self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'))\n  git(replay,'apply',str(self.out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'))\n\
         \  self.assertEqual(set(g.STAGE2_NAMES),set(git(replay,'diff','--name-only').splitlines()) | {x for x in g.NEW_INPUTS})\n\
@@ -217,9 +224,20 @@ jobs:
         \ def test_invalid_r53_decision_rejected(self):\n  bad=dict(type(self).report);bad['boot_ready']=True\n  with self.assertRaisesRegex(g.GateError,'R53_UNSAFE_CLAIM'):g.validate_r53_report(bad,type(self).patch)\n\
         \ def test_error_has_no_partition_or_rom_writes(self):\n  with self.assertRaisesRegex(g.GateError,'SUSFS_FILE_EXISTS|DIRTY_INPUT_GIT_REPO'):\n\
         \   (self.src/'fs/susfs.c').write_text('already\\n');self.run_stage()\n  forbidden=('/dev/block','/vendor/etc/init','/data/adb/')\n\
-        \  module=Path(g.__file__).read_text()\n  for text in forbidden:self.assertNotIn(text,module)\n\nif __name__=='__main__':unittest.main()\n\
-        PY_R54_TESTS\nprintf '%s  %s\\n' \\\n  '2db5bcf7efc1057d40ecd9393c7c26bec7d47b660cfca9175a75d0e5eeaeeef7' \"$R54_STAGE/scripts/r54_stage2.py\"\
-        \ \\\n  'c26248cc3adc9047a8b0469c65fd5f3b4a60a2dd7aced0c0fd92cf44d3f4c31d' \"$R54_STAGE/tests/test_r54_stage2.py\"\
+        \  module=Path(g.__file__).read_text()\n  for text in forbidden:self.assertNotIn(text,module)\n\n def test_real_midori_two_terminal_linefeeds_fixed_once(self):\n\
+        \  raw=(self.mid/'kernel_patches/fs/susfs.c').read_bytes()\n  self.assertTrue(raw.endswith(b'\\n\\n'))\n  self.assertFalse(raw.endswith(b'\\\
+        n\\n\\n'))\n  clean,modified=g.clean_pinned_susfs_c(raw)\n  self.assertEqual(modified,sorted(g.SUSFS_C_WHITESPACE_LINES))\n\
+        \  self.assertEqual(raw.count(b'\\n'),clean.count(b'\\n')+1)\n  self.assertTrue(clean.endswith(b'\\n'))\n  self.assertFalse(clean.endswith(b'\\\
+        n\\n'))\n  self.assertEqual(clean[:-1],clean.rstrip(b'\\n'))\n def test_missing_expected_midori_eof_blank_line_blocked(self):\n\
+        \  raw=(self.mid/'kernel_patches/fs/susfs.c').read_bytes()\n  self.assertTrue(raw.endswith(b'\\n\\n'))\n  with self.assertRaisesRegex(g.GateError,'SUSFS_C_EOF_SCOPE_CHANGED'):\n\
+        \   g.clean_pinned_susfs_c(raw[:-1])\n def test_unexpected_three_midori_eof_linefeeds_blocked(self):\n  raw=(self.mid/'kernel_patches/fs/susfs.c').read_bytes()\n\
+        \  self.assertTrue(raw.endswith(b'\\n\\n'))\n  with self.assertRaisesRegex(g.GateError,'SUSFS_C_EOF_SCOPE_CHANGED'):\n\
+        \   g.clean_pinned_susfs_c(raw+b'\\n')\n def test_source_eof_fix_is_one_byte_only_beyond_existing_whitespace(self):\n\
+        \  raw=(self.mid/'kernel_patches/fs/susfs.c').read_bytes()\n  base=''.join(line[:-1].rstrip(' \\t')+'\\n' for line\
+        \ in raw.decode().splitlines(keepends=True)).encode()\n  fixed,positions=g.clean_pinned_susfs_c(raw)\n  self.assertEqual(positions,[3,4,5,6,7])\n\
+        \  self.assertEqual(base[:-1],fixed)\n  self.assertEqual(base[-2:],b'\\n\\n')\n\nif __name__=='__main__':unittest.main()\n\
+        PY_R54_TESTS\nprintf '%s  %s\\n' \\\n  '35a825bcc098414facd69c98d84b48258eca1c9d0f770e35f261090a8f35b6de' \"$R54_STAGE/scripts/r54_stage2.py\"\
+        \ \\\n  'bf97ab962d4302707c2bc1099486e15a7a543e1da1d0baeaf8c9ac54e207b962' \"$R54_STAGE/tests/test_r54_stage2.py\"\
         \ | sha256sum -c -\npython3 -B - \"$R54_STAGE\" <<'PY_R54_AST'\nimport ast,sys,pathlib\np=pathlib.Path(sys.argv[1])\n\
         for name in ('scripts/r54_stage2.py','tests/test_r54_stage2.py'):\n    ast.parse((p/name).read_text(encoding='utf8'),\
         \ filename=name)\nprint('R54_PINNED_EMBEDDED_PROGRAMS_AST=PASS')\nPY_R54_AST\n"
@@ -273,11 +291,11 @@ jobs:
         python3 -B -W error::ResourceWarning -m unittest discover -s "$R54_STAGE/tests" -p ''test_r54_stage2.py'' -v 2>&1
         | tee "$R54_STAGE/out/R54_TESTS.log"
 
-        grep -F ''Ran 21 tests'' "$R54_STAGE/out/R54_TESTS.log"
+        grep -F ''Ran 25 tests'' "$R54_STAGE/out/R54_TESTS.log"
 
         grep -Fx ''OK'' "$R54_STAGE/out/R54_TESTS.log"
 
-        echo ''R54_21_SOURCE_AND_ARTIFACT_REGRESSIONS=PASS''
+        echo ''R54_R2_25_SOURCE_AND_ARTIFACT_REGRESSIONS=PASS''
 
         '
     - name: Replay R53 source patch and add exactly 3 pinned SUSFS 5.4 source files
@@ -292,10 +310,11 @@ jobs:
         expected={'R54_ACTIONLINT.log','R54_SHELLCHECK.log','R54_TESTS.log','R54_STAGE.log',\n          'R54_RESULT.json','START_HIER_NOFLASH.txt','VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'}\n\
         actual={x.name for x in out.iterdir() if x.is_file()}\nif actual!=expected:raise SystemExit('R54_WRONG_OUTPUT_SET:'+str(actual^expected))\n\
         if not (r.get('schema')=='VEUX_R54_SUSFS54_STAGE2_SOURCE_COMPOSITION_V1' and\n        r.get('files_changed')==12 and\
-        \ r.get('upstream_whitespace_corrections_exact')==5 and\n        r.get('r53_run')==40224649799 and r.get('r53_nine_file_postimages_verified')\
-        \ is True and\n        len(r.get('new_files',[]))==3 and r.get('source_commit')=='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'):\n\
-        \    raise SystemExit('R54_PINNED_12_FILE_SOURCE_PROOF_FAILED')\nfor key in ('source_changes_committed','r44_walt_recomposed','susfs_complete','baka_su_uapi6_integrated',\n\
-        \            'nomount_v22_integrated','build_performed','device_tested','boot_ready','flash_allowed'):\n    if r.get(key)\
+        \ r.get('upstream_whitespace_corrections_exact')==5 and\n        r.get('upstream_eof_blank_lines_removed_exact')==1\
+        \ and\n        r.get('r53_run')==40224649799 and r.get('r53_nine_file_postimages_verified') is True and\n        len(r.get('new_files',[]))==3\
+        \ and r.get('source_commit')=='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'):\n    raise SystemExit('R54_PINNED_12_FILE_SOURCE_PROOF_FAILED')\n\
+        for key in ('source_changes_committed','r44_walt_recomposed','susfs_complete','baka_su_uapi6_integrated',\n      \
+        \      'nomount_v22_integrated','build_performed','device_tested','boot_ready','flash_allowed'):\n    if r.get(key)\
         \ is not False:raise SystemExit('R54_UNSAFE_SUCCESS_FLAG:'+key)\npatch=(out/'VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch').read_bytes()\n\
         if hashlib.sha256(patch).hexdigest()!=r.get('patch_sha256'):\n    raise SystemExit('R54_PATCH_HASH_MISMATCH')\nfor\
         \ filename in out.iterdir():\n    if filename.is_file() and (filename.suffix in ('.ko','.bin','.elf','.dtb','.dtbo','.img')\
