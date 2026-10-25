@@ -1,0 +1,1031 @@
+name: VEUX R55A SUSFS 5.4 Mount + Namespace source gate - NO BUILD NO FLASH
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: veux-r55a-susfs54-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r55_mount_source:
+    name: Recompose pinned R54 and safely port two Xiaomi 5.4 Mount files
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      R55_STAGE: /tmp/veux-r55a
+      R55_SOURCE_SCRIPT: /tmp/veux-r55a/scripts/r55_mount_stage.py
+      R55_R54_PATCH_FOR_TESTS: /tmp/veux-r55a/inputs/R54_AUTHENTIC.patch
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+    - name: Read-only project checkout
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+        fetch-depth: 1
+        path: project
+    - name: Detached verified stock-near 5.4.274 source
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        repository: dereference23/kernel_xiaomi_sm6375
+        ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+        persist-credentials: false
+        fetch-depth: 1
+        path: kernel
+    - name: Restore original R54 patch and two R55 source-auditor scripts
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$R55_STAGE/scripts" "$R55_STAGE/tests" "$R55_STAGE/inputs" "$R55_STAGE/out"
+        cat > "$R55_SOURCE_SCRIPT" <<'PY_R55_PORTER'
+        #!/usr/bin/env python3
+        """VEUX R55A – deterministic source-only SUSFS 5.4 mount/namespace port.
+
+        This is *not* a complete SUSFS port, kernel build, device test or flash release.
+        Fail closed on pinned kernel source, R54 base patch, malformed Git state,
+        missing anchors, and unexpected file scopes. No mutation of owner's project repo.
+        """
+        from __future__ import annotations
+
+        import argparse
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+        import sys
+
+        PIN_SOURCE = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'
+        PIN_R54_PATCH = 'b689f6c15a1a42390ff5a85cb585b64950453740676aa54186303fe2c4bad05e'
+        PREIMAGE = {
+            'include/linux/mount.h': '40714c6040e457678e1a7a3b0274e2bfdbfa2029',
+            'fs/namespace.c': '4b2110e3e20ad01a3aeeb045fca9bb27cf66e61a',
+        }
+        R54_FILES = {
+            'block/ioprio.c', 'fs/Makefile', 'fs/notify/fdinfo.c', 'fs/proc/cmdline.c',
+            'fs/proc/fd.c', 'fs/proc_namespace.c', 'fs/readdir.c', 'fs/statfs.c',
+            'fs/susfs.c', 'include/linux/susfs.h', 'include/linux/susfs_def.h',
+            'kernel/kallsyms.c',
+        }
+        R55_FILES = set(PREIMAGE)
+        OUT_PATCH = 'VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_14_FILES_NOFLASH.patch'
+        OUT_RESULT = 'R55A_RESULT.json'
+
+        class PortError(Exception):
+            pass
+
+
+        def run(*cmd: str, cwd: Path, input: str | None = None) -> str:
+            p = subprocess.run(cmd, cwd=cwd, input=input, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            if p.returncode:
+                raise PortError('COMMAND_FAILED '+repr(cmd)+' '+(p.stderr or p.stdout)[-1200:])
+            return p.stdout
+
+
+        def sha256(data: bytes) -> str:
+            return hashlib.sha256(data).hexdigest()
+
+
+        def gitblob(data: bytes) -> str:
+            return hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+
+
+        def exactly_once(s: str, old: str, new: str, label: str) -> str:
+            count=s.count(old)
+            if count != 1:
+                raise PortError(f'ANCHOR_{label}_EXPECTED_ONCE_FOUND_{count}')
+            return s.replace(old, new, 1)
+
+
+        def port_mount_h(s: str) -> str:
+            s = exactly_once(s,
+                '\tANDROID_KABI_RESERVE(3);\n\tANDROID_KABI_RESERVE(4);\n\tvoid *data;\n',
+                '\tANDROID_KABI_RESERVE(3);\n'
+                '#ifdef CONFIG_KSU_SUSFS\n'
+                '\tANDROID_KABI_USE(4, u64 susfs_mnt_id_backup);\n'
+                '#else\n'
+                '\tANDROID_KABI_RESERVE(4);\n'
+                '#endif\n'
+                '\tvoid *data;\n',
+                'MOUNT_KABI_RESERVED_FOUR')
+            return s
+
+
+        def port_namespace(s: str) -> str:
+            # The pinned Xiaomi source has no FASTUH_KDP branch and uses 5.4 IDA APIs.
+            s = exactly_once(s, '#include <linux/shmem_fs.h>\n',
+                '#include <linux/shmem_fs.h>\n'
+                '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux/jump_label.h>\n#endif\n',
+                'NAMESPACE_SUSFS_INCLUDE')
+            s = exactly_once(s, '#include "pnode.h"\n#include "internal.h"\n',
+                '#include "pnode.h"\n#include "internal.h"\n\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                'extern bool susfs_is_current_ksu_domain(void);\n'
+                'extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n'
+                '/* Reserved R55-only flag; all stock CL_* flags <= 0x40. */\n'
+                '#define CL_COPY_MNT_NS BIT(25)\n'
+                '#endif\n',
+                'NAMESPACE_PRIVATE_COPY_FLAG')
+
+            s = exactly_once(s,
+                'static void mnt_free_id(struct mount *mnt)\n{\n\tida_free(&mnt_id_ida, mnt->mnt_id);\n}\n',
+                'static void mnt_free_id(struct mount *mnt)\n{\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\t/* A borrowed ID remains owned by the original mount. */\n'
+                '\tif (mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT)\n'
+                '\t\treturn;\n'
+                '#endif\n'
+                '\tida_free(&mnt_id_ida, mnt->mnt_id);\n}\n',
+                'BORROWED_ID_FREE_GUARD')
+            s = exactly_once(s,
+                'static int mnt_alloc_group_id(struct mount *mnt)\n{\n'
+                '\tint res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);\n',
+                'static int mnt_alloc_group_id(struct mount *mnt)\n{\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\tint res = ida_alloc_min(&mnt_group_ida,\n'
+                '\t\tsusfs_is_current_ksu_domain() ? DEFAULT_KSU_MNT_GROUP_ID : 1,\n'
+                '\t\tGFP_KERNEL);\n'
+                '#else\n'
+                '\tint res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);\n'
+                '#endif\n',
+                'GROUP_IDA_ALLOCATION')
+
+            # Avoid duplicating vendor alloc_vfsmnt, KABI data and its cleanup logic.
+            helper = '''#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+        /*
+         * Reuse exactly the existing 5.4 allocator and initialization. When borrowing
+         * an ID for a copied namespace, mark ownership *before* clone_mnt() error
+         * paths can invoke mnt_free_id(), otherwise the original ID is freed early.
+         * When allocating a fresh synthetic ID, release the temporary normal ID.
+         */
+        static struct mount *susfs_alloc_ksu_vfsmnt(const char *name,
+                                                     bool borrow_id, int original_id)
+        {
+            struct mount *mnt = alloc_vfsmnt(name);
+            int synthetic_id;
+
+            if (!mnt)
+                return NULL;
+
+            if (borrow_id) {
+                ida_free(&mnt_id_ida, mnt->mnt_id);
+                mnt->mnt_id = original_id;
+                mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+                return mnt;
+            }
+
+            synthetic_id = ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);
+            if (synthetic_id < 0) {
+                mnt_free_id(mnt);
+                free_vfsmnt(mnt);
+                return NULL;
+            }
+            ida_free(&mnt_id_ida, mnt->mnt_id);
+            mnt->mnt_id = synthetic_id;
+            return mnt;
+        }
+        #endif /* CONFIG_KSU_SUSFS_SUS_MOUNT */
+
+        '''
+            s = exactly_once(s,
+                'static void free_vfsmnt(struct mount *mnt)\n{\n'
+                '\tkfree(mnt->mnt.data);\n\tkfree_const(mnt->mnt_devname);\n'
+                '#ifdef CONFIG_SMP\n\tfree_percpu(mnt->mnt_pcp);\n#endif\n'
+                '\tkmem_cache_free(mnt_cache, mnt);\n}\n\n'
+                'static void delayed_free_vfsmnt',
+                'static void free_vfsmnt(struct mount *mnt)\n{\n'
+                '\tkfree(mnt->mnt.data);\n\tkfree_const(mnt->mnt_devname);\n'
+                '#ifdef CONFIG_SMP\n\tfree_percpu(mnt->mnt_pcp);\n#endif\n'
+                '\tkmem_cache_free(mnt_cache, mnt);\n}\n\n'
+                + helper + 'static void delayed_free_vfsmnt',
+                'MOUNT_HELPER_AFTER_FREE')
+
+            s = exactly_once(s,
+                '\tstruct mount *p;\n\n\thlist_for_each_entry_rcu(p, head, mnt_hash)\n'
+                '\t\tif (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)\n',
+                '\tstruct mount *p;\n\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\tif (susfs_is_current_proc_umounted()) {\n'
+                '\t\thlist_for_each_entry_rcu(p, head, mnt_hash)\n'
+                '\t\t\tif (p->mnt_id < DEFAULT_KSU_MNT_ID &&\n'
+                '\t\t\t    &p->mnt_parent->mnt == mnt &&\n'
+                '\t\t\t    p->mnt_mountpoint == dentry)\n'
+                '\t\t\t\treturn p;\n'
+                '\t\treturn NULL;\n'
+                '\t}\n'
+                '#endif\n'
+                '\thlist_for_each_entry_rcu(p, head, mnt_hash)\n'
+                '\t\tif (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)\n',
+                'FILTER_MOUNT_LOOKUP')
+
+            s = exactly_once(s,
+                '\tsb = fc->root->d_sb;\n\n'
+                '\tmnt = alloc_vfsmnt(fc->source ?: "none");\n'
+                '\tif (!mnt)\n',
+                '\tsb = fc->root->d_sb;\n\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\tif (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted) &&\n'
+                '\t    susfs_is_current_ksu_domain())\n'
+                '\t\tmnt = susfs_alloc_ksu_vfsmnt(fc->source ?: "none", false, 0);\n'
+                '\telse\n'
+                '#endif\n'
+                '\t\tmnt = alloc_vfsmnt(fc->source ?: "none");\n'
+                '\tif (!mnt)\n',
+                'CREATE_MOUNT_KSU_ID')
+
+            s = exactly_once(s,
+                '\tstruct mount *mnt;\n\tint err;\n\n'
+                '\tmnt = alloc_vfsmnt(old->mnt_devname);\n'
+                '\tif (!mnt)\n',
+                '\tstruct mount *mnt;\n\tint err;\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\tbool id_borrowed = false;\n\n'
+                '\tif (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted) &&\n'
+                '\t    susfs_is_current_ksu_domain()) {\n'
+                '\t\tid_borrowed = !!(flag & CL_COPY_MNT_NS);\n'
+                '\t\tmnt = susfs_alloc_ksu_vfsmnt(old->mnt_devname,\n'
+                '\t\t\tid_borrowed, old->mnt_id);\n'
+                '\t} else if (old->mnt_id >= DEFAULT_KSU_MNT_ID) {\n'
+                '\t\tmnt = susfs_alloc_ksu_vfsmnt(old->mnt_devname, false, 0);\n'
+                '\t} else {\n'
+                '\t\tmnt = alloc_vfsmnt(old->mnt_devname);\n'
+                '\t}\n'
+                '#else\n\n'
+                '\tmnt = alloc_vfsmnt(old->mnt_devname);\n'
+                '#endif\n'
+                '\tif (!mnt)\n',
+                'CLONE_MOUNT_SAFE_ID')
+
+            s = exactly_once(s,
+                '\tmnt->mnt.mnt_flags = old->mnt.mnt_flags;\n'
+                '\tmnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);\n\n'
+                '\tatomic_inc(&sb->s_active);\n',
+                '\tmnt->mnt.mnt_flags = old->mnt.mnt_flags;\n'
+                '\tmnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\t/* Never inherit the borrowed-ID marker onto an IDA-owned ID. */\n'
+                '\tmnt->mnt.mnt_flags &= ~VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;\n'
+                '\tif (id_borrowed)\n'
+                '\t\tmnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;\n'
+                '#endif\n\n'
+                '\tatomic_inc(&sb->s_active);\n',
+                'CLONE_FLAGS_NO_BORROW_INHERIT')
+
+            s = exactly_once(s,
+                '\tcopy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;\n'
+                '\tif (user_ns != ns->user_ns)\n',
+                '\tcopy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;\n'
+                '#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n'
+                '\tcopy_flags |= CL_COPY_MNT_NS;\n'
+                '#endif\n'
+                '\tif (user_ns != ns->user_ns)\n',
+                'COPY_NAMESPACE_MARKER')
+
+            helpers = '''#ifdef CONFIG_KSU_SUSFS
+        /* Caller keeps orig_mnt live; mount parents are read under mount_lock. */
+        int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt)
+        {
+            struct mount *mnt = orig_mnt;
+            int id;
+
+            if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+                return mnt->mnt_id;
+            lock_mount_hash();
+            while (mnt->mnt_id >= DEFAULT_KSU_MNT_ID && mnt->mnt_parent &&
+                   mnt != mnt->mnt_parent)
+                mnt = mnt->mnt_parent;
+            id = mnt->mnt_id;
+            unlock_mount_hash();
+            return id;
+        }
+
+        /*
+         * Each return carries BOTH a mount and a dentry reference. R54 statfs.c
+         * depends on this exact ownership rule and releases both on all paths.
+         */
+        struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt)
+        {
+            struct mount *mnt = real_mount(vfsmnt);
+
+            lock_mount_hash();
+            while (mnt->mnt_id >= DEFAULT_KSU_MNT_ID && mnt->mnt_parent &&
+                   mnt != mnt->mnt_parent)
+                mnt = mnt->mnt_parent;
+            mntget(&mnt->mnt);
+            dget(mnt->mnt.mnt_root);
+            unlock_mount_hash();
+            return &mnt->mnt;
+        }
+        #endif /* CONFIG_KSU_SUSFS */
+
+        '''
+            s = exactly_once(s,
+                'const struct proc_ns_operations mntns_operations = {\n',
+                helpers + 'const struct proc_ns_operations mntns_operations = {\n',
+                'MOUNT_ID_AND_PATH_HELPERS')
+
+            # Safety invariants - no side effects for CONFIG_KSU_SUSFS=n beyond conditional branches.
+            if 'CONFIG_FASTUH_KDP' in s:
+                raise PortError('UNREVIEWED_FASTUH_KERNEL_SOURCE')
+            if 'BReNE' in s or 'brene' in s:
+                raise PortError('UNEXPECTED_BRENE_TOUCHED')
+            return s
+
+
+        def expected_diff_filenames(diff: str) -> set[str]:
+            found = re.findall(r'^diff --git a/(\S+) b/\1$',diff,re.M)
+            if len(found) != len(set(found)):
+                raise PortError('DUPLICATE_DIFF_HEADER')
+            return set(found)
+
+
+        def check_patch_guard(patch: bytes) -> None:
+            if sha256(patch) != PIN_R54_PATCH:
+                raise PortError('R54_AUTHENTIC_PATCH_SHA_MISMATCH')
+            try:
+                s = patch.decode('utf-8')
+            except UnicodeError as e:
+                raise PortError('R54_PATCH_NOT_UTF8') from e
+            if expected_diff_filenames(s) != R54_FILES:
+                raise PortError('R54_PATCH_SCOPE_CHANGED')
+            if '\nBinary files ' in s or '\nGIT binary patch' in s:
+                raise PortError('BINARY_SOURCE_PATCH_NOT_ALLOWED')
+
+
+        def validate_preimages(source: Path) -> None:
+            for f,sha in PREIMAGE.items():
+                p = source / f
+                if not p.is_file() or p.is_symlink() or gitblob(p.read_bytes()) != sha:
+                    raise PortError('PINNED_SOURCE_GIT_BLOB_MISMATCH:' + f)
+
+
+        def encode_transform(filename: str, content: bytes) -> bytes:
+            if b'\r' in content or not content.endswith(b'\n'):
+                raise PortError('SOURCE_LINE_ENDINGS_CHANGED:'+filename)
+            s = content.decode('utf-8')
+            ported = port_mount_h(s) if filename == 'include/linux/mount.h' else port_namespace(s)
+            if ported == s:
+                raise PortError('SOURCE_UNCHANGED:'+filename)
+            return ported.encode('utf-8')
+
+
+        def main(argv: list[str] | None = None) -> int:
+            p = argparse.ArgumentParser()
+            p.add_argument('--source',type=Path,required=True)
+            p.add_argument('--r54',type=Path,required=True)
+            p.add_argument('--out',type=Path,required=True)
+            args = p.parse_args(argv)
+            source = args.source.resolve()
+            if run('git','rev-parse','HEAD',cwd=source).strip() != PIN_SOURCE:
+                raise PortError('WRONG_5_4_KERNEL_REVISION')
+            if run('git','status','--porcelain','--untracked-files=all',cwd=source).strip():
+                raise PortError('DIRTY_BASE_KERNEL_CHECKOUT')
+            validate_preimages(source)
+            patch = args.r54.resolve().read_bytes()
+            check_patch_guard(patch)
+            run('git','apply','--check','--whitespace=error',str(args.r54.resolve()),cwd=source)
+            run('git','apply','--whitespace=error',str(args.r54.resolve()),cwd=source)
+            observed = set(run('git','diff','--name-only',cwd=source).splitlines())
+            observed |= set(run('git','ls-files','--others','--exclude-standard',cwd=source).splitlines())
+            if observed != R54_FILES:
+                raise PortError('R54_APPLIED_WRONG_FILES')
+
+            final = {}
+            for filename in sorted(R55_FILES):
+                file = source / filename
+                data = file.read_bytes()
+                if gitblob(data) != PREIMAGE[filename]:
+                    raise PortError('PREIMAGE_CHANGED_AFTER_R54:'+filename)
+                replacement = encode_transform(filename, data)
+                file.write_bytes(replacement)
+                final[filename] = {'old_blob':PREIMAGE[filename],
+                                   'new_blob':gitblob(replacement),
+                                   'new_sha256':sha256(replacement)}
+            observed = set(run('git','diff','--name-only',cwd=source).splitlines())
+            observed |= set(run('git','ls-files','--others','--exclude-standard',cwd=source).splitlines())
+            if observed != (R54_FILES | R55_FILES):
+                raise PortError('R55_WRONG_FINAL_SCOPE')
+            run('git','diff','--check',cwd=source)
+            staged_patch = run('git','diff','--binary','--no-ext-diff',cwd=source)
+            # git diff omits untracked files (R54 adds three); emit a *verified* patch
+            # against the original pinned ancestor via git add -N (intent-to-add).
+            for f in ('fs/susfs.c','include/linux/susfs.h','include/linux/susfs_def.h'):
+                run('git','add','-N','--',f,cwd=source)
+            staged_patch = run('git','diff','--binary','--no-ext-diff',cwd=source)
+            if expected_diff_filenames(staged_patch) != R54_FILES | R55_FILES:
+                raise PortError('R55_FINAL_DIFF_HAS_WRONG_FILES')
+            run('git','diff','--check',cwd=source)
+            out = args.out.resolve()
+            out.mkdir(parents=True,exist_ok=True)
+            if any(out.iterdir()):
+                raise PortError('OUT_NOT_EMPTY')
+            patch_data=staged_patch.encode('utf-8')
+            (out / OUT_PATCH).write_bytes(patch_data)
+            report={
+                'schema':'VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_STAGE1_V1',
+                'kernel_source_sha':PIN_SOURCE,
+                'r54_patch_sha256':PIN_R54_PATCH,
+                'stage':'R55A_TWO_ADDITIONAL_FILES',
+                'source_files_total':14,
+                'r54_file_count':12,
+                'r55_files':final,
+                'patch_sha256':sha256(patch_data),
+                'r54_source_patch_replayed':True,
+                'r55_source_port_applied':True,
+                'source_changes_committed':False,
+                'susfs_complete':False,
+                'baka_su_uapi6_integrated':False,
+                'nomount_v22_integrated':False,
+                'r44_walt_recomposed':False,
+                'build_performed':False,
+                'device_tested':False,
+                'boot_ready':False,
+                'flash_allowed':False,
+                'brene_changed':False,
+            }
+            (out / OUT_RESULT).write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+            print('R55A_14_SOURCE_FILES_PATCHED_NO_BUILD_NO_FLASH=PASS; SHA256='+sha256(patch_data))
+            return 0
+
+        if __name__ == '__main__':
+            try:
+                sys.exit(main())
+            except (PortError,OSError,UnicodeError) as exc:
+                print('R55A_STOP='+str(exc),file=sys.stderr)
+                sys.exit(1)
+        PY_R55_PORTER
+        cat > "$R55_STAGE/tests/test_r55_mount_stage.py" <<'PY_R55_TESTS'
+        #!/usr/bin/env python3
+        """R55A source-only, adversarial, IDA-lifetime and end-to-end synthetic tests."""
+        from __future__ import annotations
+        import ast
+        from contextlib import contextmanager
+        import importlib.util
+        import json
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+        import tempfile
+        import unittest
+        from unittest import mock
+
+        FILE = Path(os.environ.get('R55_SOURCE_SCRIPT', str(Path(__file__).with_name('r55_mount_stage.py'))))
+        spec=importlib.util.spec_from_file_location('r55',FILE)
+        r55=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(r55)
+
+
+        def extract_source_anchors(function_name):
+            mod = ast.parse(FILE.read_text())
+            fn=next(n for n in mod.body if isinstance(n,ast.FunctionDef) and n.name==function_name)
+            values=[]
+            for expr in ast.walk(fn):
+                if isinstance(expr,ast.Call) and isinstance(expr.func,ast.Name) and expr.func.id=='exactly_once':
+                    values.append(ast.literal_eval(expr.args[1]))
+            return values
+
+        NS_ANCHORS=extract_source_anchors('port_namespace')
+        MOUNT_ANCHORS=extract_source_anchors('port_mount_h')
+
+
+        def fixture_namespace():
+            # Independently concatenate each pinned-anchor preimage once; no hidden
+            # test-only fallback in the real stage. CI exercises full source directly.
+            return '// pinned Xiaomi source anchor fixture\n\n'+ '\n\n'.join(NS_ANCHORS)
+
+
+        def fixture_mount():
+            return '/* include/linux/mount.h fragment */\n' + ''.join(MOUNT_ANCHORS)
+
+
+        def git(repo, *cmd):
+            p=subprocess.run(['git','-C',str(repo),*cmd],text=True,capture_output=True,check=False)
+            if p.returncode:
+                raise AssertionError('GIT '+repr(cmd)+' '+p.stdout+' '+p.stderr)
+            return p.stdout.strip()
+
+
+        class TestSourcePort(unittest.TestCase):
+            def test_mount_reserved_kabi_slot_4_only(self):
+                old=fixture_mount(); new=r55.port_mount_h(old)
+                self.assertIn('ANDROID_KABI_USE(4, u64 susfs_mnt_id_backup);',new)
+                self.assertIn('#else\n\tANDROID_KABI_RESERVE(4);\n#endif',new)
+                self.assertIn('ANDROID_KABI_RESERVE(3)',new)
+                self.assertNotIn('ANDROID_KABI_USE(3,',new)
+                self.assertEqual(new.replace('#ifdef CONFIG_KSU_SUSFS\n\tANDROID_KABI_USE(4, u64 susfs_mnt_id_backup);\n#else\n\tANDROID_KABI_RESERVE(4);\n#endif','\tANDROID_KABI_RESERVE(4);').replace('\n\t\tANDROID_KABI','\n\tANDROID_KABI'),old)
+
+            def test_namespace_all_pinned_anchors(self):
+                new=r55.port_namespace(fixture_namespace())
+                self.assertGreater(len(new),len(fixture_namespace()))
+                self.assertIn('susfs_get_non_sus_vfsmnt_from_vfsmnt(',new)
+                self.assertIn('susfs_get_non_sus_mnt_id_from_mnt(',new)
+                self.assertIn('#define CL_COPY_MNT_NS BIT(25)',new)
+
+            def test_id_reuse_marked_prior_clone_error_path(self):
+                new=r55.port_namespace(fixture_namespace())
+                self.assertLess(new.index('mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;'),new.index('if (sb->s_op->clone_mnt_data)') if 'if (sb->s_op->clone_mnt_data)' in new else new.index('static void delayed_free_vfsmnt'))
+                self.assertIn('if (mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT)\n\t\treturn;',new)
+                self.assertIn('ida_free(&mnt_id_ida, mnt->mnt_id);\n        mnt->mnt_id = original_id;',new)
+                self.assertIn('mnt_free_id(mnt);\n        free_vfsmnt(mnt);',new)
+
+            def test_normal_clone_clears_unshared_id_flag(self):
+                new=r55.port_namespace(fixture_namespace())
+                tail=new[new.index('/* Never inherit the borrowed-ID marker'):]
+                self.assertLess(tail.index(' &= ~VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT'),tail.index('if (id_borrowed)'))
+                self.assertIn('if (id_borrowed)\n\t\tmnt->mnt.mnt_flags |=',tail)
+
+            def test_group_id_allocator_without_double_allocation(self):
+                new=r55.port_namespace(fixture_namespace())
+                a=new[new.index('static int mnt_alloc_group_id'):new.index('static int mnt_alloc_group_id')+370]
+                self.assertIn('DEFAULT_KSU_MNT_GROUP_ID : 1',a)
+                self.assertNotIn('ida_free(&mnt_group_ida',a)
+                self.assertIn('#else\n\tint res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);',a)
+
+            def test_mount_get_pair_balances_references(self):
+                new=r55.port_namespace(fixture_namespace())
+                fn=new[new.index('struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt('):]
+                self.assertEqual(fn.count('mntget(&mnt->mnt);'),1)
+                self.assertEqual(fn.count('dget(mnt->mnt.mnt_root);'),1)
+                self.assertIn('lock_mount_hash();',fn)
+                self.assertIn('unlock_mount_hash();',fn)
+                self.assertLess(fn.index('dget('),fn.index('unlock_mount_hash();'))
+
+            def test_no_fastuh_or_brene(self):
+                for token in ('CONFIG_FASTUH_KDP','BReNE','brene'):
+                    with self.assertRaises(r55.PortError):r55.port_namespace(fixture_namespace()+'\n// '+token+'\n')
+
+            def test_missing_or_duplicate_mount_anchor_fail_closed(self):
+                with self.assertRaises(r55.PortError):r55.port_mount_h('different\n')
+                with self.assertRaises(r55.PortError):r55.port_mount_h(fixture_mount()+fixture_mount())
+
+            def test_missing_or_duplicate_namespace_anchor_fail_closed(self):
+                with self.assertRaises(r55.PortError):r55.port_namespace(fixture_namespace().replace(NS_ANCHORS[0],'BAD'))
+                with self.assertRaises(r55.PortError):r55.port_namespace(fixture_namespace()+NS_ANCHORS[0])
+
+            def test_blob_hasher(self):
+                self.assertEqual(r55.gitblob(b'hello\n'),'ce013625030ba8dba906f756967f9e9ca394464a')
+
+            def test_r54_original_pinned_digest_and_scope(self):
+                file=Path(os.environ.get('R55_R54_PATCH_FOR_TESTS', '/mnt/data/r55_work/inputs/05_ARBEITSORDNER/r55_review/VEUX_R54_SUSFS54_STAGE2_12_FILES_NOFLASH.patch'))
+                if not file.exists():self.skipTest('Transfer archive not available')
+                patch=file.read_bytes()
+                r55.check_patch_guard(patch)
+                with self.assertRaises(r55.PortError):r55.check_patch_guard(patch+b'altered')
+
+            def test_reject_line_endings(self):
+                with self.assertRaises(r55.PortError):r55.encode_transform('fs/namespace.c',fixture_namespace().replace('\n','\r\n').encode())
+
+            def test_stage_full_git_patch_round_trip_mock_repo(self):
+                with tempfile.TemporaryDirectory(prefix='r55atests-') as t:
+                    root=Path(t);repo=root/'kernel';repo.mkdir()
+                    git(repo,'init','-q');git(repo,'config','user.name','R55 Test');git(repo,'config','user.email','r55@localhost')
+                    for name in sorted(r55.R54_FILES-{ 'fs/susfs.c','include/linux/susfs.h','include/linux/susfs_def.h'}):
+                        p=repo/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('baseline '+name+'\n')
+                    for name,content in [('fs/namespace.c',fixture_namespace()),('include/linux/mount.h',fixture_mount())]:
+                        p=repo/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(content)
+                    git(repo,'add','-A');git(repo,'commit','-qm','Fixture pinned ancestor')
+                    head=git(repo,'rev-parse','HEAD')
+                    # Synthesize the same structural R54 12-file diff; test override pins
+                    # remain strictly confined to this one unittest context.
+                    for name in sorted(r55.R54_FILES):
+                        p=repo/name;p.parent.mkdir(parents=True,exist_ok=True)
+                        if p.exists():p.write_text(p.read_text()+'R54 hook\n')
+                        else:p.write_text('new R54 file\n')
+                    for name in ('fs/susfs.c','include/linux/susfs.h','include/linux/susfs_def.h'):
+                        git(repo,'add','-N','--',name)
+                    patch=git(repo,'diff','--binary','--no-ext-diff')+'\n'
+                    if not patch.startswith('diff --git'):
+                        self.fail('Fake patch invalid')
+                    # git strip trailing blank; test must use exact bytes.
+                    patch=git(repo,'diff','--binary','--no-ext-diff')
+                    # git() strips and drops terminal LF; add it back deliberately.
+                    patch+='\n'
+                    fakepatch=root/'R54.patch';fakepatch.write_text(patch)
+                    git(repo,'reset','--hard','HEAD');git(repo,'clean','-fd')
+                    preimages={n:r55.gitblob((repo/n).read_bytes()) for n in r55.R55_FILES}
+                    output=root/'out'
+                    with mock.patch.object(r55,'PIN_SOURCE',head),mock.patch.object(r55,'PIN_R54_PATCH',r55.sha256(fakepatch.read_bytes())),mock.patch.object(r55,'PREIMAGE',preimages):
+                        rc=r55.main(['--source',str(repo),'--r54',str(fakepatch),'--out',str(output)])
+                    self.assertEqual(rc,0)
+                    report=json.loads((output/r55.OUT_RESULT).read_text())
+                    self.assertEqual(report['source_files_total'],14)
+                    self.assertFalse(report['flash_allowed'])
+                    self.assertFalse(report['build_performed'])
+                    self.assertEqual(len(r55.expected_diff_filenames((output/r55.OUT_PATCH).read_text())),14)
+                    # Reapply full produced patch against the exact clean ancestor.
+                    git(repo,'reset','--hard','HEAD');git(repo,'clean','-fd')
+                    git(repo,'apply','--check',str(output/r55.OUT_PATCH))
+                    git(repo,'apply',str(output/r55.OUT_PATCH))
+                    self.assertIn('susfs_alloc_ksu_vfsmnt(', (repo/'fs/namespace.c').read_text())
+                    self.assertIn('ANDROID_KABI_USE(4,', (repo/'include/linux/mount.h').read_text())
+
+        if __name__=='__main__':unittest.main(verbosity=2)
+        PY_R55_TESTS
+        python3 -B - "$R55_STAGE/inputs/R54_AUTHENTIC.patch" <<'PY_R55_RESTORE'
+        import base64, hashlib, pathlib, sys, zlib
+        parts = [
+            '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'
+            'PX'
+        ]
+        # Bounded decompression, reject expansion and excess trailing compressed bytes.
+        raw=base64.b85decode(''.join(parts))
+        dec=zlib.decompressobj()
+        blob=dec.decompress(raw,200000)
+        if not dec.eof or dec.unused_data or dec.unconsumed_tail or len(blob)!=119194:
+            raise SystemExit('R55A_R54_BASE_DECOMPRESSION_ERROR')
+        if hashlib.sha256(blob).hexdigest()!='b689f6c15a1a42390ff5a85cb585b64950453740676aa54186303fe2c4bad05e':
+            raise SystemExit('R55A_R54_BASE_SHA256_MISMATCH')
+        pathlib.Path(sys.argv[1]).write_bytes(blob)
+        print('R55A_R54_119194_BYTES_RESTORED_SHA256=PASS')
+        PY_R55_RESTORE
+        printf '%s  %s\n' \
+          '7e914b5038e7590d0bec7f3c12f85565f8e663bad0d0f8806472ebb8c24c1b8d' "$R55_SOURCE_SCRIPT" \
+          'cdd82b5e5dcc9ab7d01caa1e09366ccb842b142fa21cecfb5d560fbb7fceb1d3' "$R55_STAGE/tests/test_r55_mount_stage.py" \
+          'b689f6c15a1a42390ff5a85cb585b64950453740676aa54186303fe2c4bad05e' "$R55_STAGE/inputs/R54_AUTHENTIC.patch" | sha256sum -c -
+        python3 -B - "$R55_STAGE" <<'PY_R55_AST'
+        import ast, pathlib, sys
+        p=pathlib.Path(sys.argv[1])
+        for f in ('scripts/r55_mount_stage.py','tests/test_r55_mount_stage.py'):
+            ast.parse((p/f).read_text(encoding='utf-8'),filename=f)
+        print('R55A_PINNED_PYTHON_AST=PASS')
+        PY_R55_AST
+    - name: Strict actionlint and ShellCheck full gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive=project/VEUX_R39_R2_MEMORY_ABI_MAIN.zip
+        test -s "$archive"
+        printf '%s  %s\n' \
+          '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528' "$archive" | sha256sum -c -
+        unzip -p "$archive" tools/actionlint > "$R55_STAGE/actionlint"
+        chmod 0755 "$R55_STAGE/actionlint"
+        "$R55_STAGE/actionlint" -version | grep -Fx '1.7.12'
+        "$R55_STAGE/actionlint" -color=false -shellcheck='' \
+          project/.github/workflows/VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_SOURCE_ONLY.yml \
+          | tee "$R55_STAGE/R55_ACTIONLINT.log"
+        printf 'R55_ACTIONLINT_V1_7_12=PASS\n' >> "$R55_STAGE/R55_ACTIONLINT.log"
+        python3 -B - "$R55_STAGE" <<'PY_R55_YAML_AUDIT'
+        import hashlib, pathlib, subprocess, sys, yaml
+        stage=pathlib.Path(sys.argv[1])
+        w=pathlib.Path('project/.github/workflows/VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_SOURCE_ONLY.yml')
+        class Strict(yaml.SafeLoader): pass
+        def unique(loader,node):
+            out={}
+            for kn,vn in node.value:
+                k=loader.construct_object(kn)
+                if k in out: raise ValueError('DUPLICATE_YAML_KEY:'+str(k))
+                out[k]=loader.construct_object(vn)
+            return out
+        Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,unique)
+        y=yaml.load(w.read_text('utf-8'),Loader=Strict)
+        assert list(y['on'])==['workflow_dispatch']
+        assert y['permissions']=={'contents':'read'}
+        assert set(y['jobs'])=={'r55_mount_source'}
+        j=y['jobs']['r55_mount_source']
+        assert j['runs-on']=='ubuntu-24.04'
+        assert j['if']=="${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}"
+        s=j['steps']
+        assert len(s)==8
+        for idx in (0,1):
+            assert s[idx]['uses']=='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'
+            assert s[idx]['with']['persist-credentials'] is False
+        assert s[1]['with']['repository']=='dereference23/kernel_xiaomi_sm6375'
+        assert s[1]['with']['ref']=='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'
+        assert s[7]['uses']=='actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+        assert s[7]['with']['if-no-files-found']=='error'
+        logs=[]
+        for step in s:
+            if 'run' not in step:continue
+            body=step['run']
+            for cmd in (['bash','-n','-'],['shellcheck','--shell=bash','--severity=warning','-']):
+                result=subprocess.run(cmd,input=body,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                if result.returncode:
+                    raise SystemExit('SHELL_ERROR:'+step['name']+':'+result.stdout+result.stderr)
+            logs.append(step['name']+' bash-n shellcheck PASS '+hashlib.sha256(body.encode()).hexdigest())
+        (stage/'R55_SHELLCHECK.log').write_text('\n'.join(logs)+'\n')
+        print('R55A_DUPLICATE_YAML_KEYS_ALL_RUN_BLOCKS_SHELLCHECK=PASS')
+        PY_R55_YAML_AUDIT
+    - name: Run 13 source and negative scenario regressions
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PYTHONPATH="$R55_STAGE/scripts"
+        python3 -B -W error::ResourceWarning -m unittest discover -s "$R55_STAGE/tests" -p 'test_r55_mount_stage.py' -v 2>&1 \
+            | tee "$R55_STAGE/R55_TESTS.log"
+        grep -F 'Ran 13 tests' "$R55_STAGE/R55_TESTS.log"
+        grep -Fx 'OK' "$R55_STAGE/R55_TESTS.log"
+        if grep -E 'skipped|FAIL|ERROR' "$R55_STAGE/R55_TESTS.log"; then
+          echo 'R55A_TEST_INCOMPLETE_OR_FAILED' >&2
+          exit 1
+        fi
+        printf 'R55A_13_REAL_R54_AND_NEGATIVE_TESTS=PASS\n'
+    - name: Replay R54 original and apply real R55A mount source port
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B "$R55_SOURCE_SCRIPT" \
+          --source kernel --r54 "$R55_R54_PATCH_FOR_TESTS" --out "$R55_STAGE/out" \
+          | tee "$R55_STAGE/R55A_RUN.log"
+        grep -F 'R55A_14_SOURCE_FILES_PATCHED_NO_BUILD_NO_FLASH=PASS' "$R55_STAGE/R55A_RUN.log"
+    - name: Final source scope rollback check, SHA256, no-flash gates
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B - "$R55_STAGE" <<'PY_R55_FINAL'
+        import hashlib,json,pathlib,subprocess,sys
+        root=pathlib.Path(sys.argv[1]);out=root/'out'
+        result=json.loads((out/'R55A_RESULT.json').read_text())
+        if result.get('schema')!='VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_STAGE1_V1':
+            raise SystemExit('R55A_RESULT_SCHEMA_INVALID')
+        if result.get('kernel_source_sha')!='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+            raise SystemExit('R55A_SOURCE_PIN_CHANGED')
+        if result.get('r54_patch_sha256')!='b689f6c15a1a42390ff5a85cb585b64950453740676aa54186303fe2c4bad05e':
+            raise SystemExit('R55A_R54_BASE_PIN_CHANGED')
+        if result.get('source_files_total')!=14 or result.get('r54_file_count')!=12 or set(result['r55_files'])!={'fs/namespace.c','include/linux/mount.h'}:
+            raise SystemExit('R55A_CHANGED_FILE_SCOPE_WRONG')
+        for name in ('source_changes_committed','susfs_complete','baka_su_uapi6_integrated',
+                     'nomount_v22_integrated','r44_walt_recomposed','build_performed',
+                     'device_tested','boot_ready','flash_allowed','brene_changed'):
+            if result.get(name) is not False: raise SystemExit('R55A_UNSAFE_FLAG:'+name)
+        for name in ('r54_source_patch_replayed','r55_source_port_applied'):
+            if result.get(name) is not True: raise SystemExit('R55A_MISSING_SOURCE_PROOF:'+name)
+        pfile=out/'VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_14_FILES_NOFLASH.patch'
+        if hashlib.sha256(pfile.read_bytes()).hexdigest()!=result['patch_sha256']:
+            raise SystemExit('R55A_GENERATED_PATCH_SHA_MISMATCH')
+        for name in ('R55_ACTIONLINT.log','R55_SHELLCHECK.log','R55_TESTS.log','R55A_RUN.log'):
+            b=(root/name).read_bytes()
+            if not b: raise SystemExit('R55A_REQUIRED_QA_LOG_EMPTY:'+name)
+            (out/name).write_bytes(b)
+        (out/'START_HIER_NOFLASH.txt').write_text(
+            'VEUX R55A: 14-Dateien-Quellpatch = R54 12 + Mount/Namespace 2.\n'
+            'NO KERNEL BUILD. NO DEVICE TEST. NO FLASH. BRENE UNCHANGED.\n'
+            'Next: inspect upstream overlap, resolve namei UAF and remaining 8 hooks.\n')
+        allowed={'R55A_RESULT.json',pfile.name,'R55_ACTIONLINT.log','R55_SHELLCHECK.log',
+                 'R55_TESTS.log','R55A_RUN.log','START_HIER_NOFLASH.txt'}
+        found={p.name for p in out.iterdir() if p.is_file()}
+        if found!=allowed: raise SystemExit('R55A_ARTIFACT_WRONG_SCOPE:'+str(found^allowed))
+        for f in out.iterdir():
+            if f.is_symlink() or f.name.lower().endswith(('.ko','.img','.dtb','.dtbo','.bin','.elf')):
+                raise SystemExit('R55A_FLASHABLE_OR_SYMLINK_ARTIFACT_FORBIDDEN')
+        checks=[hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name for p in sorted(out.iterdir())]
+        (out/'SHA256SUMS.txt').write_text('\n'.join(checks)+'\n')
+        print('R55A_STATIC_OUTPUTS_AND_NO_FLASH_GATES=PASS')
+        PY_R55_FINAL
+        (cd "$R55_STAGE/out" && sha256sum -c SHA256SUMS.txt)
+        git -C kernel apply --reverse --check "$R55_STAGE/out/VEUX_R55A_SUSFS54_MOUNT_NAMESPACE_14_FILES_NOFLASH.patch"
+        test -z "$(git -C project status --porcelain --untracked-files=all)"
+        echo 'R55A_R54_PLUS_TWO_KERNEL_SOURCE_FILES=PASS; PROJECT_REPO_UNCHANGED=YES; NO_FLASH=YES'
+    - name: Upload source patch and audit artifacts only
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R55A-SUSFS54-MOUNT-NAMESPACE-14FILES-NOFLASH-${{ github.run_id }}
+        path: /tmp/veux-r55a/out/
+        retention-days: 14
+        compression-level: 6
+        if-no-files-found: error
