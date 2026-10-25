@@ -1,4 +1,4 @@
-name: VEUX R53-R3 SUSFS 5.4 isolated nine-source real patch stage1 - NO BUILD NO FLASH
+name: VEUX R53-R4 SUSFS 5.4 pinned one-tab correction real patch stage1 - NO BUILD NO FLASH
 'on':
   workflow_dispatch: null
 permissions:
@@ -141,6 +141,31 @@ jobs:
             return ans
         
         
+        # Exactly one upstream formatting defect, independently found in the pinned
+        # Midori 5.4 patch. Keep the original full patch hash strictly pinned; only
+        # adjust this one added-line trailing TAB in the emitted stage1 fragment.
+        UPSTREAM_FD_TAB = '+\t\tif (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {\t\n'
+        UPSTREAM_FD_CLEAN = '+\t\tif (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {\n'
+        
+        
+        def normalize_selected_fragment(name: str, origin: str, patch: str) -> tuple[str, int]:
+            """Fail closed except for the single known upstream trailing TAB."""
+            additions = [line for line in patch.splitlines(keepends=True)
+                         if line.startswith('+') and not line.startswith('+++')]
+            malformed = [line for line in additions
+                         if line.rstrip('\r\n').endswith((' ', '\t'))]
+            if (name, origin) == ('fs/proc/fd.c', 'midori'):
+                if malformed != [UPSTREAM_FD_TAB] or patch.count(UPSTREAM_FD_TAB) != 1:
+                    raise GateError('PINNED_FD_WHITESPACE_NOT_EXACT')
+                corrected = patch.replace(UPSTREAM_FD_TAB, UPSTREAM_FD_CLEAN)
+                if corrected == patch or corrected.count(UPSTREAM_FD_CLEAN) != 1:
+                    raise GateError('PINNED_FD_WHITESPACE_CORRECTION_FAILED')
+                return corrected, 1
+            if malformed:
+                raise GateError('UNEXPECTED_UPSTREAM_TRAILING_WHITESPACE:'+name)
+            return patch, 0
+        
+        
         def validate_selection(selection: dict[str, str] = SELECTION) -> None:
             if len(selection) != 9 or set(selection.values()) != {'midori','jack'}:
                 raise GateError('SELECTION_CHANGED')
@@ -190,7 +215,8 @@ jobs:
                 rel = source/name
                 if not rel.is_file() or rel.is_symlink():
                     raise GateError('BASE_FILE_NOT_REGULAR: '+name)
-                old, patch = parsed[origin][name]
+                old, upstream_patch = parsed[origin][name]
+                patch, corrected_trailing_tabs = normalize_selected_fragment(name,origin,upstream_patch)
                 before = run(['git','hash-object',name],source).strip()
                 if not before.startswith(old):
                     raise GateError('BASE_BLOB_MISMATCH: '+name+' base '+before+' expected '+old)
@@ -202,9 +228,14 @@ jobs:
                 if before == after:
                     raise GateError('NO_EFFECT: '+name)
                 ledger.append({'file':name,'origin':origin,'old_git_blob':before,'new_git_blob':after,
-                               'patch_chunk_sha256':sha(patch.encode('utf8'))})
+                               'upstream_patch_chunk_sha256':sha(upstream_patch.encode('utf8')),
+                               'patch_chunk_sha256':sha(patch.encode('utf8')),
+                               'trailing_tabs_corrected':corrected_trailing_tabs})
         
+            # Keep this strict. Never use --whitespace=fix, ignore-space-change or -f.
             run(['git','diff','--check'],source)
+            if sum(x['trailing_tabs_corrected'] for x in ledger) != 1:
+                raise GateError('EXPECTED_EXACTLY_ONE_FD_TAB_CORRECTION')
             changed=set(run(['git','diff','--name-only','--no-renames'],source).splitlines())
             if changed != set(SELECTION) or len(ledger)!=len(SELECTION):
                 raise GateError('UNEXPECTED_DIFF_SCOPE: '+repr(sorted(changed ^ set(SELECTION))))
@@ -219,6 +250,8 @@ jobs:
                 'jack_commit':JACK_PIN,
                 'patched_files':ledger,
                 'patched_file_count':len(ledger),
+                'upstream_trailing_tabs_corrected':1,
+                'upstream_originals_modified':False,
                 'patch_sha256':sha(patch.encode()),
                 'r44_walt_recomposed':False,
                 'susfs_c_and_headers_integrated':False,
@@ -304,7 +337,12 @@ jobs:
                     for n,source in g.SELECTION.items():
                         if source != origin:continue
                         f=clone/n
-                        f.write_text(f.read_text()+f'# SUSFS STAGED ({origin})\n',encoding='utf8')
+                        # Synthetic source fixture reproduces the single *actual*
+                        # Midori upstream trailing-TAB regression in fs/proc/fd.c.
+                        if n=='fs/proc/fd.c' and origin=='midori':
+                            f.write_text(f.read_text()+'\t\tif (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {\t\n',encoding='utf8')
+                        else:
+                            f.write_text(f.read_text()+f'# SUSFS STAGED ({origin})\n',encoding='utf8')
                     self.patch_strings[origin]=subprocess.check_output(['git','diff'],cwd=clone,text=True)
                     init(dest)
                     if origin=='midori': path='kernel_patches/50_add_susfs_in_qgki-android11-5.4.patch'
@@ -410,6 +448,69 @@ jobs:
                 with self.assertRaisesRegex(g.GateError,'SELECTED_PATCH_HUNKS_MISSING'):
                     g.parse_file_diffs(self.realistic_new_file_hunk(),selected=wanted)
         
+            def test_known_upstream_fd_tab_normalized_with_strict_diff_check(self):
+                r=g.stage(self.src,self.midori,self.jack,self.out)
+                fix=[x for x in r['patched_files'] if x['file']=='fs/proc/fd.c']
+                self.assertEqual(len(fix),1)
+                self.assertEqual(fix[0]['trailing_tabs_corrected'],1)
+                self.assertNotEqual(fix[0]['upstream_patch_chunk_sha256'],fix[0]['patch_chunk_sha256'])
+                self.assertEqual(r['upstream_trailing_tabs_corrected'],1)
+                self.assertFalse(r['upstream_originals_modified'])
+                diff=git(self.src,'diff')
+                self.assertIn(g.UPSTREAM_FD_CLEAN.rstrip('\n'),diff)
+                self.assertNotIn(g.UPSTREAM_FD_TAB.rstrip('\n'),diff)
+                self.assertEqual(git(self.src,'diff','--check'),'')
+        
+            def test_other_eight_raw_patch_fragments_byte_for_byte_unchanged(self):
+                r=g.stage(self.src,self.midori,self.jack,self.out)
+                untouched=[x for x in r['patched_files'] if x['file']!='fs/proc/fd.c']
+                self.assertEqual(len(untouched),8)
+                for x in untouched:
+                    self.assertEqual(x['upstream_patch_chunk_sha256'],x['patch_chunk_sha256'])
+                    self.assertEqual(x['trailing_tabs_corrected'],0)
+        
+            def test_fd_wrong_whitespace_rejected_with_pin_updated(self):
+                f=self.midori/'kernel_patches/50_add_susfs_in_qgki-android11-5.4.patch'
+                self.assertEqual(f.read_text().count(g.UPSTREAM_FD_TAB),1)
+                f.write_text(f.read_text().replace(g.UPSTREAM_FD_TAB,
+                                                 g.UPSTREAM_FD_CLEAN[:-1]+'  \n'))
+                git(self.midori,'add','.');git(self.midori,'commit','-qm','wrong-space-form')
+                with patch.object(g,'MIDORI_PATCH_SHA',git(self.src,'hash-object',str(f))), \
+                     patch.object(g,'MIDORI_PIN',git(self.midori,'rev-parse','HEAD')):
+                    with self.assertRaisesRegex(g.GateError,'PINNED_FD_WHITESPACE_NOT_EXACT'):
+                        g.stage(self.src,self.midori,self.jack,self.out)
+        
+            def test_fd_missing_whitespace_rejected_with_pin_updated(self):
+                f=self.midori/'kernel_patches/50_add_susfs_in_qgki-android11-5.4.patch'
+                f.write_text(f.read_text().replace(g.UPSTREAM_FD_TAB,g.UPSTREAM_FD_CLEAN))
+                git(self.midori,'add','.');git(self.midori,'commit','-qm','missing-tab')
+                with patch.object(g,'MIDORI_PATCH_SHA',git(self.src,'hash-object',str(f))), \
+                     patch.object(g,'MIDORI_PIN',git(self.midori,'rev-parse','HEAD')):
+                    with self.assertRaisesRegex(g.GateError,'PINNED_FD_WHITESPACE_NOT_EXACT'):
+                        g.stage(self.src,self.midori,self.jack,self.out)
+        
+            def test_unrelated_trailing_whitespace_rejected(self):
+                f=self.midori/'kernel_patches/50_add_susfs_in_qgki-android11-5.4.patch'
+                original=f.read_text()
+                self.assertIn('+# SUSFS STAGED (midori)\n',original)
+                f.write_text(original.replace('+# SUSFS STAGED (midori)\n',
+                                              '+# SUSFS STAGED (midori)  \n',1))
+                git(self.midori,'add','.');git(self.midori,'commit','-qm','unexpected-whitespace')
+                with patch.object(g,'MIDORI_PATCH_SHA',git(self.src,'hash-object',str(f))), \
+                     patch.object(g,'MIDORI_PIN',git(self.midori,'rev-parse','HEAD')):
+                    with self.assertRaisesRegex(g.GateError,'UNEXPECTED_UPSTREAM_TRAILING_WHITESPACE'):
+                        g.stage(self.src,self.midori,self.jack,self.out)
+        
+            def test_whitespace_fix_exactly_one_line_in_patch_input(self):
+                p=self.patch_strings['midori']
+                entries=g.parse_file_diffs(p,selected={x for x,y in g.SELECTION.items() if y=='midori'})
+                self.assertEqual(sum(len([l for l in z[1].splitlines() if l.startswith('+') and
+                                  not l.startswith('+++') and l.endswith((' ', '\t'))])
+                                  for z in entries.values()),1)
+                fixed,count=g.normalize_selected_fragment('fs/proc/fd.c','midori',entries['fs/proc/fd.c'][1])
+                self.assertEqual(count,1)
+                self.assertEqual(fixed.count(g.UPSTREAM_FD_CLEAN),1)
+        
             def test_actual_diff_disjoint_and_bounded(self):
                 self.assertEqual(set(g.SELECTION.values()),{'midori','jack'})
                 for n in g.SELECTION:self.assertNotIn(n,g.DENIED_FILES)
@@ -482,8 +583,8 @@ jobs:
         if __name__=='__main__':unittest.main()
         PY_R53_TESTS
         printf '%s  %s\n' \
-          1e041c5de2d9a92aea8b22612fe5346200cfbcdf2172b8eadad3a855fd97c153 "$R53_STAGE/scripts/r53_stage1.py" \
-          434b49b03043cebb1f85ffabd6eebcb7378c344187d6fd36c91b331fa88b72a2 "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
+          8b3f9c4616e7df599fa03558b357e40fba973cdef7d5eb2b5373091bab20b029 "$R53_STAGE/scripts/r53_stage1.py" \
+          8fc26102b005424251652a28f23a77708ecfbf133bcf7dcb63e1fe58f522480d "$R53_STAGE/tests/test_r53_stage1.py" | sha256sum -c -
         python3 -B - "$R53_STAGE" <<'PY_R53_CHECK_AST'
         from pathlib import Path
         import ast,sys
@@ -532,7 +633,7 @@ jobs:
         'Checkout pinned JackA1ltman 5.4 source read-only',
         'Materialize exact embedded R53 source stage auditor and adversarial regressions',
         'Actionlint 1.7.12 and ShellCheck every exact Bash block',
-        'Run 21 real git-apply and original-Jack-metadata regressions',
+        'Run 27 real git-apply, relative-path and pinned one-TAB whitespace regressions',
         'Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor',
         'Strict manifest, patch-scope and permanent NO FLASH gate',
         'Upload R53 partial source patch and evidence ONLY']
@@ -548,15 +649,15 @@ jobs:
         (stage/'R53_SHELLCHECK.log').write_text('\n'.join(logs)+'\n')
         print('R53_REAL_YAML_ACTIONLINT_AND_5_OF_5_SHELLCHECK_BASH=PASS')
         PY_R53_VALIDATE_SHELL
-    - name: Run 21 real git-apply and original-Jack-metadata regressions
+    - name: Run 27 real git-apply, relative-path and pinned one-TAB whitespace regressions
       shell: bash
       run: |
         set -euo pipefail
         export PYTHONPATH="$R53_STAGE/scripts"
         python3 -B -W error::ResourceWarning -m unittest discover -s "$R53_STAGE/tests" -p test_r53_stage1.py -v 2>&1 | tee "$R53_STAGE/R53_TESTS.log"
-        grep -F 'Ran 21 tests' "$R53_STAGE/R53_TESTS.log"
+        grep -F 'Ran 27 tests' "$R53_STAGE/R53_TESTS.log"
         grep -Fx 'OK' "$R53_STAGE/R53_TESTS.log"
-        echo 'R53_R3_21_GIT_APPLY_AND_UPSTREAM_METADATA_TESTS=PASS'
+        echo 'R53_R4_27_GIT_APPLY_PINNED_WHITESPACE_TESTS=PASS'
     - name: Apply nine pinned nonoverlapping SUSFS source fragments on the exact 5.4 ancestor
       shell: bash
       run: |
@@ -585,6 +686,14 @@ jobs:
         if actual!=expected:raise SystemExit('R53_OUTPUT_SCOPE_DRIFT:'+str(expected ^ actual))
         if d['schema']!='VEUX_R53_SUSFS_5_4_STAGE1_V1' or d['patched_file_count']!=9:
             raise SystemExit('R53_REAL_PATCH_NOT_VERIFIED')
+        if (d.get('upstream_trailing_tabs_corrected')!=1 or
+                d.get('upstream_originals_modified') is not False or
+                sum(x.get('trailing_tabs_corrected',0) for x in d['patched_files'])!=1 or
+                {x['file'] for x in d['patched_files'] if x.get('trailing_tabs_corrected')}!={'fs/proc/fd.c'}):
+            raise SystemExit('R53_UPSTREAM_WHITESPACE_SCOPE_DRIFT')
+        for f in d['patched_files']:
+            if (f['file']=='fs/proc/fd.c') != (f['upstream_patch_chunk_sha256'] != f['patch_chunk_sha256']):
+                raise SystemExit('R53_NONPINNED_PATCH_FRAGMENT_MUTATION:'+f['file'])
         for key in ('r44_walt_recomposed','susfs_c_and_headers_integrated','baka_su_uapi6_integrated',
                     'nomount_v22_integrated','susfs_5_4_full_port_complete','compile_performed',
                     'device_tested','boot_ready','flash_allowed'):
