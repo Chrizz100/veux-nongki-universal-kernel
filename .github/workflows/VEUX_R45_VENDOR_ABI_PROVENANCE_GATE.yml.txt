@@ -1,0 +1,663 @@
+name: VEUX R45 pinned R44 vendor ABI provenance decision - READ ONLY NO FLASH
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r45-vendor-abi-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r45:
+    name: Pinned R44 exports against genuine R34/R30 module evidence
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R45_ROOT: /tmp/veux-r45
+    steps:
+      - name: Checkout exact repository commit read-only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Authenticate existing evidence and materialize pinned Python auditor and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip'
+          test ! -L 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip'
+          echo '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528  VEUX_R39_R2_MEMORY_ABI_MAIN.zip' | sha256sum -c -
+          mkdir -p "$R45_ROOT/scripts" "$R45_ROOT/tests" "$R45_ROOT/inputs" "$R45_ROOT/out"
+          cat > "$R45_ROOT/scripts/r45_gate.py" <<'PY_R45_ENGINE'
+          #!/usr/bin/env python3
+          """VEUX R45: pinned, read-only source/ABI comparison; never grants boot/flash approval."""
+          from __future__ import annotations
+          import argparse
+          import collections
+          import csv
+          import hashlib
+          import io
+          import json
+          import pathlib
+          import re
+          import stat
+          import zipfile
+          from typing import Any
+
+          REPO = 'Chrizz100/veux-nongki-universal-kernel'
+          R44_RUN = 40168917960
+          R44_SHA = '1e4938c8c9ce33fff743b405ae85de17a204150b'
+          R39_SHA = '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528'
+          R38_SHA = '05302cda83c6ef67e583ea5d881768e11665af0a39efaef62ae0ec5a47999479'
+          R30_SHA = '220492de584dc4a182c586561d2fb8a50e1e3e4305845434dfbdd8cfc3eb2625'
+          R34_SHA = 'b779f0352670aa1d2a3b41204b9a46fa5e597f3005f40c079e9d3a9fce657f0b'
+          R21_SHA = 'bc772c1bdf961a25c0da60aae0352383ef93f9b6106960c2234aef7317fff394'
+          SYMVERS_SHA = '5131e75259d76acd00e08143d76d22d04d1ec86b18b0d70b84fa05b7e1e4049d'
+          R44_BUILD_JSON_SHA = '803ef004f1006ef9bead2a72d2595c80f22bf3dbc5c178d3fbaa54d8214f223b'
+          R44_PROOF_JSON_SHA = '1eed26d16c9903ecd65648185f804c5b27ce19283bcbc00a8e84c3d67823b8de'
+          R43_PATCH_SHA = '4842c703a5ae3594a4850ae6d5d9b22c0f882394e844929d2ff149d948cd74fc'
+          R44_IMAGE_SHA = '76addf164ff8b18c8d492f83de79c97427ecdc1b8780ec08417a61a7d67f2841'
+          R44_VEUX_DTB_SHA = '4b7fa9ac17c325234bc4ba75f65aefa42fdd32647b40e9bd3f616c9d9a6c2a96'
+          R44_OWN_RMNET_SHA = {
+              'rmnet_shs': '3d69e8d5cd33675c3b8e4174c8c8260199eac91ade6f47e45bf966e3c698e516',
+              'rmnet_offload': '0c290be4656ffed3dd0763650d270d79353ab830f73740748b03e21c83ad05cb',
+          }
+          FOCUS = frozenset({
+              '/vendor/lib/modules/5.4-gki/ipam.ko',
+              '/vendor/lib/modules/5.4-gki/msm_drm.ko',
+              '/vendor/lib/modules/5.4-gki/msm_ion_heaps.ko',
+              '/vendor/lib/modules/5.4-gki/msm_kgsl.ko',
+              '/vendor/lib/modules/5.4-gki/platform_dlkm.ko',
+              '/vendor/lib/modules/5.4-gki/rndisipam.ko',
+              '/vendor/lib/modules/platform_dlkm.ko',
+          })
+          OLD_RMNET_SHA = {
+              'rmnet_shs': 'ca7896fb68a50d28b980d00eeb7ebf88ec8ded11264fc9ff79398a379369b179',
+              'rmnet_offload': '044beaeda627969ac33445026670528e704954c50b2c36997748e370be853e6a',
+          }
+          EXPECTED_BUILDIDS = {'rmnet_shs':'52967b0490abea75','rmnet_offload':'3e7d408d3146fb8c'}
+
+          class EvidenceError(ValueError):
+              pass
+
+          def require(condition: bool, message: str) -> None:
+              if not condition:
+                  raise EvidenceError(message)
+
+          def digest(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def pin(data: bytes, expected: str, label: str) -> None:
+              require(digest(data) == expected, 'SHA256_DRIFT:' + label)
+
+          def safe_zip(data: bytes, label: str) -> zipfile.ZipFile:
+              require(len(data) <= 18_000_000, 'ARCHIVE_TOO_LARGE:' + label)
+              try:
+                  z = zipfile.ZipFile(io.BytesIO(data))
+                  members = z.infolist()
+                  names = [m.filename for m in members]
+                  require(0 < len(members) <= 120, 'ZIP_MEMBER_COUNT:' + label)
+                  require(len(names) == len(set(names)), 'DUPLICATE_ZIP_MEMBER:' + label)
+                  for m in members:
+                      p = pathlib.PurePosixPath(m.filename)
+                      require(not m.is_dir() and not p.is_absolute() and '..' not in p.parts and '\\' not in m.filename,
+                              'UNSAFE_ZIP_PATH:' + label)
+                      require(not stat.S_ISLNK(m.external_attr >> 16), 'ZIP_SYMLINK:' + label)
+                      require(m.file_size <= 28_000_000, 'ZIP_MEMBER_TOO_LARGE:' + label)
+                      require(m.compress_size == 0 or m.file_size <= m.compress_size * 1200,
+                              'ZIP_RATIO:' + label)
+                  require(z.testzip() is None, 'ZIP_CRC:' + label)
+                  return z
+              except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+                  raise EvidenceError('ZIP_INVALID:' + label) from e
+
+          def get(z: zipfile.ZipFile, name: str) -> bytes:
+              require(name in z.namelist(), 'MISSING_FILE:' + name)
+              return z.read(name)
+
+          def load_json(data: bytes, name: str) -> dict:
+              try:
+                  obj=json.loads(data)
+              except (ValueError, UnicodeDecodeError) as exc:
+                  raise EvidenceError('BAD_JSON:'+name) from exc
+              require(isinstance(obj,dict),'JSON_NOT_OBJECT:'+name)
+              return obj
+
+          def read_csv(data:bytes, cols:set[str], label:str) -> list[dict[str,str]]:
+              try:
+                  text=data.decode('utf-8-sig')
+              except UnicodeDecodeError as exc:
+                  raise EvidenceError('BAD_CSV_ENCODING:'+label) from exc
+              f=io.StringIO(text)
+              reader=csv.DictReader(f)
+              require(reader.fieldnames is not None and set(reader.fieldnames)==cols,'BAD_CSV_HEADER:'+label)
+              rows=list(reader)
+              require(rows and all(None not in r and None not in r.values() for r in rows),'BAD_CSV_ROW:'+label)
+              return rows
+
+          def symvers_table(data: bytes) -> dict[str,str]:
+              pin(data,SYMVERS_SHA,'R44_PINNED_SYMVERS')
+              rows=data.decode('utf-8').splitlines()
+              require(len(rows)==14260,'SYMVERS_COUNT_DRIFT')
+              result={}
+              for line in rows:
+                  parts=line.split('\t')
+                  require(len(parts)>=4 and re.fullmatch(r'0x[0-9a-fA-F]{8}',parts[0]) is not None,'BAD_SYMVERS_LINE')
+                  name=parts[1]
+                  require(name not in result,'DUPLICATE_SYMVERS_SYMBOL:'+name)
+                  result[name]=parts[0].lower()
+              return result
+
+          def classify(symbol:str,old_crc:str,symbols:dict[str,str]) -> str:
+              require(re.fullmatch(r'0x[0-9a-fA-F]{8}',old_crc) is not None,'BAD_MODULE_CRC')
+              crc=symbols.get(symbol)
+              if crc is None: return 'ABSENT_IN_R20_SYMVERS'
+              if old_crc.lower()==crc: return 'MATCH'
+              return 'CRC_MISMATCH'
+
+          def verify_r44(run_data:dict,build:dict,proof:dict) -> None:
+              require(run_data.get('id')==R44_RUN and run_data.get('head_sha')==R44_SHA and
+                      run_data.get('status')=='completed' and run_data.get('conclusion')=='success' and
+                      run_data.get('head_branch')=='main', 'R44_GITHUB_RUN_IDENTITY_FAILED')
+              require(build.get('status')=='R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH' and
+                      build.get('full_image_proven') is True and build.get('modules_built') is True and
+                      build.get('module_symvers_sha256')==SYMVERS_SHA and
+                      build.get('image',{}).get('sha256')==R44_IMAGE_SHA and
+                      build.get('vendor_abi_proven') is False and build.get('flash_allowed') is False,
+                      'R44_R20_BUILD_IDENTITY_FAILED')
+              mods={x['path'].rsplit('/',1)[-1][:-3]:x['sha256'] for x in build.get('module_files',[]) if x.get('path','').endswith('.ko')}
+              require(len(build.get('module_files',[]))==6 and all(mods.get(n)==sha for n,sha in R44_OWN_RMNET_SHA.items()),
+                      'R44_RMNET_BUILD_HASH_DRIFT')
+              require(proof.get('status')=='R44_PATCHED_FULL_ARM64_BUILD_SUCCESS_NO_FLASH' and
+                      proof.get('r20_full_image_proven') is True and
+                      proof.get('r43_patch_sha256')==R43_PATCH_SHA and
+                      proof.get('veux_built_dtb_sha256')==R44_VEUX_DTB_SHA and
+                      proof.get('kernel_image_sha256')==R44_IMAGE_SHA and
+                      proof.get('vendor_abi_proven') is False and proof.get('flash_allowed') is False,
+                      'R44_GPU_PROOF_INVALID')
+
+          def aggregate(rows:list[dict[str,str]]) -> dict[str,dict]:
+              table={}
+              for r in rows:
+                  path=r['path']; record=table.setdefault(path,{'path':path,'total':0,'match':0,'crc_mismatch':0,'export_absent':0})
+                  record['total']+=1
+                  record[{'MATCH':'match','CRC_MISMATCH':'crc_mismatch','ABSENT_IN_R20_SYMVERS':'export_absent'}[r['status']]]+=1
+              return table
+
+          def audit(r39_data:bytes,r44_diag_data:bytes,r44_proof_data:bytes,github_run:dict) -> tuple[dict,list[dict],list[dict],list[dict]]:
+              pin(r39_data,R39_SHA,'R39_ROOT_ARCHIVE')
+              z39=safe_zip(r39_data,'R39')
+              b38=get(z39,'evidence/VEUX_R38_OVERLAY_VENDOR_ABI_MAIN.zip');pin(b38,R38_SHA,'R38_NESTED_ARCHIVE')
+              b30=get(z39,'evidence/VEUX_R30_ABI_ORIGINALMODULE_NACHWEIS_20261023.zip');pin(b30,R30_SHA,'R30_NESTED_ARCHIVE')
+              z38=safe_zip(b38,'R38');z30=safe_zip(b30,'R30')
+              b34=get(z38,'evidence/R34_DEVICE_EVIDENCE_R2.zip');pin(b34,R34_SHA,'R34_NESTED_DEVICE')
+              zr34=safe_zip(b34,'R34')
+              device=load_json(get(zr34,'R34_DEVICE_EVIDENCE.json'),'R34')
+              require(sorted(device.get('loaded_module_names',[]))==sorted(EXPECTED_BUILDIDS),'R34_LOADED_MODULES_DRIFT')
+              require(device.get('kernel_release')=='5.4.274-qgki-g82179e362f33','R34_KERNEL_RELEASE_DRIFT')
+              symbols=symvers_table(get(z38,'evidence/R20_Module.symvers'))
+              b21=get(z38,'evidence/R21_VENDOR_IMPORTS.csv');pin(b21,R21_SHA,'R21_VENDOR_IMPORTS')
+              vendor=read_csv(b21,{'path','symbol','module_crc','r20_crc','r20_provider','status'},'R21')
+              require(len(vendor)==14648,'R21_IMPORT_COUNT_DRIFT')
+              require(len({r['path'] for r in vendor})==218,'R21_PATH_COUNT_DRIFT')
+              require(len({(r['path'],r['symbol']) for r in vendor})==len(vendor),'DUPLICATE_R21_IMPORT')
+              for r in vendor:
+                  label=classify(r['symbol'],r['module_crc'],symbols)
+                  require(r['status']==label,'R21_CRC_CLASS_DRIFT:'+r['symbol'])
+                  expected_crc=symbols.get(r['symbol'])
+                  if expected_crc is None:
+                      require(r['r20_crc'] in ('','NOT_FOUND','MISSING'), 'R21_ABSENT_CRC_NONEMPTY')
+                  else:
+                      require(expected_crc==r['r20_crc'].lower(),'R21_EXPORT_CRC_DRIFT:'+r['symbol'])
+              totals=collections.Counter(r['status'] for r in vendor)
+              require([totals['MATCH'],totals['CRC_MISMATCH'],totals['ABSENT_IN_R20_SYMVERS']]==[6960,7653,35],
+                      'R21_CLASSIFICATION_TOTAL_DRIFT')
+              groups=aggregate(vendor)
+              chosen=[groups[path] for path in sorted(FOCUS)]
+              require(len(chosen)==7 and all(r['path'] in groups for r in chosen),'R40_FOCUS_PATH_DRIFT')
+              require([sum(r[k] for r in chosen) for k in ('match','crc_mismatch','export_absent','total')]==[1064,1193,7,2264],
+                      'R40_SEVEN_MODULE_TOTAL_DRIFT')
+              z44=safe_zip(r44_diag_data,'R44_DIAG');z44proof=safe_zip(r44_proof_data,'R44_PROOF')
+              build_raw=get(z44,'R20_BUILD_RESULT.json');pin(build_raw,R44_BUILD_JSON_SHA,'R44_BUILD_REPORT')
+              proof_raw=get(z44proof,'R44_FULL_BUILD_RESULT.json');pin(proof_raw,R44_PROOF_JSON_SHA,'R44_PATCH_PROOF')
+              build=load_json(build_raw,'R44_BUILD_REPORT');proof=load_json(proof_raw,'R44_PATCH_PROOF')
+              verify_r44(github_run,build,proof)
+              r30origin=load_json(get(z30,'R30_2EF0_MODULQUELLE_NACHWEIS.json'),'R30_ORIGIN')
+              r30device=load_json(get(z30,'R30_ORIGINAL_GERAETEBEFUND.json'),'R30_DEVICE')
+              r30abi=load_json(get(z30,'R30_ABI_BUILD_ZUSAMMENFASSUNG.json'),'R30_ABI')
+              require(r30origin.get('modules') and r30device.get('loaded_build_ids')==EXPECTED_BUILDIDS and
+                      r30device.get('conclusion',{}).get('actual_loading_path_proven') is False,
+                      'R30_LOADER_PROVENANCE_UNEXPECTED')
+              require(r30abi.get('variants',{}).get('R20_R11',{}).get('module_symvers_sha256')==SYMVERS_SHA,
+                      'R30_SYMVERS_DRIFT')
+              module_crc=read_csv(get(z30,'R30_ORIGINALMODUL_ABI_ALLE_BUILDVARIANTEN.csv'),
+                                  {'module','variant','symbol','module_crc','kernel_export_crc','status'},'R30')
+              subset=[r for r in module_crc if r['variant']=='R20_R11']
+              require(len(subset)==132 and len({(r['module'],r['symbol']) for r in subset})==132,
+                      'R30_RMNET_IMPORT_COUNT_DRIFT')
+              rmnet_rows=[]
+              for r in subset:
+                  require(r['module'] in EXPECTED_BUILDIDS,'R30_UNEXPECTED_LOADED_MODULE')
+                  expected=classify(r['symbol'],r['module_crc'],symbols)
+                  converted={'MATCH':'matching_crc','CRC_MISMATCH':'crc_mismatch','ABSENT_IN_R20_SYMVERS':'missing_export'}[expected]
+                  require(r['status']==converted, 'R30_RMNET_STATUS_DRIFT:'+r['symbol'])
+                  require((r['kernel_export_crc'].lower() if r['kernel_export_crc'] else '')==symbols.get(r['symbol'],''),
+                          'R30_RMNET_EXPORT_DRIFT:'+r['symbol'])
+                  rmnet_rows.append({'module':r['module'],'symbol':r['symbol'],'old_2ef0_crc':r['module_crc'],
+                                    'r44_kernel_crc':symbols.get(r['symbol'],''),'status':expected})
+              loaded_counts={n:collections.Counter(r['status'] for r in rmnet_rows if r['module']==n) for n in EXPECTED_BUILDIDS}
+              require([(loaded_counts[n]['MATCH'],loaded_counts[n]['CRC_MISMATCH'],loaded_counts[n]['ABSENT_IN_R20_SYMVERS'])
+                       for n in ('rmnet_shs','rmnet_offload')]==[(44,55,1),(17,15,0)], 'R30_LOADED_MODULE_CRC_TOTAL_DRIFT')
+              require([r['symbol'] for r in rmnet_rows if r['status']=='ABSENT_IN_R20_SYMVERS']==['preempt_count_add'],
+                      'R30_MISSING_SYMBOL_DRIFT')
+              for n in EXPECTED_BUILDIDS:
+                  m=r30origin['modules'][n]
+                  require(m['build_id']==EXPECTED_BUILDIDS[n] and m['sha256']==OLD_RMNET_SHA[n] and
+                          m['matches_r30_loaded_build_id'] is True,'R30_2EF0_BINARY_DRIFT:'+n)
+                  require(r30device['loaded_build_ids'][n]==m['build_id'],'R30_LOADED_BUILDID_DRIFT:'+n)
+              vendor_rows=[]
+              for p in sorted(groups):
+                  g=dict(groups[p]);g.update(runtime_loaded_module_proven='NO_R34_SNAPSHOT',boot_critical='UNKNOWN',
+                                             abi_r44='MISMATCH_OR_UNKNOWN' if g['crc_mismatch']+g['export_absent'] else 'MATCHED_IMPORTS_ONLY')
+                  vendor_rows.append(g)
+              focus=[next(x for x in vendor_rows if x['path']==path) for path in sorted(FOCUS)]
+              rmnet_summary=[]
+              for n in ('rmnet_shs','rmnet_offload'):
+                  c=loaded_counts[n]
+                  rmnet_summary.append({'name':n,'r34_loaded':True,'r30_runtime_build_id':EXPECTED_BUILDIDS[n],
+                                        '2ef0_ak3_binary_sha256':OLD_RMNET_SHA[n],
+                                        'r44_newly_built_module_sha256':R44_OWN_RMNET_SHA[n],
+                                        '2ef0_imports_match':c['MATCH'], '2ef0_imports_mismatch':c['CRC_MISMATCH'],
+                                        '2ef0_imports_missing':c['ABSENT_IN_R20_SYMVERS'],
+                                        'r44_new_module_build_pass':True,
+                                        'r44_new_module_runtime_proven':False,
+                                        'actual_historical_load_path_proven':False})
+              result={'schema':'VEUX_R45_TARGETED_VENDOR_ABI_V1',
+                      'result':'R44_EXPORT_IDENTITY_PROVEN_OLD_2EF0_RMNET_INCOMPATIBLE_BOOT_BLOCKED',
+                      'source_repo':REPO,'r44_run':R44_RUN,'r44_sha':R44_SHA,
+                      'r44_image_sha256':R44_IMAGE_SHA,'r44_module_symvers_sha256':SYMVERS_SHA,
+                      'r44_module_symvers_exactly_equals_pinned_r20':True,
+                      'r44_walt_gpu_full_build_proven':True,
+                      'r34_loaded_module_names':sorted(EXPECTED_BUILDIDS),
+                      'r34_loaded_count_snapshot':2,
+                      'r30_2ef0_ak3_binary_buildid_matches_loaded':True,
+                      'r30_actual_loader_path_proven':False,
+                      'r44_newly_built_rmnet_module_count':2,
+                      'r44_newly_built_rmnet_runtime_tested':False,
+                      'historical_vendor_modules':len(groups),'historical_vendor_imports':len(vendor),
+                      'historical_vendor_totals':dict(totals),
+                      'focus_historical_files':7,
+                      'focus_import_totals':{'match':1064,'crc_mismatch':1193,'export_absent':7,'total':2264},
+                      'loaded_2ef0_rmnet_totals':{'match':61,'crc_mismatch':70,'export_absent':1,'total':132},
+                      'loaded_old_2ef0_missing_symbols':['preempt_count_add'],
+                      'active_7_vendor_files_proven':False,
+                      'other_modules_boot_critical_proven':False,
+                      'needs_r44_runtime_module_probe':True,
+                      'full_kernel_built_in_r45':False,
+                      'kernel_sources_modified':False,'brene_modified':False,'walt_modified':False,
+                      'vendor_abi_proven':False,'boot_ready':False,'flash_allowed':False,
+                      'next_required_proof':'Actual boot-stage loader and byteidentical module origin, plus R44 integrated modules at runtime; no flash without other gates'}
+              return result,vendor_rows,focus,rmnet_summary,rmnet_rows
+
+          def output_files(out:pathlib.Path, result:dict, vendors:list[dict], focus:list[dict],
+                           rmnet_summary:list[dict], rmnet_rows:list[dict]) -> None:
+              out.mkdir(parents=True,exist_ok=True)
+              def j(name,obj): (out/name).write_text(json.dumps(obj,ensure_ascii=False,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+              def c(name,rows):
+                  require(bool(rows),'EMPTY_CSV:'+name)
+                  with (out/name).open('w',encoding='utf-8',newline='') as f:
+                      w=csv.DictWriter(f,fieldnames=list(rows[0].keys()));w.writeheader();w.writerows(rows)
+              j('R45_RESULT.json',result)
+              j('R45_RMNET_LOADED_HISTORICAL.json',rmnet_summary)
+              c('R45_ALL_218_HISTORICAL_VENDOR.csv',vendors)
+              c('R45_SEVEN_HISTORICAL_FOCUS.csv',focus)
+              c('R45_RMNET_2EF0_IMPORTS.csv',rmnet_rows)
+              report=['VEUX R45 - ZIELGERICHTETE VENDOR-ABI ENTSCHEIDUNG',
+                      'VERIFIZIERT: R44 Run 40168917960, Commit '+R44_SHA,
+                      'R44 Module.symvers SHA256 identisch zur 14.260-Export-Tabelle von R20-R11.',
+                      'Historische R21-Menge: 218 Dateipfade / 14.648 Importe; 6.960 MATCH / 7.653 CRC-DIFF / 35 Exporte nicht vorhanden.',
+                      'R40-Fokus (sieben historische Dateipfade): 2.264 Importe; 1.064 MATCH / 1.193 CRC-DIFF / 7 fehlen.',
+                      'Der R34-Gerätesnapshot hat genau zwei geladene Module: rmnet_shs und rmnet_offload.',
+                      'Sieben historische Fokus-Dateipfade wurden NICHT als geladene Module dieses Snapshots nachgewiesen.',
+                      'Die zwei alten 2EF0-AK3-RMNET-ELFs haben 132 Importe: 61 gleich, 70 anders, 1 fehlt (preempt_count_add).',
+                      'Die alten 2EF0-RMNET-ELFs sind NICHT ABI-kompatibel zu R44 und duerfen nicht blind uebernommen werden.',
+                      'R44 hat ein neues RMNET-Paar in der eigenen Konfiguration gebaut. Dessen Boot-/Runtimefunktion ist NICHT bewiesen.',
+                      'Die R30-AK3-Build-IDs entsprechen den geladenen 2EF0-Modulen; der genaue aktive Ladepfad bleibt unbewiesen.',
+                      'Ein modules.load-Name beweist weder aktuelle Dateiherkunft noch Bootkritikalitaet.',
+                      'Kein blindes CONFIG-/KABI-/Vermagic-/CRC-Fixing. BReNE und funktionierenden Kernel unveraendert lassen.',
+                      'NOCH FEHLEND: echte Boot-Loader-Herkunft, ggf. Live-Bytehash / Zeitpunkt; R44-Test; VINTF/SELinux/SUSFS/BakaSU/NoMount; AK3/Backup/Rollback.',
+                      'Diese Read-only-Auswertung ist KEIN Boot- oder Flash-Gate.',
+                      'BOOT_READY=NO | VENDOR_ABI_UNPROVEN | FLASH_ALLOWED=NO']
+              (out/'R45_BERICHT_DE.txt').write_text('\n'.join(report)+'\n',encoding='utf-8')
+
+
+          def main() -> None:
+              a=argparse.ArgumentParser()
+              a.add_argument('--r39',type=pathlib.Path,required=True)
+              a.add_argument('--r44-diagnostics',type=pathlib.Path,required=True)
+              a.add_argument('--r44-proof',type=pathlib.Path,required=True)
+              a.add_argument('--r44-run',type=pathlib.Path,required=True)
+              a.add_argument('--out',type=pathlib.Path,required=True)
+              args=a.parse_args()
+              result,rows,focus,summary,rmnet=audit(args.r39.read_bytes(),args.r44_diagnostics.read_bytes(),
+                                                   args.r44_proof.read_bytes(),load_json(args.r44_run.read_bytes(),'R44_RUN'))
+              output_files(args.out,result,rows,focus,summary,rmnet)
+              print('R45_HISTORICAL_MODULE_ABI_AUDIT=PASS; R44_EXPORT_IDENTITY=PASS; OLD_2EF0_RMNET_ABI=FAIL; BOOT_READY=NO; FLASH_ALLOWED=NO')
+
+          if __name__=='__main__': main()
+          PY_R45_ENGINE
+          cat > "$R45_ROOT/tests/test_r45_gate.py" <<'PY_R45_TESTS'
+          """VEUX R45 genuine fixtures + adversarial unit tests."""
+          import collections
+          import hashlib
+          import io
+          import json
+          import os
+          import pathlib
+          import stat
+          import sys
+          import unittest
+          import zipfile
+          import warnings
+
+          import r45_gate as g
+
+
+          def mini_zip(names, symlink=False):
+              dst=io.BytesIO()
+              with warnings.catch_warnings():
+                  warnings.simplefilter('ignore', UserWarning)
+                  with zipfile.ZipFile(dst,'w',compression=zipfile.ZIP_DEFLATED) as z:
+                      for name in names:
+                          info=zipfile.ZipInfo(name)
+                          if symlink: info.external_attr=(stat.S_IFLNK | 0o777)<<16
+                          z.writestr(info, 'fixture')
+              return dst.getvalue()
+
+          class R45Regression(unittest.TestCase):
+              @classmethod
+              def setUpClass(cls):
+                  root=pathlib.Path(os.environ['R45_FIXTURES'])
+                  cls.r39=(root/'VEUX_R39_R2_MEMORY_ABI_MAIN.zip').read_bytes()
+                  cls.diag=(root/'VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip').read_bytes()
+                  cls.proof=(root/'VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip').read_bytes()
+                  cls.run_metadata=json.loads((root/'R44_RUN.json').read_text())
+
+              def test_true_r44_and_evidence_aggregate(self):
+                  report,vendor,focus,rmnet,details=g.audit(self.r39,self.diag,self.proof,self.run_metadata)
+                  self.assertEqual(report['historical_vendor_modules'],218)
+                  self.assertEqual(report['historical_vendor_imports'],14648)
+                  self.assertEqual(report['focus_import_totals']['crc_mismatch'],1193)
+                  self.assertEqual(report['loaded_2ef0_rmnet_totals']['crc_mismatch'],70)
+                  self.assertEqual(report['loaded_old_2ef0_missing_symbols'],['preempt_count_add'])
+                  self.assertEqual([x['name'] for x in rmnet],['rmnet_shs','rmnet_offload'])
+                  self.assertEqual(len(vendor),218)
+                  self.assertEqual(len(focus),7)
+                  self.assertEqual(len(details),132)
+                  self.assertIs(report['flash_allowed'],False)
+              def test_genuine_data_second_independent_audit_deterministic(self):
+                  one=g.audit(self.r39,self.diag,self.proof,self.run_metadata)
+                  two=g.audit(self.r39,self.diag,self.proof,self.run_metadata)
+                  self.assertEqual(one,two)
+              def test_r39_shapinned(self):
+                  self.assertEqual(g.digest(self.r39),g.R39_SHA)
+              def test_r44_diagnostics_sha_pinned(self):
+                  with g.safe_zip(self.diag,'R44') as z:
+                      self.assertEqual(g.digest(g.get(z,'R20_BUILD_RESULT.json')),g.R44_BUILD_JSON_SHA)
+              def test_r44_proof_sha_pinned(self):
+                  with g.safe_zip(self.proof,'R44') as z:
+                      self.assertEqual(g.digest(g.get(z,'R44_FULL_BUILD_RESULT.json')),g.R44_PROOF_JSON_SHA)
+              def test_current_r44_report_not_device_flash_pass(self):
+                  with g.safe_zip(self.diag,'R44') as z:
+                      r=g.load_json(g.get(z,'R20_BUILD_RESULT.json'),'R44')
+                      self.assertFalse(r['vendor_abi_proven'])
+                      self.assertFalse(r['runtime_tested'])
+                      self.assertFalse(r['flash_allowed'])
+              def test_zip_path_traversal_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'UNSAFE_ZIP_PATH'):
+                      g.safe_zip(mini_zip(['../abc']),'TEST')
+              def test_zip_symlink_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'ZIP_SYMLINK'):
+                      g.safe_zip(mini_zip(['abc'],symlink=True),'TEST')
+              def test_zip_duplicate_member_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'DUPLICATE_ZIP_MEMBER'):
+                      g.safe_zip(mini_zip(['abc','abc']),'TEST')
+              def test_zip_member_missing_rejected(self):
+                  with g.safe_zip(mini_zip(['file']),'TEST') as z:
+                      with self.assertRaisesRegex(g.EvidenceError,'MISSING_FILE'):
+                          g.get(z,'not-there')
+              def test_zip_not_zip_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'ZIP_INVALID'):
+                      g.safe_zip(b'not a zip','TEST')
+              def test_zip_too_big_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'ARCHIVE_TOO_LARGE'):
+                      g.safe_zip(b'bad' * 7_000_000,'TEST')
+              def test_crc_match(self):
+                  self.assertEqual(g.classify('foo','0x0000000a',{'foo':'0x0000000a'}),'MATCH')
+              def test_crc_mismatch(self):
+                  self.assertEqual(g.classify('foo','0x0000000a',{'foo':'0x0000000b'}),'CRC_MISMATCH')
+              def test_crc_absent(self):
+                  self.assertEqual(g.classify('foo','0x0000000a',{}),'ABSENT_IN_R20_SYMVERS')
+              def test_crc_malformed_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'BAD_MODULE_CRC'):
+                      g.classify('foo','0xABC',{'foo':'0x00000000'})
+              def test_csv_bad_header_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'BAD_CSV_HEADER'):
+                      g.read_csv(b'abc,xyz\n1,2\n',{'abc'},'X')
+              def test_csv_extra_column_rejected(self):
+                  with self.assertRaisesRegex(g.EvidenceError,'BAD_CSV_ROW'):
+                      g.read_csv(b'abc,xyz\n1,2,3\n',{'abc','xyz'},'X')
+              def test_run_wrong_sha_rejected(self):
+                  bad={**self.run_metadata,'head_sha':'0'*40}
+                  with self.assertRaisesRegex(g.EvidenceError,'R44_GITHUB_RUN_IDENTITY_FAILED'):
+                      g.verify_r44(bad,{}, {})
+              def test_run_failure_rejected(self):
+                  bad={**self.run_metadata,'conclusion':'failure'}
+                  with self.assertRaisesRegex(g.EvidenceError,'R44_GITHUB_RUN_IDENTITY_FAILED'):
+                      g.verify_r44(bad,{}, {})
+              def test_run_wrong_branch_rejected(self):
+                  bad={**self.run_metadata,'head_branch':'dev'}
+                  with self.assertRaisesRegex(g.EvidenceError,'R44_GITHUB_RUN_IDENTITY_FAILED'):
+                      g.verify_r44(bad,{}, {})
+              def test_r44_diags_corruption_blocked(self):
+                  with self.assertRaises(g.EvidenceError):
+                      g.audit(self.r39,self.diag[:len(self.diag)//2],self.proof,self.run_metadata)
+              def test_r44_proof_corruption_blocked(self):
+                  with self.assertRaises(g.EvidenceError):
+                      g.audit(self.r39,self.diag,self.proof[:40],self.run_metadata)
+              def test_r39_bitflip_blocked(self):
+                  b=bytearray(self.r39);b[90]^=1
+                  with self.assertRaisesRegex(g.EvidenceError,'SHA256_DRIFT'):
+                      g.audit(bytes(b),self.diag,self.proof,self.run_metadata)
+              def test_old_module_not_claimed_runtime_compatible(self):
+                  result,*_=g.audit(self.r39,self.diag,self.proof,self.run_metadata)
+                  self.assertFalse(result['r44_newly_built_rmnet_runtime_tested'])
+                  self.assertFalse(result['r30_actual_loader_path_proven'])
+                  self.assertFalse(result['active_7_vendor_files_proven'])
+                  self.assertFalse(result['vendor_abi_proven'])
+                  self.assertFalse(result['boot_ready'])
+                  self.assertFalse(result['flash_allowed'])
+              def test_output_reports_no_flash_binaries(self):
+                  result,vendors,focus,rmnet,details=g.audit(self.r39,self.diag,self.proof,self.run_metadata)
+                  import tempfile
+                  with tempfile.TemporaryDirectory() as d:
+                      g.output_files(pathlib.Path(d),result,vendors,focus,rmnet,details)
+                      files=list(pathlib.Path(d).iterdir())
+                      self.assertEqual(len(files),6)
+                      self.assertFalse(any(x.suffix in ('.img','.dtb','.ko','.bin') for x in files))
+                      self.assertIn('BOOT_READY=NO', (pathlib.Path(d)/'R45_BERICHT_DE.txt').read_text())
+
+          if __name__=='__main__': unittest.main()
+          PY_R45_TESTS
+          printf '%s  %s\n' \
+            '287418f8f5e1fc6e8a8b00b7f6e96a76d0207b6ca5a243fe75a243f05171b4ac' "$R45_ROOT/scripts/r45_gate.py" \
+            'b720ef958fb6a60b90c0e1820b38d946dedf4de4311c15f7fffaadc170ff8de5' "$R45_ROOT/tests/test_r45_gate.py" | sha256sum -c -
+          python3 -B - "$R45_ROOT" <<'PY_R45_AST'
+          import ast,pathlib,sys
+          base=pathlib.Path(sys.argv[1])
+          for rel in ['scripts/r45_gate.py','tests/test_r45_gate.py']:
+              ast.parse((base/rel).read_text(encoding='utf-8'), filename=rel)
+          print('R45_PYTHON_SYNTAX=PASS')
+          PY_R45_AST
+
+      - name: Strict actionlint 1.7.12 and independent ShellCheck of every Bash run block
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v shellcheck
+          if ! python3 -c 'import yaml; assert hasattr(yaml,"safe_load")' >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -qq -y python3-yaml
+          fi
+          unzip -p VEUX_R39_R2_MEMORY_ABI_MAIN.zip tools/actionlint > "$R45_ROOT/actionlint"
+          chmod 0755 "$R45_ROOT/actionlint"
+          "$R45_ROOT/actionlint" -version | grep -Fx '1.7.12'
+          "$R45_ROOT/actionlint" -color=false -shellcheck='' \
+            .github/workflows/VEUX_R45_VENDOR_ABI_PROVENANCE_GATE.yml | tee "$R45_ROOT/out/R45_ACTIONLINT.log"
+          python3 -B - "$R45_ROOT" <<'PY_R45_SHELLCHECK'
+          import pathlib,subprocess,sys,yaml
+          stage=pathlib.Path(sys.argv[1]); wf=pathlib.Path('.github/workflows/VEUX_R45_VENDOR_ABI_PROVENANCE_GATE.yml')
+          original=wf.read_text(encoding='utf-8')
+          class Unique(yaml.SafeLoader):pass
+          def mapping(loader,node):
+              result={}
+              for keynode,valnode in node.value:
+                  key=loader.construct_object(keynode,deep=True)
+                  if key in result:raise ValueError('DUPLICATE_YAML_KEY:'+str(key))
+                  result[key]=loader.construct_object(valnode,deep=True)
+              return result
+          Unique.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,mapping)
+          doc=yaml.load(original,Loader=Unique)
+          expected=['Checkout exact repository commit read-only',
+                    'Authenticate existing evidence and materialize pinned Python auditor and tests',
+                    'Strict actionlint 1.7.12 and independent ShellCheck of every Bash run block',
+                    'Verify R44 official run and download two small original GitHub artifacts',
+                    'Run R45 real-fixture and adversarial tests',
+                    'Classify 218 historical vendors and actual 2EF0 runtime RMNET against R44 export table',
+                    'Strict no-flash result guards, README and SHA256',
+                    'Upload R45 historical ABI decision reports only']
+          steps=doc['jobs']['r45']['steps']
+          if [s['name'] for s in steps]!=expected:raise SystemExit('R45_STEPS_NOT_EXACT')
+          blocks=[s['run'] for s in steps if 'run' in s]
+          if len(blocks)!=6:raise SystemExit('R45_RUN_BLOCK_COUNT_DRIFT')
+          logs=[]
+          for i,block in enumerate(blocks,1):
+              file=stage/f'r45-run-{i}.sh';file.write_text(block,encoding='utf-8')
+              for command in (['bash','-n',str(file)],
+                              ['shellcheck','--norc','--shell=bash','--severity=warning',str(file)]):
+                  r=subprocess.run(command,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=40)
+                  logs.append(f'{i}: {command[0]}={r.returncode}\n{r.stdout}')
+                  if r.returncode:raise SystemExit('R45_BASH_SHELLCHECK_FAILED:'+str(i)+'\n'+r.stdout)
+          (stage/'out/R45_INDEPENDENT_SHELLCHECK.log').write_text('\n'.join(logs)+'\n',encoding='utf-8')
+          print('R45_YAML_UNIQUE_KEYS_AND_ACTIONLINT_PASS; R45_BASH_SHELLCHECK_6_OF_6=PASS')
+          PY_R45_SHELLCHECK
+
+      - name: Verify R44 official run and download two small original GitHub artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base='https://api.github.com/repos/Chrizz100/veux-nongki-universal-kernel'
+          test -n "$GH_TOKEN"
+          api_get() {
+            curl --fail --silent --show-error --location --retry 2 --retry-delay 2 \
+              --connect-timeout 12 --max-time 120 \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --output "$2" "$base/$1"
+          }
+          api_get 'actions/runs/40168917960' "$R45_ROOT/inputs/R44_RUN.json"
+          api_get 'actions/artifacts/12588993874' "$R45_ROOT/inputs/R44_DIAGNOSTICS_META.json"
+          api_get 'actions/artifacts/12589103781' "$R45_ROOT/inputs/R44_PROOF_META.json"
+          python3 -B - "$R45_ROOT/inputs" <<'PY_R45_METADATA'
+          import json,pathlib,sys
+          p=pathlib.Path(sys.argv[1]);run=json.loads((p/'R44_RUN.json').read_text())
+          if not (run['id']==40168917960 and run['head_sha']=='1e4938c8c9ce33fff743b405ae85de17a204150b' and
+                  run['status']=='completed' and run['conclusion']=='success' and run['head_branch']=='main'):
+              raise SystemExit('R45_R44_RUN_NOT_PINNED_SUCCESS')
+          for file,aid,name,sha in [('R44_DIAGNOSTICS_META.json',12588993874,'VEUX-R20-REAL-FULL-BUILD-DIAGNOSTICS-40168917960','sha256:8d117d66953ca7cb24546b89680e0ff368ea99e5cb4f2eada7f9c2bdc9ad672f'),
+                                ('R44_PROOF_META.json',12589103781,'VEUX-R44-GPU-WALT-PROOF-40168917960','sha256:82108d1caed1ecc861c38dd96b5a16a151f74d2c5728140624a1007e6401a6a3')]:
+              meta=json.loads((p/file).read_text())
+              origin=meta.get('workflow_run') or {}
+              if (meta.get('id')!=aid or meta.get('name')!=name or meta.get('digest')!=sha or meta.get('expired') is not False or
+                  origin.get('id')!=40168917960 or origin.get('head_sha')!=run['head_sha']):
+                  raise SystemExit('R45_R44_ARTIFACT_PROVENANCE_MISMATCH:'+file)
+          print('R45_R44_SOURCE_RUN_AND_ARTIFACT_METADATA=PASS')
+          PY_R45_METADATA
+          api_get 'actions/artifacts/12588993874/zip' "$R45_ROOT/inputs/VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip"
+          api_get 'actions/artifacts/12589103781/zip' "$R45_ROOT/inputs/VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip"
+          test "$(sha256sum "$R45_ROOT/inputs/VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip" | cut -d' ' -f1)" = '8d117d66953ca7cb24546b89680e0ff368ea99e5cb4f2eada7f9c2bdc9ad672f'
+          test "$(sha256sum "$R45_ROOT/inputs/VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip" | cut -d' ' -f1)" = '82108d1caed1ecc861c38dd96b5a16a151f74d2c5728140624a1007e6401a6a3'
+          echo 'R45_R44_ORIGINAL_BUILD_REPORTS_DOWNLOADED_WITH_ACTIONS_READ=PASS'
+
+      - name: Run R45 real-fixture and adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ln -s "$GITHUB_WORKSPACE/VEUX_R39_R2_MEMORY_ABI_MAIN.zip" "$R45_ROOT/inputs/VEUX_R39_R2_MEMORY_ABI_MAIN.zip"
+          export PYTHONPATH="$R45_ROOT/scripts"
+          export R45_FIXTURES="$R45_ROOT/inputs"
+          python3 -B -W error::ResourceWarning -m unittest discover \
+            -s "$R45_ROOT/tests" -p 'test_r45_gate.py' -v 2>&1 \
+            | tee "$R45_ROOT/out/R45_TESTS.log"
+          grep -F 'Ran 26 tests' "$R45_ROOT/out/R45_TESTS.log"
+          grep -Fx 'OK' "$R45_ROOT/out/R45_TESTS.log"
+          echo 'R45_26_INDEPENDENT_REGRESSIONS=PASS'
+
+      - name: Classify 218 historical vendors and actual 2EF0 runtime RMNET against R44 export table
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$R45_ROOT/scripts/r45_gate.py" \
+            --r39 'VEUX_R39_R2_MEMORY_ABI_MAIN.zip' \
+            --r44-diagnostics "$R45_ROOT/inputs/VEUX_R44_R2_FULL_BUILD_DIAGNOSTICS_40168917960.zip" \
+            --r44-proof "$R45_ROOT/inputs/VEUX_R44_R2_GPU_WALT_PROOF_40168917960.zip" \
+            --r44-run "$R45_ROOT/inputs/R44_RUN.json" \
+            --out "$R45_ROOT/out"
+          cat "$R45_ROOT/out/R45_BERICHT_DE.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Strict no-flash result guards, README and SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - "$R45_ROOT/out" <<'PY_R45_FINAL'
+          import hashlib,json,pathlib,sys
+          d=pathlib.Path(sys.argv[1]);r=json.loads((d/'R45_RESULT.json').read_text(encoding='utf-8'))
+          expected={'R45_ACTIONLINT.log','R45_INDEPENDENT_SHELLCHECK.log','R45_TESTS.log','R45_RESULT.json',
+                    'R45_RMNET_LOADED_HISTORICAL.json','R45_ALL_218_HISTORICAL_VENDOR.csv',
+                    'R45_SEVEN_HISTORICAL_FOCUS.csv','R45_RMNET_2EF0_IMPORTS.csv','R45_BERICHT_DE.txt'}
+          present={f.name for f in d.iterdir() if f.is_file()}
+          if present!=expected:raise SystemExit('R45_ARTIFACT_SET_MISMATCH:'+str(present^expected))
+          if (r.get('schema')!='VEUX_R45_TARGETED_VENDOR_ABI_V1' or
+              r.get('r44_module_symvers_exactly_equals_pinned_r20') is not True or
+              r.get('loaded_2ef0_rmnet_totals')!={'match':61,'crc_mismatch':70,'export_absent':1,'total':132} or
+              r.get('historical_vendor_modules')!=218 or r.get('focus_historical_files')!=7):
+              raise SystemExit('R45_ABI_EVIDENCE_MISMATCH')
+          for key in ('vendor_abi_proven','boot_ready','flash_allowed','r44_newly_built_rmnet_runtime_tested',
+                      'r30_actual_loader_path_proven','active_7_vendor_files_proven',
+                      'kernel_sources_modified','brene_modified','walt_modified','full_kernel_built_in_r45'):
+              if r.get(key) is not False:raise SystemExit('R45_UNSAFE_SUCCESS_FLAG:'+key)
+          lines=[]
+          for file in sorted(d.iterdir()):
+              if file.is_file():
+                  if file.suffix in ('.ko','.dtb','.dtbo','.img','.elf') or file.name in ('Image','vmlinux'):
+                      raise SystemExit('R45_FLASHABLE_OUTPUT_FORBIDDEN')
+                  lines.append(hashlib.sha256(file.read_bytes()).hexdigest()+'  '+file.name)
+          (d/'SHA256SUMS.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print('R45_PINNED_VENDOR_ABI_DIAGNOSIS=PASS; OLD_2EF0_MODULE_ABI=FAIL; BOOT_READY=NO; FLASH_ALLOWED=NO')
+          PY_R45_FINAL
+          (cd "$R45_ROOT/out" && sha256sum -c SHA256SUMS.txt)
+          test -z "$(git status --porcelain)"
+          echo 'R45_REPOSITORY_UNCHANGED=YES; NO_KERNEL_BUILT; NO_FLASH'
+
+      - name: Upload R45 historical ABI decision reports only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R45-VENDOR-ABI-READONLY-${{ github.run_id }}
+          path: /tmp/veux-r45/out/
+          if-no-files-found: error
+          retention-days: 14
