@@ -1,4 +1,4 @@
-name: VEUX R55A SUSFS 5.4 Mount + Namespace source gate - NO BUILD NO FLASH
+name: VEUX R55A-R2 SUSFS 5.4 Mount + Namespace source gate - NO BUILD NO FLASH
 'on':
   workflow_dispatch: null
 permissions:
@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   r55_mount_source:
-    name: Recompose pinned R54 and safely port two Xiaomi 5.4 Mount files
+    name: R55A-R2 recompose pinned R54 and safely port two Xiaomi 5.4 Mount files
     if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -929,9 +929,17 @@ jobs:
         assert set(y['jobs'])=={'r55_mount_source'}
         j=y['jobs']['r55_mount_source']
         assert j['runs-on']=='ubuntu-24.04'
-        assert j['if']=="${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}"
+        # GitHub Actions interpolates Expressions even INSIDE a quoted Python heredoc.
+        # Build the literal expected guard without spelling the interpolation opener
+        # as a contiguous token in the workflow's run block.
+        expected_if = '$' + '{' + '{ ' + "github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main'" + ' }' + '}'
+        assert j['if']==expected_if, 'R55A_R2_REPOSITORY_BRANCH_GUARD_CHANGED'
         s=j['steps']
         assert len(s)==8
+        # Prevent future nested run-block GitHub expression interpolation bugs.
+        for ss in s:
+            if 'run' in ss and ('$'+'{{') in ss['run']:
+                raise SystemExit('R55A_R2_UNESCAPED_GITHUB_EXPRESSION_IN_RUN_BLOCK:'+ss['name'])
         for idx in (0,1):
             assert s[idx]['uses']=='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'
             assert s[idx]['with']['persist-credentials'] is False
