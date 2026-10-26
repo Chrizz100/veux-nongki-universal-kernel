@@ -1,4 +1,4 @@
-name: VEUX R55B4 SUSFS 5.4 regular open preflight source gate - NO BUILD NO FLASH
+name: VEUX R55B4-R2 SUSFS 5.4 regular open replay correction - NO BUILD NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -315,12 +315,17 @@ jobs:
         \ \"$(git -C kernel hash-object fs/namei.c)\" = '7c74159e29355e209b1cf4749aae23110f21a098'\npython3 -B \"$R55_STAGE/scripts/r55b4_regular_open.py\"\
         \ \\\n  --source kernel --base \"$R55_STAGE/inputs/R55B3_AUTHENTIC_15FILES.patch\" \\\n  --out \"$R55_STAGE/out\"\
         \ 2>&1 | tee \"$R55_STAGE/R55B4_REAL_SOURCE.log\"\n(cd \"$R55_STAGE/out\" && sha256sum -c SHA256SUMS.txt)\n"
-    - name: Independent clean 15-file source patch Git replay
+    - name: Independent clean 15-file Git replay with new-file intent-to-add
       run: "set -euo pipefail\ntest \"$(git -C kernel rev-parse HEAD)\" = 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'\ngit\
         \ -C kernel worktree add --detach \"$R55_STAGE/replay\" 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632'\ngit -C \"$R55_STAGE/replay\"\
         \ apply --check --whitespace=error \"$R55_STAGE/out/VEUX_R55B4_15_FILES_NORMAL_OPEN_PREFLIGHT_NOFLASH.patch\"\ngit\
         \ -C \"$R55_STAGE/replay\" apply --whitespace=error \"$R55_STAGE/out/VEUX_R55B4_15_FILES_NORMAL_OPEN_PREFLIGHT_NOFLASH.patch\"\
-        \ngit -C \"$R55_STAGE/replay\" diff --check\npython3 -B - <<'PY_R55B4_REAL_REPLAY'\nimport pathlib,hashlib,json,subprocess\n\
+        \n# R55B4-R2: Git does not report newly added, untracked files in git diff.\n# Fail closed unless precisely the 3\
+        \ authentic SUSFS new files are untracked.\ngit -C \"$R55_STAGE/replay\" ls-files --others --exclude-standard | LC_ALL=C\
+        \ sort > \"$R55_STAGE/R55B4_R2_UNTRACKED.txt\"\nprintf '%s\\n' fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h\
+        \ | LC_ALL=C sort | diff -u - \"$R55_STAGE/R55B4_R2_UNTRACKED.txt\"\n# Intent-to-add makes the new files visible to\
+        \ git diff WITHOUT staging content.\ngit -C \"$R55_STAGE/replay\" add -N -- fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h\n\
+        git -C \"$R55_STAGE/replay\" diff --check\npython3 -B - <<'PY_R55B4_REAL_REPLAY'\nimport pathlib,hashlib,json,subprocess\n\
         s=pathlib.Path('/tmp/veux-r55b4')\nk=pathlib.Path('kernel');r=s/'replay';out=s/'out'\nfiles=set([\n 'block/ioprio.c','fs/Makefile','fs/namei.c','fs/namespace.c',\n\
         \ 'fs/notify/fdinfo.c','fs/proc/cmdline.c','fs/proc/fd.c','fs/proc_namespace.c',\n 'fs/readdir.c','fs/statfs.c','fs/susfs.c','include/linux/mount.h',\n\
         \ 'include/linux/susfs.h','include/linux/susfs_def.h','kernel/kallsyms.c'])\nproc=subprocess.run(['git','-C',str(r),'diff','--name-only'],text=True,capture_output=True,check=True)\n\
@@ -342,7 +347,7 @@ jobs:
     - name: Upload SOURCE ONLY patch and audit artefacts
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: VEUX-R55B4-REGULAR-OPEN-15FILES-NOFLASH-${{ github.run_id }}
+        name: VEUX-R55B4-R2-REGULAR-OPEN-15FILES-NOFLASH-${{ github.run_id }}
         path: /tmp/veux-r55b4/out/
         retention-days: 14
         if-no-files-found: error
