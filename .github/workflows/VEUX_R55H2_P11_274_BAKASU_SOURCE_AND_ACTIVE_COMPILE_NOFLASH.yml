@@ -1,10 +1,10 @@
-name: VEUX R55H2 pinned BakaSU official inline source and conditional real 5.4.274 full compile - NO FLASH
+name: VEUX R55H2-R2 reconstructed 274 source HEAD fix plus pinned BakaSU inline activation - NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: veux-r55h2-bakasu-274-${{ github.ref }}
+  group: veux-r55h2-r2-bakasu-274-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   r55h2_bakasu:
@@ -1151,6 +1151,37 @@ jobs:
            5W/4o+kzSrXq0kgjfMZUBRMKl4kzyUwxnaANppBHs6cETXNYICAqhWIURC3ZxvUW4ABVe8Z3zldRNu7wMyi7+JwKUFvmsUDFb0iX
            QcMgaYQPlhnCWrKYGaSV4DukHRC2iVgM6CZIbF8naYDRATze3GNu9tRnKP8Fs0V4ZgoXAAA=
           """),
+          'scripts/h2_reconstructed_source_gate.py': ('81b978b8b263716031b0e5069983505b499cc15888110374c96cea5e33ceff83',"""
+           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
+          """),
           'tests/test_h2_bakasu.py': ('d8f7f3815bc0ffd510a78b399382e59c78b37351b852e4765fabdc2d8179378c',"""
            H4sIAAAAAAAC/81ae1PbSBL/359ijqR2pCDLmEcecK46B5vggtgpbLZ2i7BTsjTCE2RJ0UiAi+O7X/eMZFt+ELILt5uqgDSP7p5f
            9/RLvPpXLZNJbSjCGg9vSDxJR1G4U9nY2Gh6NzyRTiKcgMgoS1xOnNAjw0wEXtWNwjRx3JQk/CrhUooolMSPEnK2t3e8bZNuRK55
@@ -1195,6 +1226,31 @@ jobs:
            41D5stsoUfHm5dKqFeddDnLPmhocNrutTqs5AFvNw2L7t05/0KfPoJcZnnt5jxN7Qvk3JNX5FOGsSfyy8VN95J/7I5GDx77f511n
            7O7O91V9x8W/bpr2novaDS8tOBkR4t+BpUWsAnOrrLq6OH1BV5GllxcU5Zjg9a0InzD16YOxRoMyNgZLZYzuT79j4QCYxf8AUL2U
            toEoAAA=
+          """),
+          'tests/test_h2_reconstructed_head_r2.py': ('9f41d86420492f9aeb4100c8d1947a4f22a51b349d855832d3e3454ac4e97f35',"""
+           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
           """),
         }
         for name,(digest,packed) in assets.items():
@@ -1253,7 +1309,7 @@ jobs:
         \            p=pathlib.PurePosixPath(i.filename)\n            if p.is_absolute() or '..' in p.parts or '\\\\' in i.filename or stat.S_IFMT(i.external_attr>>16)==stat.S_IFLNK:\n\
         \                raise SystemExit('P11_NESTED_UNSAFE_ARCHIVE_MEMBER')\n        zi.extractall(out_folder)\nfor p in tools.rglob('*.py'):compile(p.read_bytes(),str(p),'exec')\n\
         print('R55H1_P11_AUTHENTIC_SOURCE_TOOLS=PASS')\nPY_H1_EXTRACT\n"
-    - name: Original P11 and H1 regressions plus 35 H2 BakaSU contract tests
+    - name: Original P11 and H1 regressions plus 49 H2 R2 BakaSU and rebuilt-HEAD tests
       shell: bash
       run: |
         set -euo pipefail
@@ -1273,7 +1329,10 @@ jobs:
         python3 -B -m unittest discover -v -s "$R55_STAGE/tests" -p 'test_h2_bakasu.py' 2>&1 | tee "$R55_STAGE/out/R55H2_35_BAKASU_NEGATIVE_GIT_TESTS.log"
         grep -Eq '^Ran 35 tests in [0-9.]+s$' "$R55_STAGE/out/R55H2_35_BAKASU_NEGATIVE_GIT_TESTS.log"
         grep -Fx 'OK' "$R55_STAGE/out/R55H2_35_BAKASU_NEGATIVE_GIT_TESTS.log"
-        echo 'R55H2_OFFICIAL_BAKASU_35_REAL_SYNTHETIC_GIT_TESTS=PASS'
+        python3 -B -m unittest discover -v -s "$R55_STAGE/tests" -p 'test_h2_reconstructed_head_r2.py' 2>&1 | tee "$R55_STAGE/out/R55H2_R2_14_SOURCE_HEAD_REGRESSIONS.log"
+        grep -Eq '^Ran 14 tests in [0-9.]+s$' "$R55_STAGE/out/R55H2_R2_14_SOURCE_HEAD_REGRESSIONS.log"
+        grep -Fx 'OK' "$R55_STAGE/out/R55H2_R2_14_SOURCE_HEAD_REGRESSIONS.log"
+        echo 'R55H2_R2_49_BAKASU_AND_REAL_SOURCE_HEAD_TESTS=PASS'
     - name: Reproduce exact stock-near 5.4.274 P3 source
       shell: bash
       run: 'set -euo pipefail
@@ -1321,13 +1380,17 @@ jobs:
         path: BakaSU
         fetch-depth: 0
         persist-credentials: false
-    - name: Bind BakaSU on real 274 copy; inventory seven genuine inline hooks
+    - name: R55H2 R2 verify reconstructed HEAD; inventory seven genuine BakaSU hooks
       shell: bash
       run: |
         set -euo pipefail
         printf '%s\n' '=== R55H2 pinned BakaSU real 5.4.274 source probe ==='
         test "$(git -C BakaSU rev-parse HEAD)" = 'd5e9e025b8b49155f8014684d64c91742b465f65'
-        test "$(git -C kernel rev-parse HEAD)" = "$SOURCE_BASE_SHA"
+        # P11 reconstructs a real 5.4.274 commit. The original SOURCE_BASE_SHA
+        # references the historic 5.4.268 checkout, not this reconstructed HEAD.
+        python3 -B "$R55_STAGE/scripts/h2_reconstructed_source_gate.py" \
+          --source kernel --compat "$R55_STAGE/out/R55H1_COMPATIBILITY.json" \
+          --out "$R55_STAGE/out/R55H2_R2_RECONSTRUCTED_SOURCE_IDENTITY.json"
         python3 -B "$R55_STAGE/scripts/h2_bakasu_probe.py" \
           --source kernel --bakasu BakaSU \
           --patch "$R55_STAGE/inputs/R55G1_AUTHENTIC_21FILES.patch" \
@@ -1407,11 +1470,13 @@ jobs:
         out=pathlib.Path('/tmp/veux-r55h1/out');out.mkdir(parents=True,exist_ok=True)
         read=lambda n:json.loads((out/n).read_text()) if (out/n).exists() else None
         bridge=read('R55H1_COMPATIBILITY.json')
+        identity=read('R55H2_R2_RECONSTRUCTED_SOURCE_IDENTITY.json')
         probe=read('R55H2_BAKASU_PROVIDER_PROBE.json')
         baseline=read('H1_P11_BASELINE_REPORT.json')
         compile=read('R55H2_ACTIVE_BAKASU_BUILD.json')
         active=bool(compile and compile.get('active_bakasu_susfs_image_proven') is True)
         if active: status='ACTIVE_BAKASU_SUSFS_COMPILE_PASS_NOFLASH'
+        elif identity and identity.get('status')!='RECONSTRUCTED_274_SOURCE_IDENTITY_PASS':status='BLOCKED_RECONSTRUCTED_SOURCE_IDENTITY'
         elif probe and probe.get('missing_hook_count',0):status='BLOCKED_MISSING_OFFICIAL_BAKASU_KERNEL_HOOKS'
         elif probe and probe.get('status')!='READY_FOR_BAKASU_INLINE_ACTIVE_COMPILE':status='BLOCKED_BAKASU_SOURCE_GATE'
         elif compile:status='BLOCKED_ACTIVE_COMPILER_OR_CONFIG'
@@ -1421,6 +1486,8 @@ jobs:
          'status':status,'github_workflow_success_is_not_kernel_activation':True,
          'bakasu_source_commit':'d5e9e025b8b49155f8014684d64c91742b465f65',
          'source_reconstruction':bridge['status'] if bridge else 'NOT_STARTED',
+         'source_identity_gate':identity['status'] if identity else 'NOT_STARTED',
+         'source_identity_failure_reason':identity.get('reason') if identity else None,
          'bakasu_source_gate':probe['status'] if probe else 'NOT_STARTED',
          'bakasu_missing_hook_count':probe.get('missing_hook_count') if probe else None,
          'baseline_compile':baseline['status'] if baseline else 'NOT_STARTED',
@@ -1454,7 +1521,7 @@ jobs:
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: ${{ always() }}
       with:
-        name: VEUX-R55H2-BAKASU-PINNED-SOURCE-AND-ACTIVE-COMPILE-NOFLASH-${{ github.run_id }}
+        name: VEUX-R55H2-R2-BAKASU-HEAD-GATE-ACTIVE-DIAGNOSTIC-NOFLASH-${{ github.run_id }}
         path: /tmp/veux-r55h1/out/
         if-no-files-found: error
         retention-days: 14
