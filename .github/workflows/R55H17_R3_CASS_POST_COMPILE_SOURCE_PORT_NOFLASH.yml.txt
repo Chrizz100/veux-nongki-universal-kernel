@@ -1,0 +1,881 @@
+name: VEUX R55H17-R3 CASS genuine post-compile source-port BakaSU35252 NoMount22 - NO FLASH
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_build:
+        description: 'Rebuild real BakaSU Git history+35234; no flash or release promotion'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r55h17-r3-cass-compiled-source-port-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  R5S2_MAIN_ZIP: VEUX_R5S2_BAKASU522_MAIN.zip
+  R5S2_MAIN_SHA256: '37a85d967df5cd9fa4dd3302e2073bc3b9ce461a6e03cd0ef51914fa5f5358b8'
+  BAKASU_522: 522081c5b1c58587c4c743242eecf445ccebed5d
+  VERSION_MAIN_ZIP: VEUX_R5S2_GENUINE_BAKASU35234_MAIN.zip
+  VERSION_MAIN_SHA256: 'd3c0b0da02af4355d1cc0b77b14320c0e8a32fd15995dee7bfbe9acd263e2457'
+  BAKASU_SYNC: f308ed0936bdd31163cb53da3f42bc7a698f5512
+
+jobs:
+  r5s2_bakasu_522:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: R55H17 R3 CASS 1to1 kernel plus in-worker genuine BakaSU35252 NoMount22 source port NO FLASH
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+    - name: Checkout exact git commit, no stored credentials
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Verify exact repository and immutable R5S2 Main ZIP
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        test -f "$GITHUB_WORKSPACE/$R5S2_MAIN_ZIP"
+        printf '%s  %s\n' "$R5S2_MAIN_SHA256" "$GITHUB_WORKSPACE/$R5S2_MAIN_ZIP" | sha256sum --check --status
+        test -f "$GITHUB_WORKSPACE/$VERSION_MAIN_ZIP"
+        printf '%s  %s\n' "$VERSION_MAIN_SHA256" "$GITHUB_WORKSPACE/$VERSION_MAIN_ZIP" | sha256sum --check --status
+        echo 'R5S2_AND_TRUE_VERSION_ARCHIVE_HASHES=PASS' 
+
+    - name: R55H17-R2 GitHub runner ShellCheck presence and immutable checkout gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v shellcheck
+        shellcheck --version
+        # GitHub's Bash runner performs shellcheck and actionlint on this immutable YAML.
+        # Never treat a green preflight as kernel/device boot approval.
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        echo 'R55H17_R2_REMOTE_SHELLCHECK=AVAILABLE; SOURCE_ONLY; NO_FLASH'
+    - name: Verify R5S2 YAML using pinned actionlint and runner ShellCheck
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+        curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+          https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+          --output "$archive"
+        printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+        mkdir -p "$RUNNER_TEMP/veux-r5s2-actionlint"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/veux-r5s2-actionlint" actionlint
+        command -v shellcheck
+        "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" -oneline \
+          .github/workflows/VEUX_R5S2_GENUINE_BAKASU35234_BUILD.yml
+        "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" -oneline .github/workflows/R55H17_R3_CASS_POST_COMPILE_SOURCE_PORT_NOFLASH.yml
+        echo 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'
+
+    - name: Authenticate R5S2 archive and full original R5S1 nested CI chain
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+        import hashlib,json,os,stat,zipfile
+        f=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['R5S2_MAIN_ZIP']
+        if hashlib.sha256(f.read_bytes()).hexdigest()!=os.environ['R5S2_MAIN_SHA256']:
+            raise SystemExit('R5S2_ROOT_ARCHIVE_CHANGED')
+        with zipfile.ZipFile(f) as z:
+            if z.testzip() is not None:raise SystemExit('R5S2_ARCHIVE_CRC_ERROR')
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            p='common/scripts/veux_r5s2_unpack.py'
+            raw=z.read(p)
+            if m.get('schema')!=1 or m.get('flash_approved') is not False or hashlib.sha256(raw).hexdigest()!=m['files'][p]:
+                raise SystemExit('R5S2_BOOTSTRAP_UNVERIFIED')
+        output=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-bootstrap-authenticated.py'
+        if output.exists():raise SystemExit('BOOTSTRAP_COLLISION')
+        output.write_bytes(raw)
+        PY
+        python3 "$RUNNER_TEMP/veux-r5s2-bootstrap-authenticated.py" \
+          --main "$GITHUB_WORKSPACE/$R5S2_MAIN_ZIP" \
+          --out "$RUNNER_TEMP/veux-r5s2-overlay"
+        {
+          printf 'R5S2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay"
+          printf 'R5S1_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1"
+          printf 'R5_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r5"
+          printf 'R4_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r4"
+          printf 'NM211_R2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r2"
+          printf 'R5S1_REFERENCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/common/sync/VEUX_SYNC_F308_D726_R5_HOOK.c"
+          printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/R4_COMPILED_REFERENCE_SELINUX.c"
+          printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c"
+          printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/R4_COMPILED_REFERENCE_SELINUX.c"
+          printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/D726_ORIGINAL_REFERENCE_SELINUX.c"
+        } >> "$GITHUB_ENV"
+        echo 'R5S2_FULL_ARCHIVE_CHAIN=PASS'
+
+
+    - name: Authenticate isolated BakaSU version module and full R5S2 source chain
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+        import hashlib,json,os,stat,zipfile
+        archive=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['VERSION_MAIN_ZIP']
+        if hashlib.sha256(archive.read_bytes()).hexdigest()!=os.environ['VERSION_MAIN_SHA256']:
+            raise SystemExit('GENUINE_VERSION_ARCHIVE_SHA256_MISMATCH')
+        dst=Path(os.environ['RUNNER_TEMP'])/'veux-real-version-overlay'
+        if dst.exists():raise SystemExit('VERSION_OVERLAY_ALREADY_EXISTS')
+        with zipfile.ZipFile(archive) as z:
+            if z.testzip() is not None:raise SystemExit('VERSION_OVERLAY_CRC_FAILED')
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            if (m.get('schema')!=1 or m.get('flash_approved') is not False
+                or m.get('expected_real_version')!=35234):
+                raise SystemExit('VERSION_MANIFEST_UNTRUSTED')
+            expected=set(m['files'])|{'MANIFEST_SHA256.json'}
+            if set(z.namelist())!=expected:raise SystemExit('VERSION_OVERLAY_FILES_CHANGED')
+            for item in z.infolist():
+                name=item.filename
+                p=Path(name)
+                if (p.is_absolute() or '..' in p.parts or (len(p.parts)<2 and name!='MANIFEST_SHA256.json')
+                    or (item.external_attr>>16)&0o170000==0o120000):
+                    raise SystemExit('UNSAFE_VERSION_OVERLAY_PATH')
+                data=z.read(name)
+                if name!='MANIFEST_SHA256.json' and hashlib.sha256(data).hexdigest()!=m['files'][name]:
+                    raise SystemExit('VERSION_OVERLAY_FILE_SHA_FAILED:'+name)
+            dst.mkdir(parents=True)
+            for item in z.infolist():
+                target=dst/item.filename
+                target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_bytes(z.read(item.filename))
+        print('VEUX_TRUE_VERSION_HASH_PINNED_BOOTSTRAP=PASS')
+        PY
+        printf 'VERSION_OVERLAY=%s\n' "$RUNNER_TEMP/veux-real-version-overlay" >> "$GITHUB_ENV"
+        echo 'R5S2_REAL_VERSION_SOURCE_OVERLAY=PASS'
+
+    - name: Run R1-R5S1 regression tests and all new R5S2 negative tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_preflight_r1.py -v
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_build_r2.py -v
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_susfs_selinux54_r3.py -v
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_veux_r6_susfs_selinux54_build_r4.py -v
+        python3 -m unittest discover -s "$R5_OVERLAY/Tests" -p test_veux_r5_susfs_selinux.py -v
+        python3 -m unittest discover -s "$R5S1_OVERLAY/Tests" -p test_veux_sync_susfs_r1.py -v
+        python3 -m unittest discover -s "$R5S2_OVERLAY/Tests" -p test_veux_r5s2_522.py -v
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts:$PYTHONPATH"
+        python3 -m unittest discover -s "$VERSION_OVERLAY/Tests" -p test_veux_r5s2_true_version.py -v
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'R5S2_HISTORICAL_AND_REAL_GIT_VERSION_TESTS=PASS' 
+
+    - name: Install unchanged pinned R6 build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          bc binutils bison build-essential ca-certificates curl dwarves file flex \
+          git jq libelf-dev libncurses-dev libssl-dev perl python3 \
+          python3-venv python3-yaml rsync unzip zip xz-utils zstd
+        python3 -m venv "$RUNNER_TEMP/veux-r5s2-venv"
+        "$RUNNER_TEMP/veux-r5s2-venv/bin/python" -m pip install \
+          --disable-pip-version-check --retries 2 --timeout 30 \
+          ruamel.yaml==0.19.1 PyYAML==6.0.3
+        printf 'R5S2_PY=%s\n' "$RUNNER_TEMP/veux-r5s2-venv/bin/python" >> "$GITHUB_ENV"
+
+    - name: R55H17-R3 actual ShellCheck of all four changed Bash stages before compilation
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v shellcheck
+        mkdir -p "$RUNNER_TEMP/r55h17-r3-shellcheck"
+        python3 - ".github/workflows/R55H17_R3_CASS_POST_COMPILE_SOURCE_PORT_NOFLASH.yml" "$RUNNER_TEMP/r55h17-r3-shellcheck" <<'PY_R55H17_SC'
+        import sys
+        from pathlib import Path
+        import yaml
+        p=Path(sys.argv[1]); d=Path(sys.argv[2]); doc=yaml.safe_load(p.read_text())
+        steps=doc['jobs']['r5s2_bakasu_522']['steps']
+        prefixes=('R55H17-R2 pin and verify', 'R55H17-R3 pin source-port',
+                  'Compile authentic R5S2 CASS', 'R55H17-R3 verify source-port')
+        for i,prefix in enumerate(prefixes):
+            chosen=[s for s in steps if s['name'].startswith(prefix)]
+            if len(chosen)!=1 or chosen[0].get('shell')!='bash':
+                raise SystemExit('SHELLCHECK_STEP_DRIFT '+prefix)
+            (d / (str(i)+'-step.sh')).write_text(chosen[0]['run'])
+        print('R55H17_R3_SHELLCHECK_EXTRACTED=4')
+        PY_R55H17_SC
+        for f in "$RUNNER_TEMP"/r55h17-r3-shellcheck/*-step.sh; do
+          test -s "$f"
+          shellcheck --shell=bash --severity=error "$f"
+        done
+        echo 'R55H17_R3_SHELLCHECK_ALL_CHANGED_BASH_STAGES=PASS; NO_FLASH'
+    - name: Fetch only exact official BakaSU 522 commit and its parent
+      shell: bash
+      run: |
+        set -euo pipefail
+        donor="$RUNNER_TEMP/veux-r5s2-official-522-git"
+        test ! -e "$donor"
+        mkdir -p "$donor"
+        git -C "$donor" init --quiet
+        git -C "$donor" remote add origin https://github.com/Baka-SU/BakaSU.git
+        git -C "$donor" fetch --quiet --no-tags --depth=2 --filter=blob:none origin "$BAKASU_522"
+        git -C "$donor" sparse-checkout init --cone
+        git -C "$donor" sparse-checkout set kernel
+        git -C "$donor" checkout --quiet --detach FETCH_HEAD
+        test "$(git -C "$donor" rev-parse HEAD)" = "$BAKASU_522"
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$R5S2_OVERLAY/common/scripts/veux_bakasu_522_r5s2.py" donor --donor "$donor"
+        printf 'BAKASU522_DONOR=%s\n' "$donor" >> "$GITHUB_ENV"
+        echo 'R5S2_OFFICIAL_PARENT_TARGET_AND_20_GIT_BLOBS=PASS'
+
+
+    - name: Verify genuine official sync-susfs Git history before source versioning
+      shell: bash
+      run: |
+        set -euo pipefail
+        history="$RUNNER_TEMP/veux-real-bakasu-history"
+        test ! -e "$history"
+        # The historical sync-susfs branch was deleted upstream. Preserve the
+        # original commit, full ancestry, and version formula without fallback.
+        git init --quiet "$history"
+        git -C "$history" remote add origin https://github.com/Baka-SU/BakaSU.git
+        # Fetch the exact historical commit AND its original official tag.
+        # The branch no longer exists; never create a synthetic tag or version.
+        git -C "$history" fetch --quiet --no-tags origin "$BAKASU_SYNC" \
+          'refs/tags/v4.2.0-rc3:refs/tags/v4.2.0-rc3'
+        git -C "$history" checkout --quiet --detach "$BAKASU_SYNC"
+        test "$(git -C "$history" rev-parse HEAD)" = "$BAKASU_SYNC"
+        test "$(git -C "$history" rev-parse 'refs/tags/v4.2.0-rc3^{commit}')" = 239e1e8871b8fcd51a6e5b3002e0ba522fdd99fb
+        git -C "$history" merge-base --is-ancestor refs/tags/v4.2.0-rc3 HEAD
+        test "$(git -C "$history" describe --abbrev=0 --tags)" = v4.2.0-rc3
+        test "$(git -C "$history" rev-parse 'HEAD^{tree}')" = ac3682909827ba7d3f382e10cfeec9bdd71ae78d
+        test "$(git -C "$history" rev-parse 'HEAD^')" = ebd6382e405b33c67e53f1ea29fdf443b8a533d5
+        test ! -f "$history/.git/shallow"
+        test "$(git -C "$history" rev-list --count HEAD)" = 4533
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$VERSION_OVERLAY/common/scripts/veux_r5s2_true_version.py" donor --sync "$history"
+        printf 'SYNC_DONOR=%s\n' "$history" >> "$GITHUB_ENV"
+        echo 'GENUINE_OFFICIAL_BAKASU_GIT_HISTORY_35233=PASS'
+
+    - name: Prepare proven R5S1 donor source with pinned NoMount 2.1.1
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$R5S2_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+          prepare --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
+
+    - name: Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$R5S2_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+          preflight --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py" audit \
+          --d726 "$R5S1_OVERLAY/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c" \
+          --reference "$R5S1_REFERENCE"
+        echo 'R5S2_GREEN_R5S1_SOURCE_AND_SUSFS_PIN=PASS'
+
+    - name: R55H17-R2 pin and verify official BakaSU 35252 and NoMount 2.1.1/v22 source
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        fetch_exact() {
+          local url="$1" sha="$2" dest="$3"
+          test ! -e "$dest"
+          git clone --quiet "$url" "$dest"
+          git -C "$dest" checkout --quiet --detach "$sha"
+          test "$(git -C "$dest" rev-parse HEAD)" = "$sha"
+          test -z "$(git -C "$dest" status --porcelain --untracked-files=all)"
+        }
+        fetch_exact https://github.com/Baka-SU/BakaSU.git d5e9e025b8b49155f8014684d64c91742b465f65 "$RUNNER_TEMP/BakaSU35252"
+        fetch_exact https://github.com/maxsteeel/nomount.git bf1847f98fed382369c43bfd652cd93774b9b8e3 "$RUNNER_TEMP/NoMount22"
+        fetch_exact https://github.com/maxsteeel/nomount.git 7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3 "$RUNNER_TEMP/NoMountR5S2"
+        echo 'R55H17_R2_PINNED_OFFICIAL_SOURCES=PASS; NO_FLASH'
+    - name: R55H17-R3 pin source-port hook and worker bridge BEFORE baseline CASS compile - NO FLASH
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/veux-r55h17-r2-evidence"
+        cat > "$RUNNER_TEMP/veux-r55h17-r2-port.py" <<'PY_R55H17_PORT'
+        #!/usr/bin/env python3
+        """VEUX R55H17-R2: fail-closed BakaSU 35252 / NoMount v22 source-port attempt.
+
+        Original R5S2 build tree is NEVER modified.  The actual BakaSU 35252 Git source
+        and the authentic 5.4 VEUX customization are combined using Git
+        cherry-pick --no-commit; if Git reports conflicts, the outcome is BLOCKED and no kernel is built.
+        A successful source merge is NOT evidence of kernel compilation or safe boot.
+        """
+        from __future__ import annotations
+        import argparse
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import shutil
+        import subprocess
+        import sys
+
+        R5S2_CONFIG = '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'
+        R5S2_SYMVERS = '6b660c141f99cbe5d45c4e84bfb83498553a5b5e68e273c26afa17b1fdeaf0ec'
+        R5S2_RELEASE = '5.4.274-qgki-g82179e362f33'
+        R5S2_BAKASU_BASE = 'f308ed0936bdd31163cb53da3f42bc7a698f5512'
+        BAKASU35252 = 'd5e9e025b8b49155f8014684d64c91742b465f65'
+        NOMOUNT_OLD = '7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3'
+        NOMOUNT_V22 = 'bf1847f98fed382369c43bfd652cd93774b9b8e3'
+        PINS = {'r5s2_cass_config_sha256':R5S2_CONFIG,'r5s2_module_symvers_sha256':R5S2_SYMVERS,
+                'kernel_release':R5S2_RELEASE,'bakasu_original_upstream':R5S2_BAKASU_BASE,
+                'bakasu_target_commit':BAKASU35252,'nomount_old_commit':NOMOUNT_OLD,
+                'nomount_target_commit':NOMOUNT_V22,'susfs_version':'2.3.0','walt':False,
+                'flash_allowed':False}
+
+        class PortBlocked(RuntimeError): pass
+
+        def need(condition:bool,why:str):
+            if not condition: raise PortBlocked(why)
+
+        def sha_file(path:Path):
+            h=hashlib.sha256()
+            with path.open('rb') as f:
+                for chunk in iter(lambda:f.read(1024*1024),b''):h.update(chunk)
+            return h.hexdigest()
+
+        def run(*args,cwd=None,ok=True,input_bytes=None):
+            p=subprocess.run(args,cwd=cwd,input=input_bytes,capture_output=True,timeout=180)
+            if ok and p.returncode:
+                raise PortBlocked('CMD_FAIL='+repr(args[:4])+' '+p.stderr.decode(errors='replace')[-1000:])
+            return p
+
+        def g(path:Path,*args,ok=True,input_bytes=None):
+            return run('git','-C',str(path),*args,ok=ok,input_bytes=input_bytes)
+
+        def out(p):return p.stdout.decode('utf8',errors='replace').strip()
+
+        def tree_hash(root:Path):
+            h=hashlib.sha256()
+            for rel in ('Makefile','fs/Kconfig','fs/Makefile','kernel/sched/fair.c'):
+                p=root/rel;need(p.is_file(),'MISSING_KERNEL_FILE_'+rel)
+                h.update(rel.encode()+b'\0'+sha_file(p).encode()+b'\n')
+            return h.hexdigest()
+
+        def audit_kernel(kernel:Path):
+            need(kernel.name=='kernel' and kernel.parent.name=='source-work' and
+                 kernel.parent.parent.name=='5.4.274' and (kernel/'Makefile').is_file(),
+                 'NOT_EXACT_R5S2_COMPILED_SOURCE_LAYOUT')
+            build=kernel.parent.parent/'build'
+            cfg=build/'.config'; sym=build/'Module.symvers'; release=build/'include/config/kernel.release'
+            for p in (cfg,sym,release):need(p.is_file() and not p.is_symlink(),'MISSING_R5S2_BUILD_PROOF_'+p.name)
+            need(sha_file(cfg)==R5S2_CONFIG,'R5S2_CASS_CONFIG_HASH_CHANGED')
+            need(sha_file(sym)==R5S2_SYMVERS,'R5S2_MODULE_ABI_HASH_CHANGED')
+            need(release.read_text().strip()==R5S2_RELEASE,'R5S2_RELEASE_CHANGED')
+            b=cfg.read_text()
+            for token in ('CONFIG_SCHED_CASS=y','CONFIG_NR_CPUS=8','CONFIG_MODULES=y','CONFIG_MODVERSIONS=y'):
+                need(token in b,'R5S2_CONFIG_GATE_'+token)
+            need('CONFIG_SCHED_WALT=y' not in b,'WALT_MUST_REMAIN_DISABLED')
+            need((kernel/'drivers/kernelsu').is_symlink(),'NO_ORIGINAL_KSU_LINK')
+            old=kernel/'KernelSU';need(old.is_dir() and (old/'.git').is_dir(),'NO_GENUINE_R5S2_KSU_GIT')
+            need((kernel/'drivers/kernelsu').resolve()==(old/'kernel').resolve(), 'R5S2_KSU_LINK_CHANGED')
+            return {'config_sha256':sha_file(cfg),'symvers_sha256':sha_file(sym),
+                    'release':release.read_text().strip(),'kernel_guard_sha256':tree_hash(kernel),
+                    'original_kernel_source_path':str(kernel)}
+
+        def validate_provider(path:Path,head:str):
+            need((path/'.git').exists(),'SOURCE_PROVIDER_NOT_GIT_'+path.name)
+            need(out(g(path,'rev-parse','HEAD'))==head,'PIN_MISMATCH_'+path.name)
+            need(not out(g(path,'status','--porcelain','--untracked-files=all')),
+                 'DIRTY_OFFICIAL_PROVIDER_'+path.name)
+
+        def copy_donor(donor:Path,to:Path):
+            need(not to.exists() and not to.is_symlink(),'CANDIDATE_EXISTS')
+            shutil.copytree(donor,to,symlinks=True)
+            need(out(g(to,'rev-parse','HEAD'))==BAKASU35252,'COPIED_UPSTREAM_HEAD_CHANGED')
+            return to
+
+        def path_list(raw:bytes):
+            return sorted({p.strip() for p in raw.decode(errors='replace').splitlines() if p.strip()})
+
+        def port_bakasu(legacy:Path,donor:Path,dst:Path,root:Path):
+            need((legacy/'.git').is_dir(),'LEGACY_R5S2_GIT_NOT_FOUND')
+            need(out(g(legacy,'rev-parse','HEAD^'))==R5S2_BAKASU_BASE,'LEGACY_R5S2_HISTORY_CHANGED')
+            need(out(g(legacy,'rev-list','--count','HEAD'))=='4534','LEGACY_R5S2_HISTORY_COUNT_CHANGED')
+            old_sha=out(g(legacy,'rev-parse','HEAD'))
+            need(not out(g(legacy,'status','--porcelain','--untracked-files=all')),'LEGACY_DIRTY')
+            preimage=path_list(g(legacy,'diff','--name-only',R5S2_BAKASU_BASE,'HEAD','--','kernel','uapi').stdout)
+            need('kernel/feature/selinux_hide.c' in preimage and 'kernel/Kbuild' in preimage,
+                 'MISSING_R5S2_REVIEWED_VEUX_DELTA')
+            need(all(x.startswith(('kernel/','uapi/')) for x in preimage),'LEGACY_OUT_OF_SCOPE')
+            patch=g(legacy,'diff','--binary',R5S2_BAKASU_BASE,'HEAD','--','kernel','uapi').stdout
+            need(len(patch)>100,'INVALID_ORIGINAL_VEUX_PATCH')
+            (root/'R5S2_ORIGINAL_VEUX_CUSTOMIZATION.patch').write_bytes(patch)
+            need(out(g(legacy,'rev-parse','HEAD'))==old_sha,'LEGACY_GIT_CHANGED')
+            candidate=copy_donor(donor,dst)
+            # Obtain exactly the old upstream commit, including its original blob base,
+            # for Git's genuine 3-way merging. Never use patch(1) fuzz or --reject.
+            fetch=g(candidate,'fetch','--quiet','--no-tags','origin',R5S2_BAKASU_BASE,ok=False)
+            need(fetch.returncode==0,'OLD_UPSTREAM_PREIMAGE_NOT_FETCHABLE:'+fetch.stderr.decode(errors='replace')[-400:])
+            need(out(g(candidate,'rev-parse','FETCH_HEAD'))==R5S2_BAKASU_BASE,'OLD_UPSTREAM_FETCH_MOVED')
+            theirs=path_list(g(candidate,'diff','--name-only',R5S2_BAKASU_BASE,BAKASU35252,'--','kernel','uapi').stdout)
+            overlaps=sorted(set(preimage)&set(theirs))
+            (root/'BAKASU_SCOPE.json').write_text(json.dumps({
+                'legacy_veux_commit':old_sha,'legacy_veux_patch_sha256':hashlib.sha256(patch).hexdigest(),
+                'legacy_modified_paths':preimage,'official_updated_paths':theirs,
+                'overlap_paths_requiring_three_way_merge':overlaps,
+                'upstream_old':R5S2_BAKASU_BASE,'upstream_new':BAKASU35252,
+                'official_changes_must_not_be_dropped':True},indent=2,sort_keys=True)+'\n')
+            # Cherry-pick the ONE actual VEUX integration commit. This is Git's native
+            # 3-way operation against its original parent, not a textual fuzzy patch.
+            local_fetch=g(candidate,'fetch','--quiet','--no-tags',str(legacy),old_sha,ok=False)
+            need(local_fetch.returncode==0 and out(g(candidate,'rev-parse','FETCH_HEAD'))==old_sha,
+                 'VEUX_ORIGINAL_COMMIT_NOT_IMPORTED')
+            applied=g(candidate,'cherry-pick','--no-commit',old_sha,ok=False)
+            (root/'BAKASU_THREEWAY_STDOUT.txt').write_bytes(applied.stdout)
+            (root/'BAKASU_THREEWAY_STDERR.txt').write_bytes(applied.stderr)
+            need(applied.returncode==0,'BAKASU_35252_THREEWAY_CONFLICT_NO_CODE_REPLACED')
+            need(out(g(candidate,'diff','--cached','--name-only'))!='','NO_REAL_BAKASU_PATCH_APPLIED')
+            staged=path_list(g(candidate,'diff','--cached','--name-only').stdout)
+            need(all(x.startswith(('kernel/','uapi/')) for x in staged),'CANDIDATE_UNREVIEWED_PATH')
+            if 'kernel/Kbuild' in staged:
+                k=(candidate/'kernel/Kbuild').read_text(errors='replace')
+                need('KSU_VERSION' in k,'NEW_BAKASU_DYNAMIC_VERSION_GONE')
+            g(candidate,'-c','user.name=VEUX CI Source Audit','-c','user.email=veux-ci@users.noreply.github.com',
+              'commit','--quiet','-m','veux: preserve R5S2 CASS adaptations on BakaSU 35252')
+            new_sha=out(g(candidate,'rev-parse','HEAD'))
+            need(out(g(candidate,'rev-parse','HEAD^'))==BAKASU35252,'NEW_BAKASU_NOT_REAL_PARENT')
+            result_patch=g(candidate,'diff','--binary',BAKASU35252,'HEAD','--','kernel','uapi').stdout
+            (root/'R55H17_R2_CANDIDATE_VEUX_DELTA.patch').write_bytes(result_patch)
+            need(not out(g(candidate,'status','--porcelain','--untracked-files=all')),'DIRTY_MERGED_CANDIDATE')
+            return {'status':'BAKASU_THREEWAY_SOURCE_STAGE_PASS','official_commit':BAKASU35252,
+                    'real_local_port_commit':new_sha,'official_commit_is_parent':True,
+                    'old_customization_changes':len(preimage),'upstream_update_paths':len(theirs),
+                    'overlap_paths':len(overlaps),'merged_paths':len(staged),
+                    'new_compiler_test':'NOT_RUN','release_validated':False}
+
+        def audit_nomount(old:Path,new:Path,root:Path):
+            validate_provider(old,NOMOUNT_OLD);validate_provider(new,NOMOUNT_V22)
+            paths=('kernel/src/nomount.c','kernel/src/nomount.h','kernel/src/Kconfig','kernel/src/Makefile')
+            for p in paths:
+                need((old/p).is_file() and (new/p).is_file(), 'NOMOUNT_MISSING_SOURCE_'+p)
+            # Export the unmodified, genuine upstream kernel-source delta for review.
+            fetched=g(new,'fetch','--quiet','--no-tags','origin',NOMOUNT_OLD,ok=False)
+            need(fetched.returncode==0,'NOMOUNT_OLD_UPSTREAM_NOT_FETCHABLE')
+            need(out(g(new,'rev-parse','FETCH_HEAD'))==NOMOUNT_OLD,'NOMOUNT_OLD_FETCH_CHANGED')
+            nm_patch=g(new,'diff','--binary',NOMOUNT_OLD,NOMOUNT_V22,'--','kernel/src').stdout
+            need(len(nm_patch)>100,'NOMOUNT_V22_SOURCE_DELTA_EMPTY')
+            (root/'NOMOUNT_V22_OFFICIAL_UPDATE.patch').write_bytes(nm_patch)
+            result={'status':'PINNED_NOMOUNT_V22_SOURCE_REVIEWED_NOT_YET_COMPILED',
+                    'old_commit':NOMOUNT_OLD,'new_commit':NOMOUNT_V22,'kernel_sources':{}}
+            for path in paths:
+                result['kernel_sources'][path]={'old_sha256':sha_file(old/path),'new_sha256':sha_file(new/path),
+                                                'changed':sha_file(old/path)!=sha_file(new/path)}
+            need(result['kernel_sources']['kernel/src/nomount.c']['changed'], 'NOMOUNT_V22_NOT_ACTUAL_UPDATE')
+            (root/'NOMOUNT_V22_SOURCE_SCOPE.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+            return result
+
+        def main():
+            ap=argparse.ArgumentParser()
+            ap.add_argument('--kernel',type=Path,required=True)
+            ap.add_argument('--bakasu',type=Path,required=True)
+            ap.add_argument('--nomount-old',type=Path,required=True)
+            ap.add_argument('--nomount-new',type=Path,required=True)
+            ap.add_argument('--out',type=Path,required=True)
+            args=ap.parse_args()
+            d=args.out;d.mkdir(parents=True,exist_ok=True)
+            (d/'SOURCE_PINS.json').write_text(json.dumps(PINS,indent=2,sort_keys=True)+'\n')
+            report={'schema':1,'stage':'R55H17_R2_CASS_GENUINE_UPDATE_SOURCE_PORT',
+                    'status':'BLOCKED','flash_allowed':False,'device_test':False,
+                    'compiler_test':False,'kernel_image_generated':False,
+                    'source_updates_staged':False,'all_device_source_files_unchanged':False}
+            try:
+                kernel=args.kernel.resolve(strict=True)
+                before=audit_kernel(kernel);report['protected_baseline']=before
+                validate_provider(args.bakasu,BAKASU35252)
+                nm=audit_nomount(args.nomount_old,args.nomount_new,d)
+                report['nomount']=nm
+                br=port_bakasu(kernel/'KernelSU',args.bakasu,d/'bakasu35252-veux-candidate',d)
+                report['bakasu']=br
+                after=audit_kernel(kernel)
+                need(after==before,'ORIGINAL_R5S2_KERNEL_CHANGED_DURING_SOURCE_PORT')
+                report['status']='SOURCE_PORT_STAGED_PENDING_FULL_COMPILER_ABI_RECHECK'
+                report['source_updates_staged']=True
+                report['all_device_source_files_unchanged']=True
+            except (PortBlocked, OSError, subprocess.TimeoutExpired) as e:
+                report['status']='BLOCKED_NO_IMAGE_EXPORTED'
+                report['blocker']=str(e)[:1600]
+            finally:
+                (d/'R55H17_R2_RESULT.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+                print('R55H17_R2_STATUS='+report['status'],flush=True)
+                if 'blocker' in report:print('BLOCKER='+report['blocker'],flush=True)
+            return 0 if report['status']=='SOURCE_PORT_STAGED_PENDING_FULL_COMPILER_ABI_RECHECK' else 23
+
+        if __name__=='__main__':sys.exit(main())
+        PY_R55H17_PORT
+        printf '%s  %s\n' 'cf0ab5199ca2b2054c4e93ac532ced576409f241aea991ce9dca4d6fc01600b6' "$RUNNER_TEMP/veux-r55h17-r2-port.py" | sha256sum -c -
+        cat > "$RUNNER_TEMP/veux-r55h17-r3-bridge.py" <<'PY_R55H17_BRIDGE'
+        #!/usr/bin/env python3
+        """VEUX R55H17-R3: invoke fail-closed CASS port audit before R5S2 worker cleanup.
+
+        This script is run in the ephemeral GitHub runner, not on the VEUX device.
+        It does NOT alter the original CASS kernel, its config, vendor, DTB, RMNET,
+        or Boot image. It monkeypatches only the in-memory temporary worker generator.
+        """
+        from __future__ import annotations
+        import argparse
+        import os
+        from pathlib import Path
+        import sys
+
+        import veux_r5s2_true_version as original_version
+
+        # The *original* genuine-version BakaSU build remains unchanged and is invoked
+        # with exactly the same arguments. Only its TEMPORARY worker is augmented.
+        WORKER_ANCHOR = (
+            '        result["bakasu_true_version"] = '
+            'verify_version_compilation(src,work,real_version,result)\n'
+        )
+        HOOK = '''        import os as __r55h17_os
+                import subprocess as __r55h17_subprocess
+                import sys as __r55h17_sys
+                __r55h17_port = [
+                    __r55h17_sys.executable, '-B',
+                    __r55h17_os.path.join(__r55h17_os.environ['RUNNER_TEMP'], 'veux-r55h17-r2-port.py'),
+                    '--kernel', str(src),
+                    '--bakasu', __r55h17_os.path.join(__r55h17_os.environ['RUNNER_TEMP'], 'BakaSU35252'),
+                    '--nomount-old', __r55h17_os.path.join(__r55h17_os.environ['RUNNER_TEMP'], 'NoMountR5S2'),
+                    '--nomount-new', __r55h17_os.path.join(__r55h17_os.environ['RUNNER_TEMP'], 'NoMount22'),
+                    '--out', __r55h17_os.path.join(__r55h17_os.environ['RUNNER_TEMP'], 'veux-r55h17-r2-evidence')]
+                __r55h17_subprocess.run(__r55h17_port, check=True)
+        '''
+
+
+        def attach_hook(worker_file: Path):
+            """Enforce a single audited post-compilation anchor; refuse ambiguous files."""
+            if worker_file.is_symlink() or not worker_file.is_file():
+                raise RuntimeError('R55H17_R3_WORKER_NOT_REGULAR')
+            body = worker_file.read_text(encoding='utf-8')
+            if body.count(WORKER_ANCHOR) != 1 or '        __r55h17_port = [' in body:
+                raise RuntimeError('R55H17_R3_VERIFIED_COMPILE_ANCHOR_MISSING_OR_DUPLICATED')
+            revised = body.replace(WORKER_ANCHOR, WORKER_ANCHOR + HOOK, 1)
+            # This is the authentic Python build-worker source, not generated shell.
+            import ast
+            ast.parse(revised)
+            if revised.replace(WORKER_ANCHOR + HOOK, WORKER_ANCHOR, 1) != body:
+                raise RuntimeError('R55H17_R3_WORKER_OTHER_LINES_CHANGED')
+            worker_file.write_text(revised, encoding='utf-8')
+            return {'post_compile_source_port': True, 'worker_mutated_only_in_runner_temp': True}
+
+
+        def main():
+            parser=argparse.ArgumentParser()
+            for key in ('repo','work','reference','donor522','sync'):
+                parser.add_argument('--'+key, type=Path, required=True)
+            parser.add_argument('--jobs', type=int, default=4)
+            args=parser.parse_args()
+            # Source changes must remain limited to the generated ephemeral worker.
+            old=original_version.inject_version_worker
+            proof=[]
+
+            def wrapped(*worker_args, **worker_kwargs):
+                data=old(*worker_args, **worker_kwargs)
+                if len(worker_args) < 3:
+                    raise RuntimeError('R55H17_R3_WORKER_ARG_LAYOUT_CHANGED')
+                worker=Path(worker_args[2])
+                if not worker.resolve().is_relative_to(Path(os.environ['RUNNER_TEMP']).resolve()):
+                    raise RuntimeError('R55H17_R3_WORKER_OUTSIDE_RUNNER_TEMP')
+                result=attach_hook(worker)
+                proof.append(result)
+                data['r55h17_r3_source_port_hook']=result
+                return data
+
+            original_version.inject_version_worker=wrapped
+            try:
+                original_version.build(args.repo,args.work,args.reference,args.donor522,args.sync,args.jobs)
+            finally:
+                original_version.inject_version_worker=old
+            if len(proof)!=1:
+                raise RuntimeError('R55H17_R3_PORT_NOT_RUN_EXACTLY_ONCE')
+            print('R55H17_R3_POST_COMPILE_CASS_SOURCE_PORT_INVOKED=YES; FLASH=NO',flush=True)
+
+        if __name__=='__main__':
+            main()
+        PY_R55H17_BRIDGE
+        printf '%s  %s\n' '678624ffde5f9e22a16919b0678f17360fdebb7c0e1afa595e2779563ce09a93' "$RUNNER_TEMP/veux-r55h17-r3-bridge.py" | sha256sum -c -
+        "$R5S2_PY" -m py_compile "$RUNNER_TEMP/veux-r55h17-r2-port.py" "$RUNNER_TEMP/veux-r55h17-r3-bridge.py"
+        echo 'R55H17_R3_TEMP_WORKER_BRIDGE_AUTHENTICATED=PASS; CASS_UNCHANGED; NO_FLASH'
+    - name: Compile authentic R5S2 CASS unchanged and check update source IN disposable worker before cleanup - NO FLASH
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$RUNNER_TEMP/veux-r55h17-r3-bridge.py" \
+          --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" \
+          --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4
+
+    - name: Independently require R5S1 module ABI boot AK3 and new 522 compiled proof
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        "$R5S2_PY" -u "$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_verify_result.py" \
+          --work "$RUNNER_TEMP/veux-r5s2-work" --overlay "$R5S1_OVERLAY"
+        python3 - <<'PY'
+        import json,os
+        from pathlib import Path
+        root=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-work'
+        row=json.loads((root/'public/5.4.274/RESULT.json').read_text())
+        x=row.get('bakasu_522_r5s2') or {}
+        if (x.get('status')!='EXPERIMENTAL_522_5_4_COMPILED_IN_R5S1_LINEAGE'
+            or x.get('change_count')!=20
+            or x.get('tracepoint_disabled') is not True
+            or x.get('compat_config_y') is not True
+            or x.get('r5s1_selinux_unchanged') is not True
+            or x.get('flash_release') is not False
+            or row.get('device') is not False
+            or row.get('image_sha256')=='49007385ebf2cd21dde154e8ca71a67331802ec624e7c6ebfa571f51cb199e4f'):
+            raise SystemExit('R5S2_522_COMPILED_PROOF_INCOMPLETE')
+        print('R5S2_COMPILE_ABI_CONFIG_AK3_AND_522_COMPAT_PROOFS=PASS; NO_FLASH')
+        PY
+
+
+    - name: R55H17-R1 require unchanged CASS config and 132 loaded RMNET CRC imports - NO FLASH
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        report_dir="$RUNNER_TEMP/veux-r55h17-r1-audit"
+        mkdir -p "$report_dir"
+        cat > "$RUNNER_TEMP/veux-r55h17-cass-gate.py" <<'PY_R55H17_GATE'
+        #!/usr/bin/env python3
+        """VEUX R55H17 offline proof: CASS baseline, unchanged module ABI, no flash.
+        Strict audit only; cannot attest to device boot or sign an image.
+        """
+        import argparse
+        import base64
+        import csv
+        import hashlib
+        import json
+        from pathlib import Path
+        import sys
+        import zlib
+
+        CONFIG_SHA256 = '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'
+        EXPECTED_RELEASE = '5.4.274-qgki-g82179e362f33'
+        EXPECTED_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+        REFERENCE = json.loads(zlib.decompress(base64.b64decode('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')).decode('utf-8'))
+        FEATURES = {
+            'CONFIG_SCHED_CASS': 'y', 'CONFIG_SCHED_WALT': 'n',
+            'CONFIG_NR_CPUS': '8', 'CONFIG_MODULES': 'y',
+            'CONFIG_MODVERSIONS': 'y', 'CONFIG_CFI_CLANG': 'y',
+            'CONFIG_LTO_CLANG': 'y', 'CONFIG_LOCALVERSION': '"-qgki"',
+            'CONFIG_KSU': 'y', 'CONFIG_KSU_SUSFS': 'y',
+        }
+
+
+        def sha256(path):
+            h=hashlib.sha256()
+            with Path(path).open('rb') as f:
+                while True:
+                    data=f.read(1048576)
+                    if not data:break
+                    h.update(data)
+            return h.hexdigest()
+
+
+        def parse_config(text):
+            out={}
+            for line in text.splitlines():
+                if line.startswith('CONFIG_') and '=' in line:
+                    key,val=line.split('=',1)
+                elif line.startswith('# CONFIG_') and line.endswith(' is not set'):
+                    key,val=line[2:].split(' is not set',1)[0],'n'
+                else:continue
+                if key in out:raise ValueError('DUPLICATE_CONFIG_KEY:'+key)
+                out[key]=val
+            return out
+
+
+        def parse_symvers(text):
+            out={}
+            for line in text.splitlines():
+                parts=line.split()
+                if len(parts)<4:raise ValueError('MALFORMED_SYMVERS_LINE:'+line[:60])
+                crc,name=parts[:2]
+                if not crc.startswith('0x'):raise ValueError('SYMVERS_MISSING_CRC:'+name)
+                crc=f'0x{int(crc,16):08x}'
+                if name in out and out[name]!=crc:raise ValueError('SYMVERS_DUPLICATE_DIFFERENT_CRC:'+name)
+                out[name]=crc
+            return out
+
+
+        def audit(config_file, symvers_file, release, dtb_sha256=None, require_config_sha=True):
+            failures=[]
+            conf_path=Path(config_file)
+            cfg=parse_config(conf_path.read_text(encoding='utf-8'))
+            sym=parse_symvers(Path(symvers_file).read_text(encoding='utf-8'))
+            for key,expected in FEATURES.items():
+                if cfg.get(key,'n')!=expected:
+                    failures.append(f'CONFIG_MISMATCH:{key}:expected={expected}:got={cfg.get(key,"n")}')
+            actual_cfg_sha=sha256(conf_path)
+            if require_config_sha and actual_cfg_sha!=CONFIG_SHA256:
+                failures.append('FULL_REFERENCE_CONFIG_SHA_MISMATCH')
+            if release.strip()!=EXPECTED_RELEASE:
+                failures.append('KERNEL_RELEASE_MISMATCH')
+            if dtb_sha256 is not None and dtb_sha256.lower()!=EXPECTED_DTB_SHA256:
+                failures.append('VEUX_DTB_SHA_MISMATCH')
+            crc_rows=[]
+            for mod,name,expected in REFERENCE:
+                actual=sym.get(name)
+                status='MATCH' if actual==expected else ('MISSING' if actual is None else 'CRC_MISMATCH')
+                crc_rows.append({'module':mod,'symbol':name,'original_module_crc':expected,'candidate_crc':actual or '', 'status':status})
+                if status!='MATCH':failures.append(f'RMNET_{status}:{mod}:{name}')
+            report={
+                'schema':1, 'stage':'R55H17_R1_CASS_1TO1_REFERENCE_GATE',
+                'status':'CASS_REFERENCE_STATIC_PASS_NOFLASH' if not failures else 'BLOCKED_CASS_REFERENCE_OR_VENDOR_ABI',
+                'kernel_release':release.strip(), 'config_sha256':actual_cfg_sha,
+                'config_reference_sha256':CONFIG_SHA256,
+                'dtb_sha256_reported':dtb_sha256,
+                'critical_config':{k:cfg.get(k,'n') for k in FEATURES},
+                'rmnet_imports_count':len(crc_rows),
+                'rmnet_imports_matched':sum(x['status']=='MATCH' for x in crc_rows),
+                'rmnet_module_layout_crc':sym.get('module_layout'),
+                'failures':failures, 'flash_allowed':False,
+                'device_test':False,
+                'new_bakasu_35252_integrated':False,
+                'new_nomount_v22_integrated':False,
+                'walt_porting_in_this_stage':False,
+            }
+            return report,crc_rows
+
+
+        def main():
+            ap=argparse.ArgumentParser()
+            ap.add_argument('--config',required=True)
+            ap.add_argument('--symvers',required=True)
+            ap.add_argument('--release-file',required=True)
+            ap.add_argument('--dtb-sha256')
+            ap.add_argument('--report-dir',required=True)
+            ns=ap.parse_args()
+            report,rows=audit(ns.config,ns.symvers,Path(ns.release_file).read_text(),ns.dtb_sha256)
+            d=Path(ns.report_dir)
+            d.mkdir(parents=True,exist_ok=True)
+            (d/'R55H17_R1_CASS_RESULT.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+            with (d/'R55H17_R1_RMNET_132_ABI.csv').open('w',newline='',encoding='utf-8') as f:
+                w=csv.DictWriter(f,fieldnames=list(rows[0]),delimiter=';');w.writeheader();w.writerows(rows)
+            print(f'R55H17_R1_CASS_GATE={report["status"]}; RMNET={report["rmnet_imports_matched"]}/{len(rows)}; NO_FLASH')
+            if report['failures']:
+                for msg in report['failures'][:24]:print('BLOCKER:',msg)
+                raise SystemExit(26)
+
+        if __name__=='__main__':main()
+        PY_R55H17_GATE
+        python3 -m py_compile "$RUNNER_TEMP/veux-r55h17-cass-gate.py"
+        build="$RUNNER_TEMP/veux-r5s2-work/builds/diagnostics/5.4.274"
+        test -s "$build/config-reports/actual-build.config"
+        test -s "$build/build/Module.symvers"
+        test -s "$build/build/include/config/kernel.release"
+        test -s "$build/DTB-CHECK.json"
+        test -s "$build/build-result.json"
+        python3 -B - "$build/DTB-CHECK.json" "$build/build-result.json" <<'PY_DTB_GATE'
+        import json,sys
+        x=json.load(open(sys.argv[1]));b=json.load(open(sys.argv[2]))
+        sha='42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+        assert x['match'] is True and x['actual_sha256']==sha and b['dtb_sha256']==sha
+        assert b['compile'] is True and b['kernelrelease']=='5.4.274-qgki-g82179e362f33'
+        PY_DTB_GATE
+        python3 -B "$RUNNER_TEMP/veux-r55h17-cass-gate.py" \
+          --config "$build/config-reports/actual-build.config" \
+          --symvers "$build/build/Module.symvers" \
+          --release-file "$build/build/include/config/kernel.release" \
+          --dtb-sha256 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37 \
+          --report-dir "$report_dir"
+        python3 -B - "$report_dir/R55H17_R1_CASS_RESULT.json" <<'PY_FINAL_R55H17'
+        import json,sys
+        x=json.load(open(sys.argv[1]));assert x['status']=='CASS_REFERENCE_STATIC_PASS_NOFLASH'
+        assert x['rmnet_imports_matched']==132 and x['rmnet_imports_count']==132
+        assert x['flash_allowed'] is False and x['device_test'] is False
+        assert x['new_bakasu_35252_integrated'] is False and x['new_nomount_v22_integrated'] is False
+        print('R55H17_R1_BASELINE_CASS_132_132_ABI_AND_STATIC_GATES=PASS; UPDATES=NEXT_STAGE; FLASH=NO')
+        PY_FINAL_R55H17
+
+    - name: R55H17-R3 verify source-port report and original 132 RMNET imports - NO FLASH
+      if: ${{ inputs.enable_build == true }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        result="$RUNNER_TEMP/veux-r55h17-r2-evidence/R55H17_R2_RESULT.json"
+        checks="$RUNNER_TEMP/veux-r55h17-r1-audit/R55H17_R1_CASS_RESULT.json"
+        test -s "$result"
+        test -s "$checks"
+        python3 - "$result" "$checks" <<'PY_R55H17_R3_PROOF'
+        import json,sys
+        from pathlib import Path
+        p=json.loads(Path(sys.argv[1]).read_text())
+        b=json.loads(Path(sys.argv[2]).read_text())
+        assert p.get('status')=='SOURCE_PORT_STAGED_PENDING_FULL_COMPILER_ABI_RECHECK', p
+        assert p.get('source_updates_staged') is True and p.get('all_device_source_files_unchanged') is True
+        assert p.get('kernel_image_generated') is False and p.get('compiler_test') is False
+        assert p.get('flash_allowed') is False and p.get('device_test') is False
+        assert p.get('bakasu',{}).get('status')=='BAKASU_THREEWAY_SOURCE_STAGE_PASS'
+        assert p.get('nomount',{}).get('status')=='PINNED_NOMOUNT_V22_SOURCE_REVIEWED_NOT_YET_COMPILED'
+        assert b.get('rmnet_imports_matched') == 132
+        assert b.get('flash_allowed') is False
+        print('R55H17_R3_POST_COMPILE_SOURCE_PORT_AND_ORIGINAL_CASS_ABI=PASS; UPDATED_KERNEL_BUILT=NO; FLASH=NO')
+        PY_R55H17_R3_PROOF
+    - name: Upload R55H17-R3 genuine post-compile source-port and conflict evidence only
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R55H17-R3-CASS-POST-COMPILE-SOURCE-EVIDENCE-NOFLASH-${{ github.run_id }}
+        path: "${{ runner.temp }}/veux-r55h17-r2-evidence/*.json\n${{ runner.temp }}/veux-r55h17-r2-evidence/*.patch\n${{ runner.temp }}/veux-r55h17-r2-evidence/BAKASU_THREEWAY_STDERR.txt\n${{ runner.temp }}/veux-r55h17-r2-evidence/BAKASU_THREEWAY_STDOUT.txt"
+        if-no-files-found: warn
+        compression-level: 9
+        retention-days: 21
+    - name: Upload source and compile diagnostics even if blocked
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R5S2-REAL-BAKASU35234-AUDIT-${{ github.run_id }}
+        path: |
+          ${{ runner.temp }}/veux-r5s2-overlay/ZIP_VALIDATION.json
+          ${{ runner.temp }}/veux-real-version-overlay/MANIFEST_SHA256.json
+          ${{ runner.temp }}/veux-r5s2-work/prepare.json
+          ${{ runner.temp }}/veux-r5s2-work/report/
+          ${{ runner.temp }}/veux-r5s2-work/builds/diagnostics/5.4.274/
+          ${{ runner.temp }}/veux-r5s2-work/source-audit/5.4.274/integration.json
+        if-no-files-found: warn
+        retention-days: 21
+        compression-level: 6
+
+    - name: Upload R55H17-R1 CASS ABI report only - NO FLASH
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R55H17-R1-CASS-BASELINE-ABI-NOFLASH-${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-r55h17-r1-audit/
+        if-no-files-found: warn
+        retention-days: 21
+        compression-level: 6
+
+    - name: Assert repository unchanged and never change boot or release state
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'R5S2_GENUINE_GIT_VERSION_CANDIDATE_REPOSITORY_UNMODIFIED=PASS'
+        echo 'R5S2_SUSFS_5_10_HOST_PATCH_NOT_FORCED=YES'
+        echo 'R5S2_MANAGER_KSUD_USERLAND_522_NOT_CLAIMED=YES'
+        echo 'R5S2_VERSION_35234_PURE_GIT_COMMIT_ONLY=YES'
+        echo 'R5S2_NO_FLASH_OR_PROMOTION=YES'
