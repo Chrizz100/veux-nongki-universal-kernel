@@ -1,10 +1,10 @@
 {
   "LICENSE": "3da27bc7c6a063f498b4278372d48e113453f93aecc709f44276e278fc0cac12",
   "README.md": "e5b8c8a2cdeefb99a075a863b9cb33236e33dd50a357caa85e0b3960d5047a57",
-  "_VEUX_CANDIDATE.json": "71f66004a3e9d5d7f5799fdc567189be945d8e4f620ebf844188d0969dcde6e6",
+  "_VEUX_CANDIDATE.json": "65448e8c36663d584cfe9e866e41b9eba45c62791de9f04c4804ce0738e6f3b8",
   "kernel_patches/50_add_susfs_in_gki-android13-5.10.patch": "c32295c152012b89f5b50e0086bbe850957e428a6cc987f2de640f4c4a2d83a6",
-  "kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch": "64d32baa5a543a6f9988c1489e2021c467b84606570a388f4cbd44ff3ad77ed6",
-  "kernel_patches/fs/susfs.c": "5d1b17dd7d20e4893b82b82a9f36e791558e3ddd735666b2b71f7839001dcb24",
+  "kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch": "904edfb25b069ab6cd9286f819aac9ea59842db086fd7899f20d7f5e8781debe",
+  "kernel_patches/fs/susfs.c": "b8080d0fe99b1c3f76d091c7537fbf0e1a32400f8d4193b362d59c694923a185",
   "kernel_patches/include/linux/susfs.h": "e06f190fe480ab6725851780b022b472b9b28c56132a54656495388ff8437c50",
   "kernel_patches/include/linux/susfs_def.h": "c515e11107088161b70e3bb7d4c49cdd3b882808c2e374a9a5237e5b8f19844b"
 }
