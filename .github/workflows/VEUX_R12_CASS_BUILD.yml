@@ -1,6 +1,7 @@
-# VEUX R12: upload this YAML and its exact MAIN ZIP, then Run workflow.
-# The protected source, full compile/link and ABI gates remain mandatory.
-# Only normal kernel packaging is performed; no automatic device flashing.
+# VEUX R12 CI-R2: one YAML + one MAIN ZIP; no user secrets or extra parameters.
+# Fixes the second legacy Module.symvers byte-order comparison after compilation.
+# Restores the authenticated original 132-import CRC reference before compilation.
+# Complete ABI records, CRCs, kernel sources and all remaining gates are preserved.
 name: VEUX R12 CASS - Kernel bauen
 'on':
   workflow_dispatch: {}
@@ -22,8 +23,8 @@ env:
   R4_PACKAGE_NAME: VEUX_R55H17_R4_CASS_UPDATE_MAIN.zip
   R4_MANIFEST_SHA256: 5222d47522356998c6141908af436c23e3731b04ce1a3376f04e12527eed6311
   REPRO_PACKAGE: VEUX_R12_CASS_MAIN.zip
-  REPRO_ARCHIVE_SHA256: 4610387b685a28fee26c3cc1d38455860e664a8cf4f473cb16d905248528138f
-  REPRO_MANIFEST_SHA256: cbbdefec1a1b8c25c30d11057d0133297026f4617305951b7d6e4552cc6801ae
+  REPRO_ARCHIVE_SHA256: 614ecc55b97e9a5eb41bb82a85fed5335f8a7e10c7c9f272a371fe4ffba34263
+  REPRO_MANIFEST_SHA256: f8e4f49172d030670fe02ecfc82ebeb05b13d8ea90b04c446b7bad064fa05b26
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
 jobs:
   r5s2_bakasu_522:
@@ -409,6 +410,8 @@ jobs:
         python3 -B "$REPRO_PAYLOAD/r12/tests/runhostcheck.py" \
           --payload "$REPRO_PAYLOAD" \
           --out "$RUNNER_TEMP/r12-reports/HOST_REGRESSION.json"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r12/tests" -p test_postcompile_abi.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/POSTCOMPILE_ABI_REGRESSION.log"
     - name: 03 Audit documented Perf source and compile review-only bitmap tests
       id: r12_perf_audit
       shell: bash
@@ -509,7 +512,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        "$R5S2_PY" -u "$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_verify_result.py" \
+        "$R5S2_PY" -u "$REPRO_PAYLOAD/r12/verify_legacy_result_r2.py" \
           --work "$RUNNER_TEMP/veux-r5s2-work" --overlay "$R5S1_OVERLAY"
         python3 - <<'PY'
         import json,os
@@ -551,7 +554,7 @@ jobs:
         CONFIG_SHA256 = '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'
         EXPECTED_RELEASE = '5.4.274-qgki-g82179e362f33'
         EXPECTED_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
-        REFERENCE = json.loads(zlib.decompress(base64.b64decode('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')).decode('utf-8'))
+        REFERENCE = json.loads(zlib.decompress(base64.b64decode('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')).decode('utf-8'))
         FEATURES = {
             'CONFIG_SCHED_CASS': 'y', 'CONFIG_SCHED_WALT': 'n',
             'CONFIG_NR_CPUS': '8', 'CONFIG_MODULES': 'y',
