@@ -1,7 +1,7 @@
-# VEUX R12 CI-R2: one YAML + one MAIN ZIP; no user secrets or extra parameters.
-# Fixes the second legacy Module.symvers byte-order comparison after compilation.
-# Restores the authenticated original 132-import CRC reference before compilation.
-# Complete ABI records, CRCs, kernel sources and all remaining gates are preserved.
+# VEUX R12 CI-R3: one YAML + one MAIN ZIP; no user secrets or extra parameters.
+# Verify the original compiler hashes while its files still exist, before worker cleanup.
+# Bind the saved compiler evidence to this run, attempt, commit and actual build command.
+# Kernel sources, original compiler pins, ABI/CRC and packaging gates are preserved.
 name: VEUX R12 CASS - Kernel bauen
 'on':
   workflow_dispatch: {}
@@ -23,8 +23,8 @@ env:
   R4_PACKAGE_NAME: VEUX_R55H17_R4_CASS_UPDATE_MAIN.zip
   R4_MANIFEST_SHA256: 5222d47522356998c6141908af436c23e3731b04ce1a3376f04e12527eed6311
   REPRO_PACKAGE: VEUX_R12_CASS_MAIN.zip
-  REPRO_ARCHIVE_SHA256: 614ecc55b97e9a5eb41bb82a85fed5335f8a7e10c7c9f272a371fe4ffba34263
-  REPRO_MANIFEST_SHA256: f8e4f49172d030670fe02ecfc82ebeb05b13d8ea90b04c446b7bad064fa05b26
+  REPRO_ARCHIVE_SHA256: c14ed9641a61fbda798a19fb3caf2943238fab1cf7633b3a6c6fb7bd6ebd3379
+  REPRO_MANIFEST_SHA256: 7999787f31ed173d85e7b5b63ff0d0075d59207fcf42a1b298ffe3f2b2efaf54
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
 jobs:
   r5s2_bakasu_522:
@@ -412,6 +412,8 @@ jobs:
           --out "$RUNNER_TEMP/r12-reports/HOST_REGRESSION.json"
         python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r12/tests" -p test_postcompile_abi.py -v \
           2>&1 | tee "$RUNNER_TEMP/r12-reports/POSTCOMPILE_ABI_REGRESSION.log"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r12/tests" -p test_environment_lifecycle.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/ENVIRONMENT_LIFECYCLE_REGRESSION.log"
     - name: 03 Audit documented Perf source and compile review-only bitmap tests
       id: r12_perf_audit
       shell: bash
@@ -717,7 +719,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$REPRO_PAYLOAD/pipeline/record_environment.py" \
+        python3 -B "$REPRO_PAYLOAD/r12/record_environment_r3.py" \
           --stage "$RUNNER_TEMP/veux-r55h17-r4" --out "$RUNNER_TEMP/r12-reports"
         cp "$REPRO_PAYLOAD/PAYLOAD_MANIFEST.json" "$RUNNER_TEMP/r12-reports/PIPELINE_INPUT_MANIFEST.json"
         cp "$REPRO_PAYLOAD/provenance/REPRODUCIBLE_INPUT_CONTRACT.json" "$RUNNER_TEMP/r12-reports/"
