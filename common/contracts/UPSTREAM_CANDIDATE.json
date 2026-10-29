@@ -148,7 +148,7 @@
   },
   "note": "PASS means source/integration gates accept the candidate. REVIEW_REQUIRED means a declared interface/version generation changed and must be explicitly reviewed before a manual build is allowed. No status proves that the kernel compiles; only a manually started compile can prove that.",
   "package_performed": false,
-  "repository_sha": "978c113dc62f0e0e09594cd01855d0580e7e9d20",
+  "repository_sha": "f1304abd713aa015af08b191429d4fa2c01dc3c2",
   "review_reasons": [
     "resukisu: ReSukiSU UAPI changed: 5 -> 6",
     "nomount: NoMount declared version changed: 20 -> 22"
