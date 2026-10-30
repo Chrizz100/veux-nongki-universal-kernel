@@ -229,6 +229,17 @@ def run_experiments(source: Path, obj: Path, state: dict, jobs: int, baseline_wo
         receipt = variant_compile(source,baseline_work,state,jobs,stage / name,base_text,baseline,name,enabled)
         evidence["variants"][name] = receipt["status"]
         print("R14_AB_VARIANT_" + name + "=" + receipt["status"], flush=True)
+        if receipt["status"] != "ACTUALLY_COMPILED_NO_FLASH":
+            # Fail fast rather than waste another full build on an unproven A variant.
+            break
+        # The validated Image, DTB, symbols, config and logs were already copied.
+        # The large per-variant object directory is scratch and may be discarded
+        # after proof; this keeps the second full build within runner disk limits.
+        scratch = stage / name / "obj"
+        need(scratch.is_dir() and not scratch.is_symlink() and
+             scratch.resolve(strict=True).is_relative_to(stage),
+             "R14_UNSAFE_SCRATCH_CLEANUP")
+        shutil.rmtree(scratch)
     need(sha(base_config) == BASELINE_CONFIG_SHA and sha(original_symbols) == baseline_sha,
          "ORIGINAL_R13_BUILD_WAS_MUTATED")
     evidence["status"] = ("TWO_REAL_VARIANTS_BUILT_NO_FLASH" if
@@ -242,11 +253,10 @@ def run_experiments(source: Path, obj: Path, state: dict, jobs: int, baseline_wo
 
 
 def recover_verified_r13(temporary: Path, jobs: int) -> tuple[Path, Path, dict, Path]:
-    """Reconstruct the actual captured compiler state from the completed R13 worker.
+    """Verify genuine R13 receipts while its worker still owns source and objects.
 
-    The old R13/R4 sources are deliberately executed in their original, isolated
-    subprocess. Python monkeypatches in the parent cannot reach that worker.
-    Reusing the authenticated R13 build receipt is the only post-process bridge.
+    This must run inside the disposable R13 worker, before it cleans its build
+    paths. The R4/R13 original source code and its checked-out files remain pinned.
     """
     temporary = Path(temporary).resolve(strict=True)
     stage = temporary / "veux-r55h17-r4"
@@ -329,14 +339,62 @@ def recover_verified_r13(temporary: Path, jobs: int) -> tuple[Path, Path, dict, 
     return source, obj, captured, baseline_work
 
 
-def complete_r13_then_run_ab(r13_main, callback, jobs: int, temporary: Path) -> None:
-    """Do not intercept R13 internals: its real compile happens in a subprocess.
+# Existing R13/R4 worker code stays byte-for-byte unchanged. Only the worker
+# *generated in RUNNER_TEMP* receives this additional post-R13 call.
+R14_WORKER_CALL = (
+    "        import os as __r14_os\n"
+    "        import runpy as __r14_runpy\n"
+    "        __r14_runpy.run_path(__r14_os.path.join(__r14_os.environ['GITHUB_WORKSPACE'], "
+    "'experiments/r14_abi_build_bridge.py'))['run_inside_worker'](args.jobs)\n"
+)
 
-    Start A/B only after that subprocess and its R13 proofs have completed.
-    """
-    r13_main()
-    source, obj, captured, baseline_work = recover_verified_r13(temporary, jobs)
-    callback(source, obj, captured, jobs, baseline_work)
+
+def inject_r14_after_r13(worker: Path, original_attach, hook: str) -> dict:
+    """Transactional injector for one authenticated disposable R13 worker."""
+    import ast
+    from pathlib import Path
+    worker = Path(worker)
+    temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+    need(not worker.is_symlink() and worker.is_file() and
+         worker.resolve(strict=True).is_relative_to(temporary),
+         'R14_WORKER_NOT_DISPOSABLE')
+    before = worker.read_bytes()
+    # Fail closed if previous hooks are absent, altered, or multiplied.
+    try:
+        metadata = original_attach(worker)
+        body = worker.read_text(encoding='utf-8')
+        need(body.count(hook) == 1, 'R14_R13_WORKER_HOOK_NOT_EXACTLY_ONCE')
+        need('run_inside_worker' not in body, 'R14_WORKER_ALREADY_PATCHED')
+        updated = body.replace(hook, hook + R14_WORKER_CALL, 1)
+        ast.parse(updated, filename=str(worker))
+        need(updated.replace(hook + R14_WORKER_CALL, hook, 1) == body,
+             'R14_UNRELATED_WORKER_MUTATION')
+        worker.write_text(updated, encoding='utf-8')
+        need(worker.read_text(encoding='utf-8') == updated, 'R14_WORKER_WRITEBACK_FAILED')
+    except BaseException:
+        # Only the throwaway worker script is rolled back; kernel state untouched.
+        worker.write_bytes(before)
+        raise
+    return {**metadata, 'r14_post_r13_worker': True,
+            'r14_worker_source_only': True, 'worker_code_restores_exactly': True}
+
+
+def run_inside_worker(jobs: int) -> None:
+    """Executed by the actual R13 worker, before its temporary cleanup."""
+    temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+    stage = temporary / 'r14-abi-variants'
+    need(not stage.exists(), 'R14_WORKER_REENTRY')
+    need(1 <= jobs <= 12, 'R14_UNSAFE_JOBS')
+    try:
+        source, obj, captured, baseline_work = recover_verified_r13(temporary, jobs)
+        run_experiments(source, obj, captured, jobs, baseline_work)
+        proof = json.loads((stage / 'R14_AB_EXPERIMENT_SUMMARY.json').read_text())
+        need(proof.get('status') == 'TWO_REAL_VARIANTS_BUILT_NO_FLASH',
+             'R14_A_B_BUILD_NOT_BOTH_GREEN')
+    except BaseException as exc:
+        record_blocked(temporary, exc)
+        raise
+    print('R14_REAL_R13_WORKER_POSTCOMPILE=PASS; DEVICE=NO; FLASH=NO', flush=True)
 
 
 def record_blocked(temporary: Path, exception: BaseException) -> None:
@@ -352,6 +410,86 @@ def record_blocked(temporary: Path, exception: BaseException) -> None:
         }, indent=2, sort_keys=True) + "\n")
 
 
+def worker_cross_process_smoke() -> None:
+    """CI precompile smoke using the *real* pinned R4/R13 injection sources.
+
+    The worker is synthetic; it proves hook order, subprocess visibility and
+    precleanup execution, not ARM64 compilation or device compatibility.
+    """
+    import runpy
+    import tempfile
+    original_path = list(sys.path)
+    source_root = Path(os.environ['REPRO_PAYLOAD']).resolve(strict=True)
+    r4_root = Path(os.environ['R4_PAYLOAD']).resolve(strict=True)
+    sys.path.insert(0, str(source_root / 'r11'))
+    try:
+        r4 = runpy.run_path(str(r4_root / 'workflow/cass_r4_bridge.py'))
+        r13 = runpy.run_path(str(source_root / 'r13/veux_r13_bridge.py'))
+    finally:
+        sys.path[:] = original_path
+    need(r4['HOOK'] == r13['OLD_HOOK'], 'SMOKE_R4_R13_HOOK_DRIFT')
+    with tempfile.TemporaryDirectory(prefix='r14-worker-smoke-',
+                                     dir=os.environ['RUNNER_TEMP']) as tmp:
+        root = Path(tmp)
+        workspace = root / 'repo' / 'experiments'
+        workspace.mkdir(parents=True)
+        (workspace / 'r14_abi_build_bridge.py').write_text(
+            'import os\nfrom pathlib import Path\n'
+            'def run_inside_worker(jobs):\n'
+            '    root=Path(os.environ["RUNNER_TEMP"])\n'
+            '    assert jobs==4 and (root/"candidate_source").is_dir()\n'
+            '    (root/"CALLBACK_BEFORE_CLEANUP.txt").write_text("PASS")\n')
+        (root / 'candidate_source').mkdir()
+        (root / 'veux_r13_ci_abi_hook.py').write_text(
+            'def run_update(src,state,work,jobs):\n'
+            '    assert jobs==4\n'
+            '    return "R13_WORKER_PASS"\n')
+        worker = root / 'worker.py'
+        worker.write_text(
+            'from pathlib import Path\nimport shutil\n'
+            'from types import SimpleNamespace\n'
+            'def verify_version_compilation(*a): return "PINNED_VERSION"\n'
+            'def worker():\n'
+            '    src=Path(__file__).parent\n'
+            '    work=src\n'
+            '    state={}\n'
+            '    args=SimpleNamespace(jobs=4)\n'
+            '    result={}\n'
+            '    real_version={}\n'
+            '    if True:\n'
+            + r4['ANCHOR'] +
+            '    shutil.rmtree(src/"candidate_source")\n'
+            'worker()\n')
+        previous = os.environ['RUNNER_TEMP']
+        try:
+            os.environ['RUNNER_TEMP'] = str(root)
+            def real_original_attach(file):
+                # Use the unmodified official R4 injector with its genuine
+                # R13 replacement hook, but do not change the pinned module.
+                before = r4['attach_hook'].__globals__['HOOK']
+                r4['attach_hook'].__globals__['HOOK'] = r13['NEW_HOOK']
+                try:
+                    return r4['attach_hook'](file)
+                finally:
+                    r4['attach_hook'].__globals__['HOOK'] = before
+            metadata = inject_r14_after_r13(worker, real_original_attach,
+                                             r13['NEW_HOOK'])
+        finally:
+            os.environ['RUNNER_TEMP'] = previous
+        need(metadata['r14_post_r13_worker'], 'SMOKE_NO_R14_INJECTION')
+        child_env = {**os.environ, 'RUNNER_TEMP': str(root),
+                     'GITHUB_WORKSPACE': str(root / 'repo'),
+                     'PYTHONPATH': str(root)}
+        result = subprocess.run([sys.executable, str(worker)], env=child_env,
+                                capture_output=True, text=True, timeout=30)
+        need(result.returncode == 0,
+             'SMOKE_CROSS_PROCESS_FAILED:' + result.stderr[-350:])
+        need(not (root / 'candidate_source').exists()
+             and (root / 'CALLBACK_BEFORE_CLEANUP.txt').read_text() == 'PASS',
+             'SMOKE_CALLBACK_NOT_BEFORE_CLEANUP')
+        print('R14_REAL_R4_R13_CROSS_PROCESS_PRECOMPILE_SMOKE=PASS', flush=True)
+
+
 def selftest():
     source = "CONFIG_SCHED_CASS=y\n# CONFIG_ANDROID_KABI_RESERVE is not set\n# CONFIG_ANDROID_VENDOR_OEM_DATA is not set\n"
     assert diff(config_map(source), config_map(make_variant(source, FLAGS[:1]))) == {
@@ -365,25 +503,48 @@ def selftest():
             pass
         else:
             raise AssertionError("changed baseline was accepted")
-    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS; POST_R13_PROCESS_BRIDGE=PASS")
+    import ast
+    ast.parse("def worker():\n" + R14_WORKER_CALL)
+    need(('R4_PAYLOAD' in os.environ) == ('REPRO_PAYLOAD' in os.environ),
+         'SMOKE_MISSING_VERIFIED_R4_OR_R13_INPUT')
+    if 'R4_PAYLOAD' in os.environ:
+        worker_cross_process_smoke()
+    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS; INSIDE_R13_WORKER_BRIDGE=PASS")
 
 
 def main():
-    if len(sys.argv) == 2 and sys.argv[1] == "--selftest":
+    if len(sys.argv) == 2 and sys.argv[1] == '--selftest':
         selftest()
         return
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--jobs", type=int, required=True)
+    parser.add_argument('--jobs', type=int, required=True)
     args, _ = parser.parse_known_args()
-    need(1 <= args.jobs <= 12, "R14_UNSAFE_JOBS")
+    need(1 <= args.jobs <= 12, 'R14_UNSAFE_JOBS')
+    import cass_r4_bridge as r4
     import veux_r13_bridge as r13
-    temporary = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+    need(r4.HOOK == r13.OLD_HOOK, 'R14_R13_ORIGINAL_HOOK_PRECONDITION_FAILED')
+    original_attach = r4.attach_hook
+    injected = []
+
+    def attach_before_r13_worker_exit(worker):
+        row = inject_r14_after_r13(worker, original_attach, r13.NEW_HOOK)
+        injected.append(row)
+        return row
+
+    # The original R13 main dynamically installs its own R4 hook. The pinned
+    # bridge's existing attach_hook dispatches this wrapper in the parent,
+    # and the resulting disposable script executes *inside* the R13 worker.
+    r4.attach_hook = attach_before_r13_worker_exit
     try:
-        complete_r13_then_run_ab(r13.main, run_experiments, args.jobs, temporary)
-    except BaseException as exc:
-        record_blocked(temporary, exc)
-        raise
+        r13.main()
+    finally:
+        r4.attach_hook = original_attach
+    need(len(injected) == 1 and injected[0]['r14_post_r13_worker'],
+         'R14_WORKER_INJECTION_NOT_EXACTLY_ONCE')
+    need((Path(os.environ['RUNNER_TEMP']) / 'r14-abi-variants' /
+          'R14_AB_EXPERIMENT_SUMMARY.json').is_file(),
+         'R14_WORKER_RESULT_NOT_PRESERVED')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
