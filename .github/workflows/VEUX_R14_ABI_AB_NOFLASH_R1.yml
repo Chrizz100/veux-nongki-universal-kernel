@@ -223,7 +223,7 @@ jobs:
       shell: bash
       run: 'set -euo pipefail
 
-        printf ''%s  %s\n'' ''ede3c6a19a424be56c209edd2f4c6e8ae04c7a7e35a45e28d0a2a9269027ed9b'' ''experiments/r14_abi_build_bridge.py'' | sha256sum --check --status
+        printf ''%s  %s\n'' ''3e47cfdd78cd93b1335a611925f8688d8a2b975f8488e13b2bad091fe610e077'' ''experiments/r14_abi_build_bridge.py'' | sha256sum --check --status
 
         python3 -B -c "import ast,pathlib;ast.parse(pathlib.Path(''experiments/r14_abi_build_bridge.py'').read_text())"
 
