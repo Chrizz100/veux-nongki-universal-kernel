@@ -239,6 +239,26 @@ def run_experiments(source: Path, obj: Path, state: dict, jobs: int, baseline_wo
     print("R14_AB_EXPERIMENT_STATUS=" + evidence["status"], flush=True)
 
 
+
+def post_r13_verify_hook(native_verify, run_after_verify):
+    """Run R14 after R13's actual native branch verification, not the shadowed
+    cass_r4_build.compile_candidate entry point.  The R13 build_hook replaces
+    compile_candidate internally, so any pre-installed wrapper there is lost.
+    """
+    calls = []
+
+    def verified_then_ab(candidate, obj, evidence, captured, baseline_work):
+        need(not calls, "R14_NATIVE_VERIFICATION_CALLED_TWICE")
+        receipt = native_verify(candidate, obj, evidence, captured, baseline_work)
+        need(isinstance(receipt, dict) and receipt.get("status") == "ACTUAL_NATIVE54_BRANCH_PASS",
+             "R13_NATIVE_BRANCH_VERIFICATION_NOT_PASSED")
+        calls.append("R13_VERIFIED")
+        run_after_verify(candidate, obj, evidence, captured, baseline_work)
+        return receipt
+
+    return verified_then_ab, calls
+
+
 def selftest():
     source = "CONFIG_SCHED_CASS=y\n# CONFIG_ANDROID_KABI_RESERVE is not set\n# CONFIG_ANDROID_VENDOR_OEM_DATA is not set\n"
     assert diff(config_map(source), config_map(make_variant(source, FLAGS[:1]))) == {
@@ -252,32 +272,93 @@ def selftest():
             pass
         else:
             raise AssertionError("changed baseline was accepted")
-    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS")
+
+    trace = []
+    def native_success(*args):
+        trace.append("R13_NATIVE_VERIFIED")
+        return {"status": "ACTUAL_NATIVE54_BRANCH_PASS", "original_object_and_command_unchanged": True}
+    def ab_probe(*args):
+        trace.append("R14_AB_CALLBACK")
+    wrapped, calls = post_r13_verify_hook(native_success, ab_probe)
+    assert wrapped("candidate", "obj", "evidence", "captured", "baseline")['status'] == "ACTUAL_NATIVE54_BRANCH_PASS"
+    assert trace == ["R13_NATIVE_VERIFIED", "R14_AB_CALLBACK"] and calls == ["R13_VERIFIED"]
+    try:
+        wrapped("candidate", "obj", "evidence", "captured", "baseline")
+    except ValueError as e:
+        assert str(e) == "R14_NATIVE_VERIFICATION_CALLED_TWICE"
+    else:
+        raise AssertionError("a second R14 compile callback was accepted")
+
+    trace.clear()
+    def native_failure(*args):
+        trace.append("R13_NATIVE_FAIL")
+        raise RuntimeError("synthetic pre-ABI verification failure")
+    wrapped, calls = post_r13_verify_hook(native_failure, ab_probe)
+    try:
+        wrapped("candidate", "obj", "evidence", "captured", "baseline")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("R13 native failure allowed R14 build")
+    assert trace == ["R13_NATIVE_FAIL"] and not calls
+
+    trace.clear()
+    wrapped, calls = post_r13_verify_hook(lambda *a: {"status": "BLOCKED"}, ab_probe)
+    try:
+        wrapped("candidate", "obj", "evidence", "captured", "baseline")
+    except ValueError as e:
+        assert str(e) == "R13_NATIVE_BRANCH_VERIFICATION_NOT_PASSED"
+    else:
+        raise AssertionError("nonpassing R13 proof permitted R14 callback")
+    assert not trace and not calls
+
+    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS; R13_NATIVE_POSTCOMPILE_HOOK=PASS")
 
 
 def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--selftest":
         selftest()
         return
-    # The pinned R13 bridge and build code are deliberately unchanged. Scope the
-    # compile callback to an in-memory wrapper, restore it unconditionally.
-    import cass_r4_build as original
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--jobs", type=int, required=True)
+    args, _ = p.parse_known_args()
+    need(1 <= args.jobs <= 12, "R14_UNSAFE_JOBS")
+
+    # R13's own compile wrapper shadows cass_r4_build.compile_candidate.
+    # Instead, its native-branch verifier is imported inside that wrapper
+    # *after* the verified source was actually compiled.  Hook that module
+    # in memory, restore in all circumstances, and invoke exactly once.
     import veux_r13_bridge as r13
-    base_compile = original.compile_candidate
+    import verify_native_branch as native
+    original_verify = native.verify
+    need(Path(native.__file__).resolve(strict=True) ==
+         (Path(os.environ["REPRO_PAYLOAD"]) / "r13/verify_native_branch.py").resolve(strict=True),
+         "R14_R13_VERIFIER_ORIGIN_CHANGED")
 
-    def original_then_ab(candidate, obj, baseline_config, state, version, evidence,
-                         jobs, baseline_work=None):
-        result = base_compile(candidate, obj, baseline_config, state, version, evidence,
-                              jobs, baseline_work)
-        need(baseline_work is not None, "MISSING_ORIGINAL_BASELINE")
-        run_experiments(Path(candidate),Path(obj),state,jobs,Path(baseline_work))
-        return result
+    def after_r13(candidate, obj, evidence, captured, baseline_work):
+        try:
+            run_experiments(Path(candidate), Path(obj), captured,
+                            args.jobs, Path(baseline_work))
+        except BaseException as exc:
+            stage = Path(os.environ["RUNNER_TEMP"]) / "r14-abi-variants"
+            stage.mkdir(mode=0o700, exist_ok=True)
+            status = stage / "R14_AB_EXPERIMENT_SUMMARY.json"
+            if not status.exists():
+                status.write_text(json.dumps({
+                    "schema": "R14_KABI_EXPERIMENT_V1", "status": "BLOCKED",
+                    "reason": type(exc).__name__ + ": " + str(exc),
+                    "flash_allowed": False, "device_test": False,
+                    "automatic_flash": False, "variants": {}
+                }, indent=2, sort_keys=True) + "\n")
+            raise
 
-    original.compile_candidate = original_then_ab
+    wrapped, calls = post_r13_verify_hook(original_verify, after_r13)
+    native.verify = wrapped
     try:
         r13.main()
+        need(calls == ["R13_VERIFIED"], "R14_POSTCOMPILE_HOOK_NOT_CALLED_EXACTLY_ONCE")
     finally:
-        original.compile_candidate = base_compile
+        native.verify = original_verify
 
 
 if __name__ == "__main__":
