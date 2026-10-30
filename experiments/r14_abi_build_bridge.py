@@ -240,23 +240,116 @@ def run_experiments(source: Path, obj: Path, state: dict, jobs: int, baseline_wo
 
 
 
-def post_r13_verify_hook(native_verify, run_after_verify):
-    """Run R14 after R13's actual native branch verification, not the shadowed
-    cass_r4_build.compile_candidate entry point.  The R13 build_hook replaces
-    compile_candidate internally, so any pre-installed wrapper there is lost.
+
+def recover_verified_r13(temporary: Path, jobs: int) -> tuple[Path, Path, dict, Path]:
+    """Reconstruct the actual captured compiler state from the completed R13 worker.
+
+    The old R13/R4 sources are deliberately executed in their original, isolated
+    subprocess. Python monkeypatches in the parent cannot reach that worker.
+    Reusing the authenticated R13 build receipt is the only post-process bridge.
     """
-    calls = []
+    temporary = Path(temporary).resolve(strict=True)
+    stage = temporary / "veux-r55h17-r4"
+    evidence = stage / "evidence"
+    source = stage / "source/kernel"
+    obj = stage / "build"
+    baseline_work = temporary / "veux-r5s2-work/builds/5.4.274"
+    need(source.is_dir() and obj.is_dir() and baseline_work.is_dir(),
+         "R14_COMPLETED_R13_SOURCE_OR_OBJECT_MISSING")
+    for directory in (stage, evidence, source, obj, baseline_work):
+        need(not directory.is_symlink(), "R14_SYMLINKED_BUILD_DIRECTORY:" + directory.name)
 
-    def verified_then_ab(candidate, obj, evidence, captured, baseline_work):
-        need(not calls, "R14_NATIVE_VERIFICATION_CALLED_TWICE")
-        receipt = native_verify(candidate, obj, evidence, captured, baseline_work)
-        need(isinstance(receipt, dict) and receipt.get("status") == "ACTUAL_NATIVE54_BRANCH_PASS",
-             "R13_NATIVE_BRANCH_VERIFICATION_NOT_PASSED")
-        calls.append("R13_VERIFIED")
-        run_after_verify(candidate, obj, evidence, captured, baseline_work)
-        return receipt
+    def receipt(name: str) -> dict:
+        path = evidence / name
+        need(path.is_file() and not path.is_symlink(), "R14_R13_RECEIPT_MISSING:" + name)
+        row = json.loads(path.read_text())
+        need(isinstance(row, dict), "R14_BAD_R13_RECEIPT:" + name)
+        return row
 
-    return verified_then_ab, calls
+    r4 = receipt("R4_RESULT.json")
+    native = receipt("R13_NATIVE_BRANCH.json")
+    compile_hook = receipt("R13_COMPILE_HOOK.json")
+    command = receipt("BUILD_COMMAND.json")
+    need(r4.get("status") == "CASS_UPDATED_FULL_BUILD_AND_STATIC_ABI_PASS_NOFLASH"
+         and r4.get("compiler_test") is True
+         and r4.get("original_baseline_unchanged") is True
+         and r4.get("flash_allowed") is False
+         and r4.get("rmnet_imports_matched") == 132,
+         "R14_R13_CASS_AND_RMNET_GATES_NOT_PASSED")
+    need(native.get("status") == "ACTUAL_NATIVE54_BRANCH_PASS"
+         and native.get("original_object_and_command_unchanged") is True
+         and native.get("device_test") is False,
+         "R14_R13_NATIVE_BRANCH_NOT_PROVEN")
+    need(compile_hook.get("r4_compile_and_static_gates_passed") is True
+         and compile_hook.get("candidate_source_unchanged_during_compile") is True
+         and compile_hook.get("original_version_validator_restored") is True,
+         "R14_R13_COMPILE_HOOK_NOT_PROVEN")
+    # Verify the actual baseline .config and Module.symvers bytes against the
+    # R13 worker's own compiled-output receipt before consuming the source.
+    outputs = r4.get("outputs")
+    need(isinstance(outputs, dict), "R14_R13_OUTPUT_RECEIPT_MISSING")
+    for filename in (".config", "Module.symvers"):
+        result = outputs.get(filename)
+        path = obj / filename
+        need(isinstance(result, dict) and path.is_file() and not path.is_symlink()
+             and type(result.get("bytes")) is int and result["bytes"] == path.stat().st_size
+             and result.get("sha256") == sha(path),
+             "R14_R13_COMPILED_OUTPUT_CHANGED:" + filename)
+    need(command.get("source") == str(source)
+         and type(command.get("jobs")) is int and command["jobs"] == jobs,
+         "R14_CAPTURED_BUILD_COMMAND_OR_JOBS_CHANGED")
+    variables = command.get("variables")
+    env = command.get("original_captured_env")
+    need(isinstance(variables, dict) and isinstance(env, dict)
+         and all(isinstance(k, str) and isinstance(v, str) for k,v in variables.items())
+         and all(isinstance(k, str) and isinstance(v, str) for k,v in env.items()),
+         "R14_CAPTURED_STATE_INVALID")
+    need(variables.get("O") == str(obj)
+         and variables.get("ARCH") == "arm64"
+         and variables.get("CC") == "clang"
+         and variables.get("LD") == "ld.lld"
+         and variables.get("LLVM") == "1"
+         and variables.get("LLVM_IAS") == "1",
+         "R14_CAPTURED_TOOLCHAIN_OR_OBJECT_CHANGED")
+    # R4 appended exactly one object-local SELinux include. Remove ONLY that
+    # generated suffix before the A/B builder supplies its own isolated O path.
+    appended = " -I" + str(obj / "security/selinux")
+    kcflags = variables.get("KCFLAGS", "")
+    need(kcflags.endswith(appended) and kcflags.count(appended) == 1,
+         "R14_CAPTURED_SELINUX_INCLUDE_NOT_UNIQUE")
+    inherited_kcflags = kcflags[:-len(appended)]
+    variables = dict(variables)
+    variables["KCFLAGS"] = inherited_kcflags
+    need(variables.get("O") == str(obj), "R14_OBJECT_CAPTURE_CHANGED")
+    need(isinstance(env.get("PATH"), str) and env["PATH"]
+         and str(baseline_work / "source-work/toolchains/clang-r416183b/bin")
+             in env["PATH"].split(os.pathsep),
+         "R14_CAPTURED_COMPILER_PATH_UNPINNED")
+    captured = {"variables": [k + "=" + v for k,v in variables.items()], "env": env}
+    return source, obj, captured, baseline_work
+
+
+def complete_r13_then_run_ab(r13_main, callback, jobs: int, temporary: Path) -> None:
+    """Do not intercept R13 internals: its real compile happens in a subprocess.
+
+    Start A/B only after that subprocess and its R13 proofs have completed.
+    """
+    r13_main()
+    source, obj, captured, baseline_work = recover_verified_r13(temporary, jobs)
+    callback(source, obj, captured, jobs, baseline_work)
+
+
+def record_blocked(temporary: Path, exception: BaseException) -> None:
+    stage = Path(temporary) / "r14-abi-variants"
+    stage.mkdir(mode=0o700, exist_ok=True)
+    status = stage / "R14_AB_EXPERIMENT_SUMMARY.json"
+    if not status.exists():
+        status.write_text(json.dumps({
+            "schema": "R14_KABI_EXPERIMENT_V1", "status": "BLOCKED",
+            "reason": type(exception).__name__ + ": " + str(exception),
+            "flash_allowed": False, "device_test": False,
+            "automatic_flash": False, "variants": {}
+        }, indent=2, sort_keys=True) + "\n")
 
 
 def selftest():
@@ -272,93 +365,24 @@ def selftest():
             pass
         else:
             raise AssertionError("changed baseline was accepted")
-
-    trace = []
-    def native_success(*args):
-        trace.append("R13_NATIVE_VERIFIED")
-        return {"status": "ACTUAL_NATIVE54_BRANCH_PASS", "original_object_and_command_unchanged": True}
-    def ab_probe(*args):
-        trace.append("R14_AB_CALLBACK")
-    wrapped, calls = post_r13_verify_hook(native_success, ab_probe)
-    assert wrapped("candidate", "obj", "evidence", "captured", "baseline")['status'] == "ACTUAL_NATIVE54_BRANCH_PASS"
-    assert trace == ["R13_NATIVE_VERIFIED", "R14_AB_CALLBACK"] and calls == ["R13_VERIFIED"]
-    try:
-        wrapped("candidate", "obj", "evidence", "captured", "baseline")
-    except ValueError as e:
-        assert str(e) == "R14_NATIVE_VERIFICATION_CALLED_TWICE"
-    else:
-        raise AssertionError("a second R14 compile callback was accepted")
-
-    trace.clear()
-    def native_failure(*args):
-        trace.append("R13_NATIVE_FAIL")
-        raise RuntimeError("synthetic pre-ABI verification failure")
-    wrapped, calls = post_r13_verify_hook(native_failure, ab_probe)
-    try:
-        wrapped("candidate", "obj", "evidence", "captured", "baseline")
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("R13 native failure allowed R14 build")
-    assert trace == ["R13_NATIVE_FAIL"] and not calls
-
-    trace.clear()
-    wrapped, calls = post_r13_verify_hook(lambda *a: {"status": "BLOCKED"}, ab_probe)
-    try:
-        wrapped("candidate", "obj", "evidence", "captured", "baseline")
-    except ValueError as e:
-        assert str(e) == "R13_NATIVE_BRANCH_VERIFICATION_NOT_PASSED"
-    else:
-        raise AssertionError("nonpassing R13 proof permitted R14 callback")
-    assert not trace and not calls
-
-    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS; R13_NATIVE_POSTCOMPILE_HOOK=PASS")
+    print("R14_EXPERIMENT_BRIDGE_SELFTEST=PASS; POST_R13_PROCESS_BRIDGE=PASS")
 
 
 def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--selftest":
         selftest()
         return
-    p = argparse.ArgumentParser(add_help=False)
-    p.add_argument("--jobs", type=int, required=True)
-    args, _ = p.parse_known_args()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--jobs", type=int, required=True)
+    args, _ = parser.parse_known_args()
     need(1 <= args.jobs <= 12, "R14_UNSAFE_JOBS")
-
-    # R13's own compile wrapper shadows cass_r4_build.compile_candidate.
-    # Instead, its native-branch verifier is imported inside that wrapper
-    # *after* the verified source was actually compiled.  Hook that module
-    # in memory, restore in all circumstances, and invoke exactly once.
     import veux_r13_bridge as r13
-    import verify_native_branch as native
-    original_verify = native.verify
-    need(Path(native.__file__).resolve(strict=True) ==
-         (Path(os.environ["REPRO_PAYLOAD"]) / "r13/verify_native_branch.py").resolve(strict=True),
-         "R14_R13_VERIFIER_ORIGIN_CHANGED")
-
-    def after_r13(candidate, obj, evidence, captured, baseline_work):
-        try:
-            run_experiments(Path(candidate), Path(obj), captured,
-                            args.jobs, Path(baseline_work))
-        except BaseException as exc:
-            stage = Path(os.environ["RUNNER_TEMP"]) / "r14-abi-variants"
-            stage.mkdir(mode=0o700, exist_ok=True)
-            status = stage / "R14_AB_EXPERIMENT_SUMMARY.json"
-            if not status.exists():
-                status.write_text(json.dumps({
-                    "schema": "R14_KABI_EXPERIMENT_V1", "status": "BLOCKED",
-                    "reason": type(exc).__name__ + ": " + str(exc),
-                    "flash_allowed": False, "device_test": False,
-                    "automatic_flash": False, "variants": {}
-                }, indent=2, sort_keys=True) + "\n")
-            raise
-
-    wrapped, calls = post_r13_verify_hook(original_verify, after_r13)
-    native.verify = wrapped
+    temporary = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
     try:
-        r13.main()
-        need(calls == ["R13_VERIFIED"], "R14_POSTCOMPILE_HOOK_NOT_CALLED_EXACTLY_ONCE")
-    finally:
-        native.verify = original_verify
+        complete_r13_then_run_ab(r13.main, run_experiments, args.jobs, temporary)
+    except BaseException as exc:
+        record_blocked(temporary, exc)
+        raise
 
 
 if __name__ == "__main__":
