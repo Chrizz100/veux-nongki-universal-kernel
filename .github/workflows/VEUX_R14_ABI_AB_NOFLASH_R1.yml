@@ -133,7 +133,7 @@ jobs:
       run: "set -euo pipefail\narchive=\"$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz\"\ncurl --fail --location --silent --show-error --retry 3 --max-time 120 \\\n  https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz\
         \ \\\n  --output \"$archive\"\nprintf '%s  %s\\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \"$archive\" | sha256sum --check --status\nmkdir -p \"$RUNNER_TEMP/veux-r5s2-actionlint\"\
         \ntar -xzf \"$archive\" -C \"$RUNNER_TEMP/veux-r5s2-actionlint\" actionlint\ncommand -v shellcheck\n\"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\" -oneline .github/workflows/VEUX_R13_CASS_BUILD.yml\n\
-        echo 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'\n\"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\" -oneline .github/workflows/VEUX_R14_ABI_AB_NOFLASH.yml\necho \"R14_OWN_ACTIONLINT_PASS\"\
+        echo 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'\n\"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\" -oneline .github/workflows/VEUX_R14_ABI_AB_NOFLASH_R1.yml\necho \"R14_OWN_ACTIONLINT_PASS\"\
         \n"
     - name: Authenticate R5S2 archive and full original R5S1 nested CI chain
       shell: bash
@@ -235,7 +235,7 @@ jobs:
 
         import hashlib,yaml
 
-        p=Path(''.github/workflows/VEUX_R14_ABI_AB_NOFLASH.yml'')
+        p=Path(''.github/workflows/VEUX_R14_ABI_AB_NOFLASH_R1.yml'')
 
         w=yaml.safe_load(p.read_text())
 
