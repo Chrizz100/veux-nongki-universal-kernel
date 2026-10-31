@@ -1,0 +1,133 @@
+# VEUX R30-R2: deterministic research comparison only.
+# CRCs and symvers are never patched. No firmware writes, no kernel build.
+name: VEUX R30-R2 OEM CRC Detail Audit - NO FLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-r30-r2-crc-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  R30R2_MAIN: VEUX_R30_R2_OEM_CRC_MAIN.zip
+  R30R2_SHA256: ec1104a695a96db2515104fad6c0bf2a178b693c66a651ccca511aded146768b
+jobs:
+  crc_audit:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: Deterministic imported-CRC proof (NO BUILD, NO FLASH)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable source without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify the repository, exact R30-R2 package digest and safe ZIP manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -f "$GITHUB_WORKSPACE/$R30R2_MAIN"
+          printf '%s  %s\n' "$R30R2_SHA256" "$GITHUB_WORKSPACE/$R30R2_MAIN" | sha256sum -c --strict
+          python3 -B - <<'PY_R30R2_VERIFY'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import hashlib, json, os, stat
+          archive=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['R30R2_MAIN']
+          dest=Path(os.environ['RUNNER_TEMP'])/'veux-r30r2-readonly'
+          if dest.exists() or dest.is_symlink(): raise SystemExit('UNEXPECTED_DESTINATION_EXISTS')
+          with ZipFile(archive) as z:
+              entries=z.infolist()
+              names=[info.filename for info in entries]
+              if len(entries)>60 or len(names)!=len(set(names)) or z.testzip() is not None:
+                  raise SystemExit('ZIP_DUPLICATE_CRC_OR_COUNT_ERROR')
+              if sum(info.file_size for info in entries)>16000000:
+                  raise SystemExit('ZIP_DECOMPRESSION_CAP_EXCEEDED')
+              if 'MANIFEST_SHA256.json' not in names: raise SystemExit('MANIFEST_MISSING')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if manifest['schema']!=1 or manifest['description']!='VEUX_R30_R2_CRC_DETAIL_READONLY':
+                  raise SystemExit('BAD_MANIFEST_IDENTITY')
+              if manifest['flash_allowed'] is not False or manifest['kernel_build'] is not False:
+                  raise SystemExit('BAD_MANIFEST_MODE')
+              if set(manifest['files'])|{'MANIFEST_SHA256.json'}!=set(names):
+                  raise SystemExit('MANIFEST_MEMBERS_MISMATCH')
+              contents={}
+              for info in entries:
+                  name=info.filename
+                  parts=PurePosixPath(name)
+                  if (parts.is_absolute() or not name or '\\' in name or
+                      '..' in parts.parts or '.' in parts.parts or
+                      any(not seg for seg in parts.parts)):
+                      raise SystemExit('ZIP_PATH_REJECTED')
+                  mode=info.external_attr >> 16
+                  if stat.S_IFMT(mode) not in (0,stat.S_IFREG):
+                      raise SystemExit('ZIP_NON_REGULAR_FILE_REJECTED')
+                  if info.is_dir() or info.file_size>5000000:
+                      raise SystemExit('ZIP_UNEXPECTED_DIRECTORY_OR_SIZE')
+                  data=z.read(info)
+                  if name!='MANIFEST_SHA256.json':
+                      if hashlib.sha256(data).hexdigest()!=manifest['files'][name]:
+                          raise SystemExit('MANIFEST_FILE_HASH_MISMATCH:'+name)
+                  contents[name]=data
+              dest.mkdir(mode=0o700)
+              for name,data in contents.items():
+                  f=dest/name
+                  f.parent.mkdir(parents=True,exist_ok=True)
+                  f.write_bytes(data)
+          print('R30_R2_ARCHIVE_MANIFEST_AND_ALL_HASHES=PASS; DEVICE=NO; FLASH=NO')
+          PY_R30R2_VERIFY
+      - name: Run Python selftests and re-evaluate every OEM import against three real symbol tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/veux-r30r2-readonly"
+          python3 -B "$root/r30_r2_crc_audit.py" --selftest
+          python3 -B -m unittest discover -s "$root/tests" -p "test_*.py" -v
+          python3 -B "$root/r30_r2_crc_audit.py" --input "$root/inputs" --out "$root/results"
+          python3 -B - "$root" <<'PY_R30R2_GATE'
+          import json, pathlib, hashlib, sys
+          root=pathlib.Path(sys.argv[1]); result=root/'results'; preview=root/'preview'
+          expected={p.name for p in preview.glob('*') if p.is_file()}
+          actual={p.name for p in result.glob('*') if p.is_file()}
+          if expected!=actual:raise SystemExit('REPORT_FILE_LIST_DIFFERENT')
+          for name in sorted(expected):
+              a=hashlib.sha256((preview/name).read_bytes()).hexdigest()
+              b=hashlib.sha256((result/name).read_bytes()).hexdigest()
+              if a!=b:raise SystemExit('REPORT_NOT_BYTE_FOR_BYTE_REPRODUCIBLE:'+name)
+          s=json.loads((result/'R30_R2_RESULTS.json').read_text())
+          if s['status']!='OFFLINE_CRC_DIAG_PASS__FULL_OEM_ABI_BLOCKED__NO_FLASH':
+              raise SystemExit('UNEXPECTED_ABI_GATE_STATUS')
+          if s['flash_allowed'] is not False or s['built_new_kernel'] is not False:
+              raise SystemExit('UNEXPECTED_FLASH_OR_KERNEL_STATUS')
+          if s['nine_device_modules_not_compatible_A']!=9:
+              raise SystemExit('NINE_VENDOR_IMPORT_ABI_STATUS_CHANGED')
+          print('R30_R2_BYTE_IDENTICAL_ANALYSIS=PASS; NINE_OEM_MODULE_PATHS_ABI=BLOCKED; NO_FLASH')
+          PY_R30R2_GATE
+          test -z "$(git status --porcelain --untracked-files=all)"
+          echo 'R30_R2_CHECKOUT_UNMODIFIED=PASS; R13_CASS_ROOT_MODULES_UNCHANGED=YES'
+      - name: Show report and blocked ABI status
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/veux-r30r2-readonly/results"
+          cat "$root/R30_R2_PRUEFBERICHT_DE.txt"
+          {
+            echo '## VEUX R30-R2 CRC Detail Audit (NO FLASH)'
+            echo 'R13, R30-A, R30-B real Module.symvers reproduced from R28/R30 immutable evidence.'
+            echo 'Diagnostic integrity: PASS; complete OEM ABI: BLOCKED; nine priority module paths: 9/9 BLOCKED.'
+            echo 'R30-A remains the only research candidate; neither variant is flash-approved.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload CRC detail and nine-device-module reports (nonflashable)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_R30_R2_OEM_CRC_RESEARCH_NOFLASH
+          path: ${{ runner.temp }}/veux-r30r2-readonly/results/*
+          if-no-files-found: error
+          retention-days: 21
+          compression-level: 8
