@@ -1,0 +1,607 @@
+# VEUX R30 – Stock-QGKI 5.4.274 vs. validated R13 CASS research.
+# Compiles original R13 plus two separately configured research variants.
+# No firmware writes, no R13 tracked-source modifications and no flashable R30 release.
+# Before a run: upload the exact pinned R30 MAIN ZIP to repo root; main must retain R13 MAIN.
+# A: IPC_LOGGING=y. B: IPC_LOGGING/FTRACE/KPROBES/STACKTRACE=y.
+# Strict gates may abort if Kconfig changes unreviewed flags or a driver/DTB changes.
+# Not guaranteed to reproduce full stock ABI or to boot. NO FLASH / NO DEVICE PASS.
+name: VEUX R30 Stock-CASS Config and OEM ABI - NO FLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-r30-stock-cass-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  R5S2_MAIN_ZIP: VEUX_R5S2_BAKASU522_MAIN.zip
+  R5S2_MAIN_SHA256: 37a85d967df5cd9fa4dd3302e2073bc3b9ce461a6e03cd0ef51914fa5f5358b8
+  BAKASU_522: 522081c5b1c58587c4c743242eecf445ccebed5d
+  VERSION_MAIN_ZIP: VEUX_R5S2_GENUINE_BAKASU35234_MAIN.zip
+  VERSION_MAIN_SHA256: d3c0b0da02af4355d1cc0b77b14320c0e8a32fd15995dee7bfbe9acd263e2457
+  BAKASU_SYNC: f308ed0936bdd31163cb53da3f42bc7a698f5512
+  R4_PACKAGE_NAME: VEUX_R55H17_R4_CASS_UPDATE_MAIN.zip
+  R4_MANIFEST_SHA256: 5222d47522356998c6141908af436c23e3731b04ce1a3376f04e12527eed6311
+  REPRO_PACKAGE: VEUX_R13_CASS_MAIN.zip
+  REPRO_ARCHIVE_SHA256: 15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1
+  REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
+  R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
+  VEUX_EXECUTION_MODE: ci
+  R30_PKG_NAME: VEUX_R30_STOCK_CASS_ABI_MAIN.zip
+  R30_PKG_SHA256: 30d1727998c081ae9b899d282f1faee0d7fddb41f3233c8666c2958ddc5b3122
+jobs:
+  r5s2_bakasu_522:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: Rebuild R13 + isolated stock-near config candidates (NO FLASH)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+    - name: Checkout exact git commit, no stored credentials
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Verify exact repository and checked-out commit
+      id: r12_repository
+      shell: bash
+      run: 'set -euo pipefail
+
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+        test -z "$(git status --porcelain --untracked-files=all)"
+
+        echo ''R12_IMMUTABLE_REPOSITORY=PASS''
+
+        '
+    - name: 01 Authenticate the complete R13 MAIN before executing any payload
+      id: r12_auth
+      shell: bash
+      run: "set -euo pipefail\ntest -f \"$GITHUB_WORKSPACE/$REPRO_PACKAGE\"\ncat > \"$RUNNER_TEMP/r12-bootstrap.py\" <<'PY_R11_BOOTSTRAP'\n\
+        #!/usr/bin/env python3\n\"\"\"Authenticate every executable payload byte before extracting a new directory.\"\"\"\n\
+        import argparse\nimport hashlib\nimport json\nfrom pathlib import Path, PurePosixPath\nimport re\nimport stat\nimport\
+        \ zipfile\n\n\ndef extract(archive, destination, archive_sha, manifest_sha):\n    archive, destination = Path(archive),\
+        \ Path(destination)\n    if destination.exists() or destination.is_symlink():\n        raise ValueError('PAYLOAD_DESTINATION_EXISTS')\n\
+        \    if hashlib.sha256(archive.read_bytes()).hexdigest() != archive_sha:\n        raise ValueError('PAYLOAD_ARCHIVE_SHA_CHANGED')\n\
+        \    with zipfile.ZipFile(archive) as source:\n        items = source.infolist()\n        names = [item.filename for\
+        \ item in items]\n        if len(names) != len(set(names)):\n            raise ValueError('DUPLICATE_ZIP_ENTRY')\n\
+        \        if sum(item.file_size for item in items) > 100 * 1024 * 1024:\n            raise ValueError('PAYLOAD_TOO_LARGE')\n\
+        \        for item in items:\n            path = PurePosixPath(item.filename)\n            if (path.is_absolute() or\
+        \ '..' in path.parts or '.' in path.parts\n                    or str(path) != item.filename or '\\\\' in item.filename\n\
+        \                    or item.is_dir() or '\\x00' in item.filename\n                    or stat.S_ISLNK(item.external_attr\
+        \ >> 16)):\n                raise ValueError('UNSAFE_PAYLOAD_PATH')\n        if source.testzip() is not None:\n  \
+        \          raise ValueError('PAYLOAD_ZIP_CRC_FAILED')\n        raw = source.read('PAYLOAD_MANIFEST.json')\n      \
+        \  if hashlib.sha256(raw).hexdigest() != manifest_sha:\n            raise ValueError('PAYLOAD_MANIFEST_SHA_CHANGED')\n\
+        \        manifest = json.loads(raw)\n        if manifest.get('schema') != 1 or manifest.get('automatic_flash') is\
+        \ not False:\n            raise ValueError('UNTRUSTED_MANIFEST_SCHEMA')\n        files = manifest.get('files')\n \
+        \       if (not isinstance(files, dict) or not files\n                or not all(isinstance(k, str) and isinstance(v,\
+        \ str)\n                           and re.fullmatch('[0-9a-f]{64}', v) for k, v in files.items())):\n            raise\
+        \ ValueError('INVALID_PAYLOAD_HASH_MAP')\n        if set(names) != set(files) | {'PAYLOAD_MANIFEST.json'}:\n     \
+        \       raise ValueError('UNMANIFESTED_OR_MISSING_ENTRY')\n        for name, expected in files.items():\n        \
+        \    if hashlib.sha256(source.read(name)).hexdigest() != expected:\n                raise ValueError('PAYLOAD_FILE_SHA_CHANGED:'\
+        \ + name)\n        destination.mkdir(parents=True)\n        for name in sorted(names):\n            target = destination\
+        \ / name\n            target.parent.mkdir(parents=True, exist_ok=True)\n            target.write_bytes(source.read(name))\n\
+        \    return {'status': 'AUTHENTICATED', 'files': len(files),\n            'archive_sha256': archive_sha, 'manifest_sha256':\
+        \ manifest_sha,\n            'automatic_flash': False}\n\n\ndef main():\n    p = argparse.ArgumentParser(description=__doc__)\n\
+        \    p.add_argument('--archive', required=True)\n    p.add_argument('--out', required=True)\n    p.add_argument('--archive-sha256',\
+        \ required=True)\n    p.add_argument('--manifest-sha256', required=True)\n    a = p.parse_args()\n    print(json.dumps(extract(a.archive,\
+        \ a.out, a.archive_sha256, a.manifest_sha256)))\n\n\nif __name__ == '__main__':\n    main()\nPY_R11_BOOTSTRAP\npython3\
+        \ -B \"$RUNNER_TEMP/r12-bootstrap.py\" \\\n  --archive \"$GITHUB_WORKSPACE/$REPRO_PACKAGE\" \\\n  --out \"$RUNNER_TEMP/veux-r12-payload\"\
+        \ \\\n  --archive-sha256 \"$REPRO_ARCHIVE_SHA256\" \\\n  --manifest-sha256 \"$REPRO_MANIFEST_SHA256\"\nprintf 'REPRO_PAYLOAD=%s\\\
+        n' \"$RUNNER_TEMP/veux-r12-payload\" >> \"$GITHUB_ENV\"\n"
+    - name: 02 Verify all historical build inputs included inside MAIN
+      id: r12_legacy_inputs
+      shell: bash
+      run: "set -euo pipefail\ninputs=\"$REPRO_PAYLOAD/reference/root_inputs\"\nprintf '%s  %s\\n' \\\n  \"$R5S2_MAIN_SHA256\"\
+        \ \"$inputs/$R5S2_MAIN_ZIP\" \\\n  \"$VERSION_MAIN_SHA256\" \"$inputs/$VERSION_MAIN_ZIP\" \\\n  \"$R4_ARCHIVE_SHA256\"\
+        \ \"$inputs/$R4_PACKAGE_NAME\" | sha256sum --check --status\n{\n  printf 'R5S2_ARCHIVE=%s\\n' \"$inputs/$R5S2_MAIN_ZIP\"\
+        \n  printf 'VERSION_ARCHIVE=%s\\n' \"$inputs/$VERSION_MAIN_ZIP\"\n  printf 'R4_ARCHIVE=%s\\n' \"$inputs/$R4_PACKAGE_NAME\"\
+        \n} >> \"$GITHUB_ENV\"\necho 'R12_ALL_LEGACY_ARCHIVES_AUTHENTICATED_INSIDE_MAIN=PASS'\n"
+    - name: R4 authenticate source-port payload and run isolation negative tests before baseline build
+      shell: bash
+      run: "set -euo pipefail\ntest -f \"$R4_ARCHIVE\"\ncat > \"$RUNNER_TEMP/r4-extract-payload.py\" <<'PY_R4_EXTRACT'\n#!/usr/bin/env\
+        \ python3\n\"\"\"Extract a SHA-pinned executable payload, refusing unsafe ZIP entries.\"\"\"\nimport argparse\nimport\
+        \ hashlib\nimport json\nfrom pathlib import Path, PurePosixPath\nimport stat\nimport zipfile\n\n\ndef extract(archive:\
+        \ Path, destination: Path, manifest_sha: str) -> dict:\n    if destination.exists() or destination.is_symlink():\n\
+        \        raise ValueError('R4_PAYLOAD_DESTINATION_EXISTS')\n    with zipfile.ZipFile(archive) as source:\n       \
+        \ if source.testzip() is not None:\n            raise ValueError('R4_PAYLOAD_ZIP_CRC_FAILED')\n        names = source.namelist()\n\
+        \        if len(names) != len(set(names)):\n            raise ValueError('R4_DUPLICATE_ZIP_ENTRY')\n        raw =\
+        \ source.read('PAYLOAD_MANIFEST.json')\n        if hashlib.sha256(raw).hexdigest() != manifest_sha:\n            raise\
+        \ ValueError('R4_PAYLOAD_MANIFEST_HASH_CHANGED')\n        manifest = json.loads(raw)\n        if manifest.get('schema')\
+        \ != 1 or manifest.get('flash_allowed') is not False:\n            raise ValueError('R4_UNTRUSTED_MANIFEST_SCHEMA')\n\
+        \        files = manifest.get('files', {})\n        if not files or not all(isinstance(k, str) and isinstance(v, str)\
+        \ for k, v in files.items()):\n            raise ValueError('R4_INVALID_PAYLOAD_HASH_MAP')\n        # The final workflow\
+        \ and human-facing checksum wrapper are optional ZIP\n        # companions. They are not executed from this extracted\
+        \ payload.\n        companions = {'R55H17_R4_CASS_UPDATE_BUILD_NOFLASH.yml', 'SHA256SUMS', 'README.txt'}\n       \
+        \ extras = set(names) - set(files) - {'PAYLOAD_MANIFEST.json'}\n        if not extras <= companions:\n           \
+        \ raise ValueError('R4_UNMANIFESTED_PAYLOAD_ENTRY')\n        for item in source.infolist():\n            path = PurePosixPath(item.filename)\n\
+        \            if (path.is_absolute() or '..' in path.parts or '\\\\' in item.filename\n                    or item.filename.endswith('/')\
+        \ or '\\x00' in item.filename\n                    or stat.S_ISLNK(item.external_attr >> 16)):\n                raise\
+        \ ValueError('R4_UNSAFE_PAYLOAD_PATH')\n        for name, expected in files.items():\n            data = source.read(name)\n\
+        \            if hashlib.sha256(data).hexdigest() != expected:\n                raise ValueError('R4_PAYLOAD_FILE_HASH_CHANGED:'\
+        \ + name)\n        destination.mkdir(parents=True)\n        for name in ['PAYLOAD_MANIFEST.json', *sorted(files)]:\n\
+        \            target = destination / name\n            target.parent.mkdir(parents=True, exist_ok=True)\n         \
+        \   target.write_bytes(source.read(name))\n    return {'status': 'R4_PAYLOAD_AUTHENTICATED', 'files': len(files),\n\
+        \            'manifest_sha256': manifest_sha, 'flash_allowed': False}\n\n\ndef main():\n    parser = argparse.ArgumentParser()\n\
+        \    parser.add_argument('--archive', type=Path, required=True)\n    parser.add_argument('--out', type=Path, required=True)\n\
+        \    parser.add_argument('--manifest-sha256', required=True)\n    args = parser.parse_args()\n    print(json.dumps(extract(args.archive,\
+        \ args.out, args.manifest_sha256), sort_keys=True))\n\n\nif __name__ == '__main__':\n    main()\nPY_R4_EXTRACT\npython3\
+        \ -B \"$RUNNER_TEMP/r4-extract-payload.py\" --archive \"$R4_ARCHIVE\" --out \"$RUNNER_TEMP/veux-r55h17-r4-payload\"\
+        \ --manifest-sha256 \"$R4_MANIFEST_SHA256\"\nprintf 'R4_PAYLOAD=%s\\n' \"$RUNNER_TEMP/veux-r55h17-r4-payload\" >>\
+        \ \"$GITHUB_ENV\"\npython3 -B -m unittest discover -s \"$RUNNER_TEMP/veux-r55h17-r4-payload/workflow\" -p test_cass_r4.py\
+        \ -v\npython3 -B - \"$RUNNER_TEMP/veux-r55h17-r4-payload\" <<'PY_R4_AST'\nimport ast,sys\nfrom pathlib import Path\n\
+        for path in Path(sys.argv[1]).rglob('*.py'):\n    ast.parse(path.read_text(),filename=str(path))\nprint('R4_AUTHENTICATED_PYTHON_SYNTAX=PASS')\n\
+        PY_R4_AST\n"
+    - name: Activate the pinned ShellCheck 0.11.0 included in MAIN
+      id: r12_shellcheck
+      shell: bash
+      run: 'set -euo pipefail
+
+        tool="$REPRO_PAYLOAD/r12/host-tools/shellcheck"
+
+        printf ''%s  %s\n'' ''4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b'' "$tool" | sha256sum --check
+        --status
+
+        chmod 0755 "$tool"
+
+        printf ''%s\n'' "$REPRO_PAYLOAD/r12/host-tools" >> "$GITHUB_PATH"
+
+        "$tool" --version
+
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+        echo ''R12_PINNED_SHELLCHECK=PASS''
+
+        '
+    - name: Verify this workflow using pinned actionlint and runner ShellCheck
+      shell: bash
+      run: "set -euo pipefail\narchive=\"$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz\"\ncurl --fail --location --silent\
+        \ --show-error --retry 3 --max-time 120 \\\n  https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz\
+        \ \\\n  --output \"$archive\"\nprintf '%s  %s\\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'\
+        \ \"$archive\" | sha256sum --check --status\nmkdir -p \"$RUNNER_TEMP/veux-r5s2-actionlint\"\ntar -xzf \"$archive\"\
+        \ -C \"$RUNNER_TEMP/veux-r5s2-actionlint\" actionlint\ncommand -v shellcheck\n\"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\"\
+        \ -oneline .github/workflows/VEUX_R13_CASS_BUILD.yml\necho 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'\n\"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\"\
+        \ -oneline .github/workflows/VEUX_R30_STOCK_CASS_ABI_NOFLASH.yml\necho \"R30_OWN_ACTIONLINT_PASS\"\n"
+    - name: Authenticate R5S2 archive and full original R5S1 nested CI chain
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,os,stat,zipfile\nf=Path(os.environ['R5S2_ARCHIVE'])\n\
+        if hashlib.sha256(f.read_bytes()).hexdigest()!=os.environ['R5S2_MAIN_SHA256']:\n    raise SystemExit('R5S2_ROOT_ARCHIVE_CHANGED')\n\
+        with zipfile.ZipFile(f) as z:\n    if z.testzip() is not None:raise SystemExit('R5S2_ARCHIVE_CRC_ERROR')\n    m=json.loads(z.read('MANIFEST_SHA256.json'))\n\
+        \    p='common/scripts/veux_r5s2_unpack.py'\n    raw=z.read(p)\n    if m.get('schema')!=1 or m.get('flash_approved')\
+        \ is not False or hashlib.sha256(raw).hexdigest()!=m['files'][p]:\n        raise SystemExit('R5S2_BOOTSTRAP_UNVERIFIED')\n\
+        output=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-bootstrap-authenticated.py'\nif output.exists():raise SystemExit('BOOTSTRAP_COLLISION')\n\
+        output.write_bytes(raw)\nPY\npython3 \"$RUNNER_TEMP/veux-r5s2-bootstrap-authenticated.py\" \\\n  --main \"$R5S2_ARCHIVE\"\
+        \ \\\n  --out \"$RUNNER_TEMP/veux-r5s2-overlay\"\n{\n  printf 'R5S2_OVERLAY=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay\"\
+        \n  printf 'R5S1_OVERLAY=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1\"\n  printf 'R5_OVERLAY=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r5\"\
+        \n  printf 'R4_OVERLAY=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r4\"\n  printf 'NM211_R2_OVERLAY=%s\\\
+        n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r2\"\n  printf 'R5S1_REFERENCE=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/common/sync/VEUX_SYNC_F308_D726_R5_HOOK.c\"\
+        \n  printf 'R5_R4_SOURCE=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/R4_COMPILED_REFERENCE_SELINUX.c\"\
+        \n  printf 'R5_D726_SOURCE=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c\"\
+        \n  printf 'R5_R4_SOURCE=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/R4_COMPILED_REFERENCE_SELINUX.c\"\
+        \n  printf 'R5_D726_SOURCE=%s\\n' \"$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/D726_ORIGINAL_REFERENCE_SELINUX.c\"\
+        \n} >> \"$GITHUB_ENV\"\necho 'R5S2_FULL_ARCHIVE_CHAIN=PASS'\n"
+    - name: Authenticate isolated BakaSU version module and full R5S2 source chain
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,os,stat,zipfile\narchive=Path(os.environ['VERSION_ARCHIVE'])\n\
+        if hashlib.sha256(archive.read_bytes()).hexdigest()!=os.environ['VERSION_MAIN_SHA256']:\n    raise SystemExit('GENUINE_VERSION_ARCHIVE_SHA256_MISMATCH')\n\
+        dst=Path(os.environ['RUNNER_TEMP'])/'veux-real-version-overlay'\nif dst.exists():raise SystemExit('VERSION_OVERLAY_ALREADY_EXISTS')\n\
+        with zipfile.ZipFile(archive) as z:\n    if z.testzip() is not None:raise SystemExit('VERSION_OVERLAY_CRC_FAILED')\n\
+        \    m=json.loads(z.read('MANIFEST_SHA256.json'))\n    if (m.get('schema')!=1 or m.get('flash_approved') is not False\n\
+        \        or m.get('expected_real_version')!=35234):\n        raise SystemExit('VERSION_MANIFEST_UNTRUSTED')\n    expected=set(m['files'])|{'MANIFEST_SHA256.json'}\n\
+        \    if set(z.namelist())!=expected:raise SystemExit('VERSION_OVERLAY_FILES_CHANGED')\n    for item in z.infolist():\n\
+        \        name=item.filename\n        p=Path(name)\n        if (p.is_absolute() or '..' in p.parts or (len(p.parts)<2\
+        \ and name!='MANIFEST_SHA256.json')\n            or (item.external_attr>>16)&0o170000==0o120000):\n            raise\
+        \ SystemExit('UNSAFE_VERSION_OVERLAY_PATH')\n        data=z.read(name)\n        if name!='MANIFEST_SHA256.json' and\
+        \ hashlib.sha256(data).hexdigest()!=m['files'][name]:\n            raise SystemExit('VERSION_OVERLAY_FILE_SHA_FAILED:'+name)\n\
+        \    dst.mkdir(parents=True)\n    for item in z.infolist():\n        target=dst/item.filename\n        target.parent.mkdir(parents=True,exist_ok=True)\n\
+        \        target.write_bytes(z.read(item.filename))\nprint('VEUX_TRUE_VERSION_HASH_PINNED_BOOTSTRAP=PASS')\nPY\nprintf\
+        \ 'VERSION_OVERLAY=%s\\n' \"$RUNNER_TEMP/veux-real-version-overlay\" >> \"$GITHUB_ENV\"\necho 'R5S2_REAL_VERSION_SOURCE_OVERLAY=PASS'\n"
+    - name: Run R1-R5S1 regression tests and all new R5S2 negative tests
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_preflight_r1.py -v
+
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_build_r2.py -v
+
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_susfs_selinux54_r3.py -v
+
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_veux_r6_susfs_selinux54_build_r4.py -v
+
+        python3 -m unittest discover -s "$R5_OVERLAY/Tests" -p test_veux_r5_susfs_selinux.py -v
+
+        python3 -m unittest discover -s "$R5S1_OVERLAY/Tests" -p test_veux_sync_susfs_r1.py -v
+
+        python3 -m unittest discover -s "$R5S2_OVERLAY/Tests" -p test_veux_r5s2_522.py -v
+
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts:$PYTHONPATH"
+
+        python3 -m unittest discover -s "$VERSION_OVERLAY/Tests" -p test_veux_r5s2_true_version.py -v
+
+        test -z "$(git status --porcelain --untracked-files=all)"
+
+        echo ''R5S2_HISTORICAL_AND_REAL_GIT_VERSION_TESTS=PASS''
+
+        '
+    - name: Install documented build dependencies and pinned Python packages
+      shell: bash
+      run: "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y --no-install-recommends \\\n  bc binutils binutils-aarch64-linux-gnu\
+        \ bison build-essential ca-certificates curl dwarves file flex \\\n  git jq libelf-dev libncurses-dev libssl-dev openssl\
+        \ perl python3 \\\n  python3-venv python3-yaml rsync unzip zip xz-utils zstd\npython3 -m venv \"$RUNNER_TEMP/veux-r5s2-venv\"\
+        \n\"$RUNNER_TEMP/veux-r5s2-venv/bin/python\" -m pip install \\\n  --disable-pip-version-check --retries 2 --timeout\
+        \ 30 \\\n  ruamel.yaml==0.19.1 PyYAML==6.0.3\nprintf 'R5S2_PY=%s\\n' \"$RUNNER_TEMP/veux-r5s2-venv/bin/python\" >>\
+        \ \"$GITHUB_ENV\"\n"
+    - name: R4 verify every Bash stage and embedded Python before kernel compilation
+      shell: bash
+      run: "set -euo pipefail\ncommand -v shellcheck\nmkdir -p \"$RUNNER_TEMP/r55h17-r4-shellcheck\"\npython3 - \".github/workflows/VEUX_R13_CASS_BUILD.yml\"\
+        \ \"$RUNNER_TEMP/r55h17-r4-shellcheck\" <<'PY_R4_SC'\nimport ast,re,sys\nfrom pathlib import Path\nimport yaml\nsource=Path(sys.argv[1]);\
+        \ destination=Path(sys.argv[2])\ndocument=yaml.safe_load(source.read_text())\nfor i,step in enumerate(document['jobs']['r5s2_bakasu_522']['steps']):\n\
+        \    if 'run' in step:\n        if step.get('shell')!='bash':raise SystemExit('UNREVIEWED_RUN_SHELL')\n        (destination\
+        \ / (str(i)+'-step.sh')).write_text(step['run'])\n        lines=step['run'].splitlines()\n        for j,line in enumerate(lines):\n\
+        \            match=re.search(r\"<<'(PY[A-Za-z0-9_]*)'\",line)\n            if match:\n                delimiter=match.group(1)\n\
+        \                end=next(k for k in range(j+1,len(lines)) if lines[k]==delimiter)\n                ast.parse('\\\
+        n'.join(lines[j+1:end])+'\\n')\nPY_R4_SC\nfor script in \"$RUNNER_TEMP\"/r55h17-r4-shellcheck/*-step.sh; do\n  bash\
+        \ -n \"$script\"\n  shellcheck --shell=bash --severity=error \"$script\"\ndone\necho 'R55H17_R4_ALL_BASH_STAGES=PASS;\
+        \ NO_FLASH'\n"
+    - name: 03 Static Green Pass and packaging regression checks before compilation
+      id: r12_static
+      shell: bash
+      run: "set -euo pipefail\npython3 -B \"$REPRO_PAYLOAD/r13/static_green.py\" \\\n  --payload \"$REPRO_PAYLOAD\" \\\n \
+        \ --workflow \"$GITHUB_WORKSPACE/.github/workflows/VEUX_R13_CASS_BUILD.yml\" \\\n  --actionlint \"$RUNNER_TEMP/veux-r5s2-actionlint/actionlint\"\
+        \ \\\n  --out \"$RUNNER_TEMP/r12-reports/static\"\npython3 -B -m unittest discover -s \"$REPRO_PAYLOAD/pipeline\"\
+        \ -p test_pipeline_contract.py -v \\\n  2>&1 | tee \"$RUNNER_TEMP/r12-reports/PIPELINE_NEGATIVE_TESTS.log\"\npython3\
+        \ -B -m unittest discover -s \"$REPRO_PAYLOAD/r11\" -p test_source_update.py -v \\\n  2>&1 | tee \"$RUNNER_TEMP/r12-reports/SOURCE_UPDATE_TESTS.log\"\
+        \npython3 -B \"$REPRO_PAYLOAD/r11/packaging/test_builtin_contract.py\" \\\n  --reference-pipeline \"$REPRO_PAYLOAD/pipeline\"\
+        \ \\\n  --output \"$RUNNER_TEMP/r12-reports/ORIGINAL_INSTALLER_CONTRACT_TESTS.json\"\npython3 -B \"$REPRO_PAYLOAD/r12/tests/runhostcheck.py\"\
+        \ \\\n  --payload \"$REPRO_PAYLOAD\" \\\n  --out \"$RUNNER_TEMP/r12-reports/HOST_REGRESSION.json\"\npython3 -B -m\
+        \ unittest discover -s \"$REPRO_PAYLOAD/r12/tests\" -p test_postcompile_abi.py -v \\\n  2>&1 | tee \"$RUNNER_TEMP/r12-reports/POSTCOMPILE_ABI_REGRESSION.log\"\
+        \npython3 -B -m unittest discover -s \"$REPRO_PAYLOAD/r12/tests\" -p test_environment_lifecycle.py -v \\\n  2>&1 |\
+        \ tee \"$RUNNER_TEMP/r12-reports/ENVIRONMENT_LIFECYCLE_REGRESSION.log\"\npython3 -B \"$REPRO_PAYLOAD/r13/tests/run_native_tests.py\"\
+        \ \\\n  --source \"$REPRO_PAYLOAD/r13/reference/selinux_hide.updated.c\" \\\n  --out \"$RUNNER_TEMP/r12-reports/r13-native-functions\"\
+        \npython3 -B \"$REPRO_PAYLOAD/r13/tests/check_regression.py\" \\\n  --base \"$REPRO_PAYLOAD/r13/reference/selinux_hide.r12.c\"\
+        \ \\\n  --candidate \"$REPRO_PAYLOAD/r13/reference/selinux_hide.updated.c\" \\\n  --out \"$RUNNER_TEMP/r12-reports/r13-native-regression\"\
+        \npython3 -B -m unittest discover -s \"$REPRO_PAYLOAD/r13/tests\" -p test_r13_guards.py -v \\\n  2>&1 | tee \"$RUNNER_TEMP/r12-reports/R13_GUARD_REGRESSION.log\"\
+        \n"
+    - name: R30 authenticate original stock/R13 configurations and OEM partial ABI
+      id: r30_evidence
+      shell: bash
+      run: "set -euo pipefail\nverify=\"$R30_PKG_SHA256  $GITHUB_WORKSPACE/$R30_PKG_NAME\"\nprintf '%s\\n' \"$verify\" | sha256sum\
+        \ --check --strict\npython3 -B - <<'PY_R30_EVIDENCE'\nimport json,os,hashlib,zipfile,stat\nfrom pathlib import Path,PurePosixPath\n\
+        archive=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['R30_PKG_NAME']\ndest=Path(os.environ['RUNNER_TEMP'])/'r30-source'\n\
+        assert not dest.exists() and not dest.is_symlink()\nwith zipfile.ZipFile(archive) as z:\n    entries=z.infolist()\n\
+        \    names=[x.filename for x in entries]\n    assert len(names)==len(set(names)) and len(names)==11\n    assert z.testzip()\
+        \ is None\n    assert 'MANIFEST_SHA256.json' in names\n    manifest=json.loads(z.read('MANIFEST_SHA256.json'))\n \
+        \   assert manifest['schema']==1 and manifest['stage']=='VEUX_R30_STOCK_VS_R13_ABI_NOFLASH'\n    assert manifest['flash_allowed']\
+        \ is False and manifest['stock_image_in_package'] is False\n    assert set(manifest['files'])|{'MANIFEST_SHA256.json'}==set(names)\n\
+        \    assert sum(e.file_size for e in entries)<5_000_000\n    for e in entries:\n        path=PurePosixPath(e.filename)\n\
+        \        kind=stat.S_IFMT(e.external_attr>>16)\n        assert len(path.parts)==1 and not path.is_absolute() and e.filename\
+        \ not in ('.','..')\n        assert kind in (0,stat.S_IFREG) and not e.is_dir() and e.file_size<1_000_000\n      \
+        \  if e.filename!='MANIFEST_SHA256.json':\n           assert hashlib.sha256(z.read(e.filename)).hexdigest()==manifest['files'][e.filename]\n\
+        \    dest.mkdir(mode=0o700)\n    for name in names:\n        (dest/name).write_bytes(z.read(name))\nprint('R30_ROOT_ZIP_CRC_ALL_MEMBERS_SHA256_AND_NOFLASH=PASS')\n\
+        PY_R30_EVIDENCE\n"
+    - name: 'R30 static green: exact stock/R13 evidence, policy tests and bridge smoke'
+      id: r30_static
+      shell: bash
+      run: 'set -euo pipefail
+
+        python3 -B -c "import ast,pathlib;ast.parse(pathlib.Path(''$RUNNER_TEMP/r30-source/r30_abi_build_bridge.py'').read_text())"
+
+        python3 -B "$RUNNER_TEMP/r30-source/r30_abi_build_bridge.py" --selftest
+
+        python3 -B "$RUNNER_TEMP/r30-source/r30_abi_build_bridge.py" --plan
+
+        python3 -B - <<''PY_R30_STATIC''
+
+        from pathlib import Path
+
+        import hashlib,json,os,yaml
+
+        p=Path(''.github/workflows/VEUX_R30_STOCK_CASS_ABI_NOFLASH.yml'')
+
+        w=yaml.load(p.read_text(), Loader=yaml.BaseLoader)
+
+        assert w[''permissions'']=={''contents'':''read''}
+
+        assert list(w[''on''])==[''workflow_dispatch'']
+
+        s=w[''jobs''][''r5s2_bakasu_522''][''steps'']
+
+        assert sum(x.get(''id'')==''r12_compile'' for x in s)==1
+
+        assert sum(x.get(''id'')==''r30_gate'' for x in s)==1
+
+        assert sum(x.get(''id'')==''r30_upload'' for x in s)==1
+
+        assert sum(x.get(''id'')==''r30_evidence'' for x in s)==1
+
+        assert sum(x.get(''id'')==''r12_kernel_upload'' for x in s)==0
+
+        assert ''$RUNNER_TEMP/r30-source/r30_abi_build_bridge.py'' in next(x for x in s if x.get(''id'')==''r12_compile'')[''run'']
+
+        root=Path(os.environ[''RUNNER_TEMP''])/''r30-source''
+
+        plan=json.loads((root/''R30_OFFLINE_PLAN.json'').read_text())
+
+        assert plan[''stock_to_R13_differences'']==934
+
+        assert set(plan[''candidates''])=={''A_STOCK_IPC'',''B_STOCK_IPC_TRACE''}
+
+        assert plan[''oem_abi_baseline''][''QGKI''][''counts'']=={''MATCH'':1303,''CRC_MISMATCH'':1752,''NOT_EXPORTED'':93}
+
+        assert plan[''oem_abi_baseline''][''GKI''][''counts'']=={''MATCH'':4983,''CRC_MISMATCH'':6075,''NOT_EXPORTED'':442}
+
+        assert not any(''R13_CASS_KERNEL.zip'' in str(x.get(''with'',{}).get(''path'','''')) for x in s if x.get(''uses'','''').startswith(''actions/upload-artifact''))
+
+        print(''R30_STOCK_R13_BASELINE_AND_ABI_REPRODUCED=PASS; COMPILATION=NOT_YET'')
+
+        PY_R30_STATIC
+
+        '
+    - name: 03 Audit documented Perf source and compile review-only bitmap tests
+      id: r12_perf_audit
+      shell: bash
+      run: "set -euo pipefail\npython3 -B \"$REPRO_PAYLOAD/perf/audit_perf_source.py\" \\\n  --output \"$RUNNER_TEMP/r12-reports/PERF_SOURCE_AUDIT.json\"\
+        \npython3 -B \"$REPRO_PAYLOAD/perf/prepare_perf_source_review.py\" \\\n  --source \"$REPRO_PAYLOAD/perf/reference/perflocks/Target.cpp\"\
+        \ \\\n  --output-dir \"$RUNNER_TEMP/r12-reports/perf-source-review\"\n# The reviewed HAL differs from the ROM ABI.\
+        \ No patch is applied to the kernel or ROM.\n"
+    - name: Fetch only exact official BakaSU 522 commit and its parent
+      shell: bash
+      run: 'set -euo pipefail
+
+        donor="$RUNNER_TEMP/veux-r5s2-official-522-git"
+
+        test ! -e "$donor"
+
+        mkdir -p "$donor"
+
+        git -C "$donor" init --quiet
+
+        git -C "$donor" remote add origin https://github.com/Baka-SU/BakaSU.git
+
+        git -C "$donor" fetch --quiet --no-tags --depth=2 --filter=blob:none origin "$BAKASU_522"
+
+        git -C "$donor" sparse-checkout init --cone
+
+        git -C "$donor" sparse-checkout set kernel
+
+        git -C "$donor" checkout --quiet --detach FETCH_HEAD
+
+        test "$(git -C "$donor" rev-parse HEAD)" = "$BAKASU_522"
+
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
+        "$R5S2_PY" -u "$R5S2_OVERLAY/common/scripts/veux_bakasu_522_r5s2.py" donor --donor "$donor"
+
+        printf ''BAKASU522_DONOR=%s\n'' "$donor" >> "$GITHUB_ENV"
+
+        echo ''R5S2_OFFICIAL_PARENT_TARGET_AND_20_GIT_BLOBS=PASS''
+
+        '
+    - name: Verify genuine official sync-susfs Git history before source versioning
+      shell: bash
+      run: "set -euo pipefail\nhistory=\"$RUNNER_TEMP/veux-real-bakasu-history\"\ntest ! -e \"$history\"\n# The historical\
+        \ sync-susfs branch was deleted upstream. Preserve the\n# original commit, full ancestry, and version formula without\
+        \ fallback.\ngit init --quiet \"$history\"\ngit -C \"$history\" remote add origin https://github.com/Baka-SU/BakaSU.git\n\
+        # Fetch the exact historical commit AND its original official tag.\n# The branch no longer exists; never create a\
+        \ synthetic tag or version.\ngit -C \"$history\" fetch --quiet --no-tags origin \"$BAKASU_SYNC\" \\\n  'refs/tags/v4.2.0-rc3:refs/tags/v4.2.0-rc3'\n\
+        git -C \"$history\" checkout --quiet --detach \"$BAKASU_SYNC\"\ntest \"$(git -C \"$history\" rev-parse HEAD)\" = \"\
+        $BAKASU_SYNC\"\ntest \"$(git -C \"$history\" rev-parse 'refs/tags/v4.2.0-rc3^{commit}')\" = 239e1e8871b8fcd51a6e5b3002e0ba522fdd99fb\n\
+        git -C \"$history\" merge-base --is-ancestor refs/tags/v4.2.0-rc3 HEAD\ntest \"$(git -C \"$history\" describe --abbrev=0\
+        \ --tags)\" = v4.2.0-rc3\ntest \"$(git -C \"$history\" rev-parse 'HEAD^{tree}')\" = ac3682909827ba7d3f382e10cfeec9bdd71ae78d\n\
+        test \"$(git -C \"$history\" rev-parse 'HEAD^')\" = ebd6382e405b33c67e53f1ea29fdf443b8a533d5\ntest ! -f \"$history/.git/shallow\"\
+        \ntest \"$(git -C \"$history\" rev-list --count HEAD)\" = 4533\nexport PYTHONPATH=\"$VERSION_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}\"\
+        \n\"$R5S2_PY\" -u \"$VERSION_OVERLAY/common/scripts/veux_r5s2_true_version.py\" donor --sync \"$history\"\nprintf\
+        \ 'SYNC_DONOR=%s\\n' \"$history\" >> \"$GITHUB_ENV\"\necho 'GENUINE_OFFICIAL_BAKASU_GIT_HISTORY_35233=PASS'\n"
+    - name: Prepare proven R5S1 donor source with pinned NoMount 2.1.1
+      shell: bash
+      run: "set -euo pipefail\n\"$R5S2_PY\" -u \"$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py\" \\\n\
+        \  prepare --repo \"$GITHUB_WORKSPACE\" --work \"$RUNNER_TEMP/veux-r5s2-work\" --kernel 5.4.274\n"
+    - name: Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary
+      shell: bash
+      run: "set -euo pipefail\n\"$R5S2_PY\" -u \"$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py\" \\\n\
+        \  preflight --repo \"$GITHUB_WORKSPACE\" --work \"$RUNNER_TEMP/veux-r5s2-work\" --kernel 5.4.274\nexport PYTHONPATH=\"\
+        $R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}\"\
+        \n\"$R5S2_PY\" -u \"$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py\" audit \\\n  --d726 \"$R5S1_OVERLAY/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c\"\
+        \ \\\n  --reference \"$R5S1_REFERENCE\"\necho 'R5S2_GREEN_R5S1_SOURCE_AND_SUSFS_PIN=PASS'\n"
+    - name: R55H17-R2 pin and verify official BakaSU 35252 and NoMount 2.1.1/v22 source
+      shell: bash
+      run: "set -euo pipefail\nfetch_exact() {\n  local url=\"$1\" sha=\"$2\" dest=\"$3\"\n  test ! -e \"$dest\"\n  git clone\
+        \ --quiet \"$url\" \"$dest\"\n  git -C \"$dest\" checkout --quiet --detach \"$sha\"\n  test \"$(git -C \"$dest\" rev-parse\
+        \ HEAD)\" = \"$sha\"\n  test -z \"$(git -C \"$dest\" status --porcelain --untracked-files=all)\"\n}\nfetch_exact https://github.com/Baka-SU/BakaSU.git\
+        \ d5e9e025b8b49155f8014684d64c91742b465f65 \"$RUNNER_TEMP/BakaSU35252\"\nfetch_exact https://github.com/maxsteeel/nomount.git\
+        \ bf1847f98fed382369c43bfd652cd93774b9b8e3 \"$RUNNER_TEMP/NoMount22\"\nfetch_exact https://github.com/maxsteeel/nomount.git\
+        \ 7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3 \"$RUNNER_TEMP/NoMountR5S2\"\necho 'R55H17_R2_PINNED_OFFICIAL_SOURCES=PASS;\
+        \ NO_FLASH'\n"
+    - name: 04 Compile protected baseline and fresh complete CASS candidate
+      shell: bash
+      run: 'set -euo pipefail
+
+        export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
+        "$R5S2_PY" -B -u "$RUNNER_TEMP/r30-source/r30_abi_build_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work
+        "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync
+        "$SYNC_DONOR" --jobs 4
+
+        '
+      id: r12_compile
+    - name: Require two actual CASS builds, check Kconfig closure, ABI and NO FLASH
+      id: r30_gate
+      shell: bash
+      run: "set -euo pipefail\npython3 -B - <<'PY_R30_GATE'\nfrom pathlib import Path\nimport json,os,hashlib\np=Path(os.environ['RUNNER_TEMP'])/'r30-abi-variants'\n\
+        row=json.loads((p/'R30_AB_EXPERIMENT_SUMMARY.json').read_text())\nassert row['status']=='TWO_REAL_VARIANTS_BUILT_NO_FLASH'\n\
+        assert row['flash_allowed'] is False and row['device_test'] is False\nassert set(row['variants'])=={'A_STOCK_IPC','B_STOCK_IPC_TRACE'}\n\
+        assert row['baseline_config_sha256']=='405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'\nresults={'baseline':row['baseline_oem_abi']}\n\
+        for name in row['variants']:\n    assert row['variants'][name]=='ACTUALLY_COMPILED_NO_FLASH'\n    stage=p/name\n \
+        \   r=json.loads((stage/'R30_RESULT.json').read_text())\n    assert r['status']=='ACTUALLY_COMPILED_NO_FLASH'\n  \
+        \  assert r['flash_allowed'] is False and r['automatic_flash'] is False and r['device_test'] is False\n    assert\
+        \ r['config_policy']['effective_flags_pass'] and r['config_policy']['protected_flags_pass']\n    assert r['dtb_sha256']=='42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'\n\
+        \    assert r['module_layout_crc'].startswith('0x') and len(r['module_layout_crc'])==10\n    expected=['CONFIG_IPC_LOGGING']\
+        \ if name=='A_STOCK_IPC' else ['CONFIG_IPC_LOGGING','CONFIG_FTRACE','CONFIG_KPROBES','CONFIG_STACKTRACE']\n    assert\
+        \ r['config_policy']['requested']==expected\n    assert not r['config_policy']['implicit_stock_aligned'] or all(x[1]=='y'\
+        \ for x in r['config_policy']['implicit_stock_aligned'].values())\n    for cohort,total in [('QGKI',3148),('GKI',11500)]:\n\
+        \       assert sum(r['oem_abi'][cohort]['counts'].values())==total\n       assert r['oem_abi'][cohort]['full_abi_compatible']\
+        \ is False or r['oem_abi'][cohort]['module_layout_expected']==r['module_layout_crc']\n    sums=(stage/'output/SHA256SUMS').read_text().splitlines()\n\
+        \    assert len(sums)>=5\n    for line in sums:\n        expected_sha,filename=line.split('  ',1)\n        assert\
+        \ hashlib.sha256((stage/'output'/filename).read_bytes()).hexdigest()==expected_sha\n    results[name]={'abi':r['oem_abi'],'config_sha256':r['config_sha256'],\
+        \ 'module_symvers_sha256':r['module_symvers_sha256'], 'status':'COMPILED_RESEARCH_NO_FLASH'}\n(p/'R30_ABI_COMPARISON.json').write_text(json.dumps(results,indent=2,sort_keys=True)+'\\\
+        n')\nfor cohort in ('QGKI','GKI'):\n    baseline=results['baseline'][cohort]['counts']['MATCH']\n    a=results['A_STOCK_IPC']['abi'][cohort]['counts']['MATCH']\n\
+        \    b=results['B_STOCK_IPC_TRACE']['abi'][cohort]['counts']['MATCH']\n    print('R30_VENDOR_IMPORT_MATCH_'+cohort+':R13='+str(baseline)+';A='+str(a)+';B='+str(b))\n\
+        print('R30_TWO_FULL_STOCK_NEAR_CASS_BUILDS=PASS; DEVICE_PASS=NO; FULL_VENDOR_ABI=UNPROVEN; NO_FLASH=YES')\nPY_R30_GATE\n"
+    - name: Independently require R5S1 module ABI boot AK3 and new 522 compiled proof
+      shell: bash
+      run: "set -euo pipefail\n\"$R5S2_PY\" -u \"$REPRO_PAYLOAD/r12/verify_legacy_result_r2.py\" \\\n  --work \"$RUNNER_TEMP/veux-r5s2-work\"\
+        \ --overlay \"$R5S1_OVERLAY\"\npython3 - <<'PY'\nimport json,os\nfrom pathlib import Path\nroot=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-work'\n\
+        row=json.loads((root/'public/5.4.274/RESULT.json').read_text())\nx=row.get('bakasu_522_r5s2') or {}\nif (x.get('status')!='EXPERIMENTAL_522_5_4_COMPILED_IN_R5S1_LINEAGE'\n\
+        \    or x.get('change_count')!=20\n    or x.get('tracepoint_disabled') is not True\n    or x.get('compat_config_y')\
+        \ is not True\n    or x.get('r5s1_selinux_unchanged') is not True\n    or x.get('flash_release') is not False\n  \
+        \  or row.get('device') is not False\n    or row.get('image_sha256')=='49007385ebf2cd21dde154e8ca71a67331802ec624e7c6ebfa571f51cb199e4f'):\n\
+        \    raise SystemExit('R5S2_522_COMPILED_PROOF_INCOMPLETE')\nprint('R5S2_COMPILE_ABI_CONFIG_AK3_AND_522_COMPAT_PROOFS=PASS;\
+        \ NO_FLASH')\nPY\n"
+    - name: R55H17-R1 require unchanged CASS config and 132 loaded RMNET CRC imports - NO FLASH
+      shell: bash
+      run: "set -euo pipefail\nreport_dir=\"$RUNNER_TEMP/veux-r55h17-r1-audit\"\nmkdir -p \"$report_dir\"\ncat > \"$RUNNER_TEMP/veux-r55h17-cass-gate.py\"\
+        \ <<'PY_R55H17_GATE'\n#!/usr/bin/env python3\n\"\"\"VEUX R55H17 offline proof: CASS baseline, unchanged module ABI,\
+        \ no flash.\nStrict audit only; cannot attest to device boot or sign an image.\n\"\"\"\nimport argparse\nimport base64\n\
+        import csv\nimport hashlib\nimport json\nfrom pathlib import Path\nimport sys\nimport zlib\n\nCONFIG_SHA256 = '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'\n\
+        EXPECTED_RELEASE = '5.4.274-qgki-g82179e362f33'\nEXPECTED_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'\n\
+        REFERENCE = json.loads(zlib.decompress(base64.b64decode('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')).decode('utf-8'))\n\
+        FEATURES = {\n    'CONFIG_SCHED_CASS': 'y', 'CONFIG_SCHED_WALT': 'n',\n    'CONFIG_NR_CPUS': '8', 'CONFIG_MODULES':\
+        \ 'y',\n    'CONFIG_MODVERSIONS': 'y', 'CONFIG_CFI_CLANG': 'y',\n    'CONFIG_LTO_CLANG': 'y', 'CONFIG_LOCALVERSION':\
+        \ '\"-qgki\"',\n    'CONFIG_KSU': 'y', 'CONFIG_KSU_SUSFS': 'y',\n}\n\n\ndef sha256(path):\n    h=hashlib.sha256()\n\
+        \    with Path(path).open('rb') as f:\n        while True:\n            data=f.read(1048576)\n            if not data:break\n\
+        \            h.update(data)\n    return h.hexdigest()\n\n\ndef parse_config(text):\n    out={}\n    for line in text.splitlines():\n\
+        \        if line.startswith('CONFIG_') and '=' in line:\n            key,val=line.split('=',1)\n        elif line.startswith('#\
+        \ CONFIG_') and line.endswith(' is not set'):\n            key,val=line[2:].split(' is not set',1)[0],'n'\n      \
+        \  else:continue\n        if key in out:raise ValueError('DUPLICATE_CONFIG_KEY:'+key)\n        out[key]=val\n    return\
+        \ out\n\n\ndef parse_symvers(text):\n    out={}\n    for line in text.splitlines():\n        parts=line.split()\n\
+        \        if len(parts)<4:raise ValueError('MALFORMED_SYMVERS_LINE:'+line[:60])\n        crc,name=parts[:2]\n     \
+        \   if not crc.startswith('0x'):raise ValueError('SYMVERS_MISSING_CRC:'+name)\n        crc=f'0x{int(crc,16):08x}'\n\
+        \        if name in out and out[name]!=crc:raise ValueError('SYMVERS_DUPLICATE_DIFFERENT_CRC:'+name)\n        out[name]=crc\n\
+        \    return out\n\n\ndef audit(config_file, symvers_file, release, dtb_sha256=None, require_config_sha=True):\n  \
+        \  failures=[]\n    conf_path=Path(config_file)\n    cfg=parse_config(conf_path.read_text(encoding='utf-8'))\n   \
+        \ sym=parse_symvers(Path(symvers_file).read_text(encoding='utf-8'))\n    for key,expected in FEATURES.items():\n \
+        \       if cfg.get(key,'n')!=expected:\n            failures.append(f'CONFIG_MISMATCH:{key}:expected={expected}:got={cfg.get(key,\"\
+        n\")}')\n    actual_cfg_sha=sha256(conf_path)\n    if require_config_sha and actual_cfg_sha!=CONFIG_SHA256:\n    \
+        \    failures.append('FULL_REFERENCE_CONFIG_SHA_MISMATCH')\n    if release.strip()!=EXPECTED_RELEASE:\n        failures.append('KERNEL_RELEASE_MISMATCH')\n\
+        \    if dtb_sha256 is not None and dtb_sha256.lower()!=EXPECTED_DTB_SHA256:\n        failures.append('VEUX_DTB_SHA_MISMATCH')\n\
+        \    crc_rows=[]\n    for mod,name,expected in REFERENCE:\n        actual=sym.get(name)\n        status='MATCH' if\
+        \ actual==expected else ('MISSING' if actual is None else 'CRC_MISMATCH')\n        crc_rows.append({'module':mod,'symbol':name,'original_module_crc':expected,'candidate_crc':actual\
+        \ or '', 'status':status})\n        if status!='MATCH':failures.append(f'RMNET_{status}:{mod}:{name}')\n    report={\n\
+        \        'schema':1, 'stage':'R55H17_R1_CASS_1TO1_REFERENCE_GATE',\n        'status':'CASS_REFERENCE_STATIC_PASS_NOFLASH'\
+        \ if not failures else 'BLOCKED_CASS_REFERENCE_OR_VENDOR_ABI',\n        'kernel_release':release.strip(), 'config_sha256':actual_cfg_sha,\n\
+        \        'config_reference_sha256':CONFIG_SHA256,\n        'dtb_sha256_reported':dtb_sha256,\n        'critical_config':{k:cfg.get(k,'n')\
+        \ for k in FEATURES},\n        'rmnet_imports_count':len(crc_rows),\n        'rmnet_imports_matched':sum(x['status']=='MATCH'\
+        \ for x in crc_rows),\n        'rmnet_module_layout_crc':sym.get('module_layout'),\n        'failures':failures, 'flash_allowed':False,\n\
+        \        'device_test':False,\n        'new_bakasu_35252_integrated':False,\n        'new_nomount_v22_integrated':False,\n\
+        \        'walt_porting_in_this_stage':False,\n    }\n    return report,crc_rows\n\n\ndef main():\n    ap=argparse.ArgumentParser()\n\
+        \    ap.add_argument('--config',required=True)\n    ap.add_argument('--symvers',required=True)\n    ap.add_argument('--release-file',required=True)\n\
+        \    ap.add_argument('--dtb-sha256')\n    ap.add_argument('--report-dir',required=True)\n    ns=ap.parse_args()\n\
+        \    report,rows=audit(ns.config,ns.symvers,Path(ns.release_file).read_text(),ns.dtb_sha256)\n    d=Path(ns.report_dir)\n\
+        \    d.mkdir(parents=True,exist_ok=True)\n    (d/'R55H17_R1_CASS_RESULT.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\\\
+        n',encoding='utf-8')\n    with (d/'R55H17_R1_RMNET_132_ABI.csv').open('w',newline='',encoding='utf-8') as f:\n   \
+        \     w=csv.DictWriter(f,fieldnames=list(rows[0]),delimiter=';');w.writeheader();w.writerows(rows)\n    print(f'R55H17_R1_CASS_GATE={report[\"\
+        status\"]}; RMNET={report[\"rmnet_imports_matched\"]}/{len(rows)}; NO_FLASH')\n    if report['failures']:\n      \
+        \  for msg in report['failures'][:24]:print('BLOCKER:',msg)\n        raise SystemExit(26)\n\nif __name__=='__main__':main()\n\
+        PY_R55H17_GATE\npython3 -m py_compile \"$RUNNER_TEMP/veux-r55h17-cass-gate.py\"\nbuild=\"$RUNNER_TEMP/veux-r5s2-work/builds/diagnostics/5.4.274\"\
+        \ntest -s \"$build/config-reports/actual-build.config\"\ntest -s \"$build/build/Module.symvers\"\ntest -s \"$build/build/include/config/kernel.release\"\
+        \ntest -s \"$build/DTB-CHECK.json\"\ntest -s \"$build/build-result.json\"\npython3 -B - \"$build/DTB-CHECK.json\"\
+        \ \"$build/build-result.json\" <<'PY_DTB_GATE'\nimport json,sys\nx=json.load(open(sys.argv[1]));b=json.load(open(sys.argv[2]))\n\
+        sha='42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'\nassert x['match'] is True and x['actual_sha256']==sha\
+        \ and b['dtb_sha256']==sha\nassert b['compile'] is True and b['kernelrelease']=='5.4.274-qgki-g82179e362f33'\nPY_DTB_GATE\n\
+        python3 -B \"$RUNNER_TEMP/veux-r55h17-cass-gate.py\" \\\n  --config \"$build/config-reports/actual-build.config\"\
+        \ \\\n  --symvers \"$build/build/Module.symvers\" \\\n  --release-file \"$build/build/include/config/kernel.release\"\
+        \ \\\n  --dtb-sha256 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37 \\\n  --report-dir \"$report_dir\"\
+        \npython3 -B - \"$report_dir/R55H17_R1_CASS_RESULT.json\" <<'PY_FINAL_R55H17'\nimport json,sys\nx=json.load(open(sys.argv[1]));assert\
+        \ x['status']=='CASS_REFERENCE_STATIC_PASS_NOFLASH'\nassert x['rmnet_imports_matched']==132 and x['rmnet_imports_count']==132\n\
+        assert x['flash_allowed'] is False and x['device_test'] is False\nassert x['new_bakasu_35252_integrated'] is False\
+        \ and x['new_nomount_v22_integrated'] is False\nprint('R55H17_R1_BASELINE_CASS_132_132_ABI_AND_STATIC_GATES=PASS;\
+        \ UPDATES=NEXT_STAGE; FLASH=NO')\nPY_FINAL_R55H17\n"
+    - name: R4 require genuine candidate build CASS config DTB version preinit and 132 RMNET proofs
+      shell: bash
+      run: "set -euo pipefail\npython3 -B - \"$RUNNER_TEMP/veux-r55h17-r4/evidence/R4_RESULT.json\"                   \"$RUNNER_TEMP/veux-r55h17-r1-audit/R55H17_R1_CASS_RESULT.json\"\
+        \ <<'PY_R4_FINAL'\nimport json,sys\nfrom pathlib import Path\nupdated=json.loads(Path(sys.argv[1]).read_text())\n\
+        baseline=json.loads(Path(sys.argv[2]).read_text())\nif updated.get('status')!='CASS_UPDATED_FULL_BUILD_AND_STATIC_ABI_PASS_NOFLASH':\n\
+        \    raise SystemExit('UPDATED_CASS_BUILD_OR_STATIC_GATES_INCOMPLETE')\nfor flag in ('compiler_test','source_updates_staged','kernel_image_generated','raw_exported',\n\
+        \             'original_baseline_unchanged','embedded_config_matches','cass_linked'):\n    if updated.get(flag) is\
+        \ not True:raise SystemExit('MISSING_PROOF:'+flag)\nif (updated.get('flash_allowed') is not False or updated.get('device_test')\
+        \ is not False\n    or updated.get('rmnet_imports_matched')!=132\n    or baseline.get('rmnet_imports_matched')!=132\n\
+        \    or updated.get('bakasu_version',{}).get('count')!=4554\n    or updated.get('bakasu_version',{}).get('version')!=35254\n\
+        \    or updated.get('bakasu_version',{}).get('commit')!='d2537b13ab15fce72e8c0d99e7788805f071aeb4'\n    or updated.get('bakasu_version',{}).get('parent')!='2cbbcc2363aa8d4b6286fc2266a338063b2b77a7'):\n\
+        \    raise SystemExit('R4_VERSION_ABI_OR_NOFLASH_CONTRACT_CHANGED')\nprint('R55H17_R4_UPDATED_CASS_BUILD_AND_STATIC_ABI=PASS;\
+        \ DEVICE_TEST=NO; FLASH=NO')\nPY_R4_FINAL\n"
+      id: r4_verify
+    - name: 05 Record actual toolchain and reproducible build evidence
+      id: r12_environment
+      shell: bash
+      run: "set -euo pipefail\npython3 -B \"$REPRO_PAYLOAD/r13/record_environment_r13.py\" \\\n  --stage \"$RUNNER_TEMP/veux-r55h17-r4\"\
+        \ --out \"$RUNNER_TEMP/r12-reports\"\ncp \"$REPRO_PAYLOAD/PAYLOAD_MANIFEST.json\" \"$RUNNER_TEMP/r12-reports/PIPELINE_INPUT_MANIFEST.json\"\
+        \ncp \"$REPRO_PAYLOAD/provenance/REPRODUCIBLE_INPUT_CONTRACT.json\" \"$RUNNER_TEMP/r12-reports/\"\ncp \"$GITHUB_WORKSPACE/.github/workflows/VEUX_R13_CASS_BUILD.yml\"\
+        \ \"$RUNNER_TEMP/r12-reports/EXECUTED_WORKFLOW.yml\"\ncp \"$RUNNER_TEMP/r11-reports/BASELINE_ABI_ORDER_CHECK.json\"\
+        \ \"$RUNNER_TEMP/veux-r55h17-r4/evidence/\"\ncp \"$RUNNER_TEMP/r11-reports/BASELINE_ABI_ORDER_CHECK.json\" \"$RUNNER_TEMP/r12-reports/\"\
+        \ncp \"$REPRO_PAYLOAD/r13/SOURCE_CONTRACT.json\" \"$RUNNER_TEMP/r12-reports/R13_SOURCE_CONTRACT.json\"\n"
+    - name: 06 Validate complete Image and vmlinux, built-in drivers, and real CI provenance
+      id: r12_builtin
+      shell: bash
+      run: "set -euo pipefail\npython3 -B \"$REPRO_PAYLOAD/r13/packaging/collect_builtin.py\" \\\n  --source \"$RUNNER_TEMP/veux-r55h17-r4/source/kernel\"\
+        \ \\\n  --build \"$RUNNER_TEMP/veux-r55h17-r4/build\" \\\n  --evidence \"$RUNNER_TEMP/veux-r55h17-r4/evidence\" \\\
+        \n  --out \"$RUNNER_TEMP/r12-flat-build\" \\\n  --repo-commit \"$GITHUB_SHA\" --evidence-mode ci\npython3 -B \"$REPRO_PAYLOAD/r11/packaging/test_builtin_contract.py\"\
+        \ \\\n  --reference-pipeline \"$REPRO_PAYLOAD/pipeline\" \\\n  --candidate-build \"$RUNNER_TEMP/veux-r55h17-r4/build\"\
+        \ \\\n  --output \"$RUNNER_TEMP/r12-reports/BUILTIN_COMMAND_CONTRACT_TESTS.json\"\n# The complete kernel was compiled\
+        \ once in the candidate stage above.\n# No external RMNET rebuild, dummy module or previous vmlinux is accepted here.\n"
+    - name: Verify checked-out repository stayed unchanged
+      if: ${{ always() }}
+      shell: bash
+      run: 'set -euo pipefail
+
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+        test -z "$(git status --porcelain --untracked-files=all)"
+
+        echo ''R55H17_R4_CHECKED_OUT_REPOSITORY_UNCHANGED=PASS; DEVICE_TEST=NO; FLASH=NO''
+
+        '
+      id: r12_repo_unchanged
+    - name: Upload R30 research results, NEVER flashable
+      id: r30_upload
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX_R30_STOCK_CASS_ABI_NOFLASH
+        path: '${{ runner.temp }}/r30-abi-variants/*/R30_RESULT.json
+
+          ${{ runner.temp }}/r30-abi-variants/*/*.log
+
+          ${{ runner.temp }}/r30-abi-variants/*/output/*
+
+          ${{ runner.temp }}/r30-abi-variants/R30_AB_EXPERIMENT_SUMMARY.json
+
+          ${{ runner.temp }}/r30-abi-variants/R30_ABI_COMPARISON.json
+
+          ${{ runner.temp }}/r30-source/R30_OFFLINE_PLAN.json
+
+          '
+        if-no-files-found: warn
+        retention-days: 21
+        include-hidden-files: false
+        compression-level: 6
+    - name: R30 print truthful research-only status
+      id: r30_complete
+      if: ${{ always() }}
+      shell: bash
+      run: "set -euo pipefail\n{\n  echo '## R30 Original-Stock-Konfiguration und R13-CASS Vergleich'\n  echo ''\n  echo '-\
+        \ Baseline: Stock 5.4.274 vs original R13, 934 Kconfig-Unterschiede'\n  echo '- Varianten: A IPC-Logging; B IPC-Logging\
+        \ plus Ftrace/Kprobes/Stacktrace'\n  echo '- Original R13, CASS, SUSFS, BakaSU, NoMount, Vendor/DTBO: unveraendert'\n\
+        \  echo '- OEM-QGKI/GKI ABI nach echten Module.symvers, keine erzwungenen CRCs'\n  echo '- Nie als Flash-Paket freigegeben;\
+        \ KEIN Geraetetest'\n} >> \"$GITHUB_STEP_SUMMARY\"\nif [ -f \"$RUNNER_TEMP/r30-abi-variants/R30_ABI_COMPARISON.json\"\
+        \ ]; then\n  echo '- Zwei vollständige Forschungsbuilds: PASS (siehe R30_ABI_COMPARISON.json)' >> \"$GITHUB_STEP_SUMMARY\"\
+        \nelse\n  echo '- Build/ABI-Gate: NOCH NICHT ERFOLGREICH; Logs lesen, nicht flashen' >> \"$GITHUB_STEP_SUMMARY\"\n\
+        fi\n"
