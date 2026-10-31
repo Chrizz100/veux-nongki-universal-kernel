@@ -1,11 +1,14 @@
-# VEUX R30 – Stock-QGKI 5.4.274 vs. validated R13 CASS research.
+# VEUX R30-R1 – Stock-QGKI 5.4.274 vs validated R13 CASS research.
+# Fixes an observed Kconfig integer default (IPC_LOG_MINIDUMP_BUFFERS=n -> 0).
+# Maintains strict blocking for all other unapproved config drift.
+# Adds preservation/printing of the baseline kernel-worker failure log.
 # Compiles original R13 plus two separately configured research variants.
 # No firmware writes, no R13 tracked-source modifications and no flashable R30 release.
 # Before a run: upload the exact pinned R30 MAIN ZIP to repo root; main must retain R13 MAIN.
 # A: IPC_LOGGING=y. B: IPC_LOGGING/FTRACE/KPROBES/STACKTRACE=y.
 # Strict gates may abort if Kconfig changes unreviewed flags or a driver/DTB changes.
 # Not guaranteed to reproduce full stock ABI or to boot. NO FLASH / NO DEVICE PASS.
-name: VEUX R30 Stock-CASS Config and OEM ABI - NO FLASH
+name: VEUX R30-R1 Stock-CASS Config and OEM ABI - NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -31,7 +34,7 @@ env:
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
   VEUX_EXECUTION_MODE: ci
   R30_PKG_NAME: VEUX_R30_STOCK_CASS_ABI_MAIN.zip
-  R30_PKG_SHA256: 30d1727998c081ae9b899d282f1faee0d7fddb41f3233c8666c2958ddc5b3122
+  R30_PKG_SHA256: 64a8a7dc17e6681d617474e494ef4017a312c46dadb85462826a06c4e9f196c4
 jobs:
   r5s2_bakasu_522:
     if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
@@ -319,6 +322,8 @@ jobs:
 
         assert sum(x.get(''id'')==''r30_upload'' for x in s)==1
 
+        assert sum(x.get(''id'')==''r30_failure_evidence'' for x in s)==1
+
         assert sum(x.get(''id'')==''r30_evidence'' for x in s)==1
 
         assert sum(x.get(''id'')==''r12_kernel_upload'' for x in s)==0
@@ -431,6 +436,30 @@ jobs:
 
         '
       id: r12_compile
+    - name: R30-R1 show exact worker and variant failure evidence
+      id: r30_failure_evidence
+      if: ${{ failure() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        root="$RUNNER_TEMP/veux-r5s2-work/report"
+        log="$root/BUILD_5.4.274.log"
+        if [ -f "$log" ]; then
+          echo 'R30_BASELINE_WORKER_LOG_TAIL_BEGIN'
+          tail -n 130 "$log"
+          echo 'R30_BASELINE_WORKER_LOG_TAIL_END'
+        else
+          echo 'R30_BASELINE_WORKER_LOG_NOT_CREATED'
+        fi
+        variant="$RUNNER_TEMP/r30-abi-variants/A_STOCK_IPC/R30_RESULT.json"
+        if [ -f "$variant" ]; then
+          python3 -B - "$variant" <<'PY_R30_FAILURE'
+        import json,sys
+        row=json.load(open(sys.argv[1], encoding='utf-8'))
+        print('R30_FIRST_VARIANT_STATUS=' + str(row.get('status','UNKNOWN')))
+        print('R30_FIRST_VARIANT_ERROR=' + str(row.get('error','UNKNOWN')))
+        PY_R30_FAILURE
+        fi
     - name: Require two actual CASS builds, check Kconfig closure, ABI and NO FLASH
       id: r30_gate
       shell: bash
@@ -587,6 +616,8 @@ jobs:
           ${{ runner.temp }}/r30-abi-variants/R30_ABI_COMPARISON.json
 
           ${{ runner.temp }}/r30-source/R30_OFFLINE_PLAN.json
+
+          ${{ runner.temp }}/veux-r5s2-work/report/BUILD_5.4.274.log
 
           '
         if-no-files-found: warn
