@@ -1,0 +1,231 @@
+# R43 hardened staging draft: official actionlint/GitHub CI still NOT executed.
+# Isolated Python -I and PYTHONOPTIMIZE=0 prevent critical assertions being stripped.
+# Nur R41-Quell-/Manifest-/NoMount-Installer-Sicherheitspruefung.
+# KEIN Kernelbau, KEIN Boot-/Image-/DTB-/DTBO-Repack, KEIN Flash.
+name: VEUX R42 R41 NoMount Source Gate - NO FLASH
+
+'on':
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veux-r42-r41-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  r42_source_only:
+    name: Authenticated R41 source and installer guard - NO FLASH
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONOPTIMIZE: '0'
+      R13_MAIN: VEUX_R13_CASS_MAIN.zip
+      R13_MAIN_SHA256: 15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1
+      R41_MAIN: VEUX_R41_NOMOUNT_SOURCE_MAIN.zip
+      R41_MAIN_SHA256: e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff
+      ACTIONLINT_VERSION: v1.7.12
+      ACTIONLINT_TGZ_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - name: Checkout exact revision without retaining credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert immutable repository and authenticated inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -f "$GITHUB_WORKSPACE/$R13_MAIN"
+          test -f "$GITHUB_WORKSPACE/$R41_MAIN"
+          printf '%s  %s\n' "$R13_MAIN_SHA256" "$GITHUB_WORKSPACE/$R13_MAIN" | sha256sum --check --strict
+          printf '%s  %s\n' "$R41_MAIN_SHA256" "$GITHUB_WORKSPACE/$R41_MAIN" | sha256sum --check --strict
+          echo 'R42_REPOSITORY_AND_TWO_INPUT_SHA256=PASS'
+
+      - name: Verify all ZIP member hashes and safely stage exactly one verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY_R42_AUTH'
+          import hashlib, json, os, re, stat, zipfile
+          from pathlib import Path, PurePosixPath
+
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          destination = Path(os.environ['RUNNER_TEMP']) / 'veux-r42-source-gate'
+          assert not destination.exists() and not destination.is_symlink(), 'REUSED_TEMP_DIRECTORY'
+          destination.mkdir(mode=0o700)
+          sha = lambda data: hashlib.sha256(data).hexdigest()
+          for key, expected_key, expected_count in [('R13_MAIN', 'R13_MAIN_SHA256', 319),
+                                                    ('R41_MAIN', 'R41_MAIN_SHA256', 327)]:
+              archive = workspace / os.environ[key]
+              assert archive.is_file() and not archive.is_symlink(), 'NOT_REGULAR_INPUT'
+              assert sha(archive.read_bytes()) == os.environ[expected_key], 'ARCHIVE_SHA_CHANGED'
+              with zipfile.ZipFile(archive) as z:
+                  entries = z.infolist()
+                  names = [e.filename for e in entries]
+                  assert len(names) == len(set(names)) == expected_count, 'ZIP_MEMBERS_CHANGED'
+                  assert z.testzip() is None, 'ZIP_CRC_FAILED'
+                  assert sum(e.file_size for e in entries) < 130_000_000, 'ZIP_SIZE_LIMIT'
+                  assert 'PAYLOAD_MANIFEST.json' in names, 'MISSING_MANIFEST'
+                  manifest = json.loads(z.read('PAYLOAD_MANIFEST.json'))
+                  assert manifest.get('schema') == 1 and manifest.get('automatic_flash') is False
+                  expected_files = manifest.get('files', {})
+                  assert isinstance(expected_files, dict) and set(names) == set(expected_files) | {'PAYLOAD_MANIFEST.json'}
+                  for e in entries:
+                      path = PurePosixPath(e.filename)
+                      assert (str(path) == e.filename and not path.is_absolute() and
+                              not any(x in ('..', '.') for x in e.filename.split('/')) and
+                              '\\' not in e.filename and '\x00' not in e.filename and
+                              not e.is_dir() and len(path.parts) < 8 and
+                              stat.S_IFMT(e.external_attr >> 16) != stat.S_IFLNK), 'UNSAFE_ZIP_ENTRY'
+                      if e.filename != 'PAYLOAD_MANIFEST.json':
+                          expected = expected_files[e.filename]
+                          assert isinstance(expected, str) and re.fullmatch('[a-f0-9]{64}', expected)
+                          assert sha(z.read(e.filename)) == expected, 'MEMBER_SHA_MISMATCH'
+                  if key == 'R41_MAIN':
+                      target = destination / 'verify_r41_source.py'
+                      target.write_bytes(z.read('r41/verify_r41_source.py'))
+                      assert sha(target.read_bytes()) == expected_files['r41/verify_r41_source.py']
+          print('R42_ZIP_MANIFEST_MEMBER_SHA_AND_SAFE_VERIFIER=PASS; BUILD=NO; FLASH=NO')
+          PY_R42_AUTH
+
+      - name: Verify official actionlint binary hash and lint this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ACTIONLINT_VERSION" = 'v1.7.12'
+          package="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 2 --connect-timeout 15 --max-time 60 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            --output "$package"
+          printf '%s  %s\n' "$ACTIONLINT_TGZ_SHA256" "$package" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/veux-r42-actionlint"
+          tar -xzf "$package" -C "$RUNNER_TEMP/veux-r42-actionlint" actionlint
+          chmod 700 "$RUNNER_TEMP/veux-r42-actionlint/actionlint"
+          "$RUNNER_TEMP/veux-r42-actionlint/actionlint" -version
+          "$RUNNER_TEMP/veux-r42-actionlint/actionlint" \
+            "$GITHUB_WORKSPACE/.github/workflows/VEUX_R42_R41_SOURCE_CI_NOFLASH.yml"
+          # A receipt is written ONLY after a successful, SHA-verified official lint.
+          workflow_hash=$(sha256sum "$GITHUB_WORKSPACE/.github/workflows/VEUX_R42_R41_SOURCE_CI_NOFLASH.yml" | awk '{print $1}')
+          printf 'version=%s\narchive_sha256=%s\nworkflow_sha256=%s\n' \
+            "$ACTIONLINT_VERSION" "$ACTIONLINT_TGZ_SHA256" "$workflow_hash" \
+            > "$RUNNER_TEMP/veux-r42-actionlint-proof.txt"
+          echo 'R42_OFFICIAL_ACTIONLINT_VERIFIED_AND_PASSED'
+
+      - name: Reproduce R41 contract, negative guards and R12 R13 regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -B "$RUNNER_TEMP/veux-r42-source-gate/verify_r41_source.py" \
+            --candidate-main "$GITHUB_WORKSPACE/$R41_MAIN" \
+            --r13-main "$GITHUB_WORKSPACE/$R13_MAIN" \
+            --out "$RUNNER_TEMP/veux-r42-source-results"
+
+      - name: Enforce R41 source-only result and emit R42 CI receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY_R42_RECEIPT'
+          import hashlib, json, os
+          from pathlib import Path
+          folder = Path(os.environ['RUNNER_TEMP']) / 'veux-r42-source-results'
+          # Refuse a success receipt without the preceding official lint marker.
+          proof = Path(os.environ['RUNNER_TEMP']) / 'veux-r42-actionlint-proof.txt'
+          workflow = Path(os.environ['GITHUB_WORKSPACE']) / '.github/workflows/VEUX_R42_R41_SOURCE_CI_NOFLASH.yml'
+          assert proof.is_file() and not proof.is_symlink(), 'ACTIONLINT_NOT_PROVEN'
+          expected_lines = [
+              'version=' + os.environ['ACTIONLINT_VERSION'],
+              'archive_sha256=' + os.environ['ACTIONLINT_TGZ_SHA256'],
+              'workflow_sha256=' + hashlib.sha256(workflow.read_bytes()).hexdigest(),
+          ]
+          assert proof.read_text().splitlines() == expected_lines, 'ACTIONLINT_PROOF_MISMATCH'
+          # R45: Bind the receipt to the exact R41 checks and negative tests,
+          # not only their counts. Use explicit exceptions regardless of Python flags.
+          data = json.loads((folder / 'R41_SOURCE_GATE_RESULT.json').read_text())
+          def check(condition, label):
+              if not condition:
+                  raise RuntimeError('R45_SOURCE_RECEIPT_REJECTED_' + label)
+          expected_checks = [
+              'R13_319_ARCHIVE_MEMBERS_AUTHENTICATED',
+              'R41_EVERY_ARCHIVE_MEMBER_AUTHENTICATED',
+              'R40_ORIGINAL_ARCHIVE_PIN_MATCH',
+              'R41_NEW_MANIFEST_AND_CONTRACT_PINNED',
+              'ONLY_FOUR_AUTHORIZED_R13_FILES_CHANGED',
+              'CASS_BAKASU_SUSFS_NOMOUNT_KERNEL_CONTRACT_UNCHANGED',
+              'R40_GUARD_AND_DOCUMENTATION_PATCHES_PROVENANCE_VERIFIED',
+              'FOUR_PATCHES_REPRODUCED_BYTE_FOR_BYTE',
+              'R13_AND_R41_REVISION_AUDITS_PASSED',
+              'SHELL_SYNTAX_AND_PINNED_SHELLCHECK_PASS',
+              'ORIGINAL_42_REGRESSIONS_PASSED',
+              'NO_KERNEL_IMAGE_BOOT_IMAGE_OR_WORKFLOW_EMBEDDED',
+          ]
+          expected_negative_controls = [
+              'ORIGINAL_R13_GUARD_REJECTS_R40_INSTALLER',
+              'R41_AUDITOR_REJECTS_R13_ASSETS_ANYKERNEL.SH.IN',
+              'R41_AUDITOR_REJECTS_R13_PACKAGE_ANYKERNEL.PY',
+              'R41_AUDITOR_REJECTS_R13_SOURCE_CONTRACT.JSON',
+          ]
+          expected_regressions = {
+              'R13_GUARDS': {'passed': 15, 'total': 15},
+              'R12_ENV': {'passed': 27, 'total': 27},
+          }
+          expected_authorized = [
+              'ANLEITUNG.txt',
+              'r13/assets/anykernel.sh.in',
+              'r13/audit_revision.py',
+              'r13/package_anykernel.py',
+          ]
+          check(data.get('status') == 'R41_SOURCE_MANIFEST_CONTRACT_LOCAL_GREEN__GITHUB_ACTIONLINT_PENDING__NO_FLASH', 'STATUS')
+          check(data.get('checks') == expected_checks, 'EXACT_CHECKS')
+          check(data.get('negative_controls') == expected_negative_controls, 'EXACT_NEGATIVE_CONTROLS')
+          check(data.get('regression_tests') == expected_regressions, 'EXACT_REGRESSIONS')
+          check(data.get('authorized_modified_members') == expected_authorized, 'AUTHORIZED_FILES')
+          check(data.get('original_r13_members') == 319 and data.get('r41_candidate_members') == 327, 'ARCHIVE_MEMBER_COUNTS')
+          check(data.get('source_candidate_sha256') == os.environ['R41_MAIN_SHA256'], 'SOURCE_SHA')
+          check(data.get('original_r13_sha256') == os.environ['R13_MAIN_SHA256'], 'R13_SHA')
+          check(data.get('original_r40_sha256') == '396c97202fc36a350c7ab17d87b5893d72ce9f12126976d92fbc27c1bc414344', 'R40_SHA')
+          revision = data.get('revision_audit')
+          check(isinstance(revision, dict), 'REVISION_AUDIT')
+          check(revision.get('status') == 'R41_EXPLICIT_INSTALLER_OVERLAY_PASS', 'REVISION_STATUS')
+          check(revision.get('authorized_r40_installer_overlay') is True, 'REVISION_OVERLAY')
+          check(revision.get('full_abi_and_compiler_pins_preserved') is True, 'REVISION_ABI_PINS')
+          check(revision.get('device_test') is False, 'REVISION_NO_DEVICE_TEST')
+          for key in ('flash_allowed', 'kernel_build_performed', 'installer_executed', 'device_modified'):
+              check(data.get(key) is False, key.upper())
+          source = (folder / 'R41_SOURCE_GATE_RESULT.json').read_bytes()
+          receipt = {
+              'status': 'R42_GITHUB_SOURCE_ONLY_CI_PASS__NO_KERNEL_BUILD__NO_FLASH',
+              'actionlint_binary_version': os.environ['ACTIONLINT_VERSION'],
+              'r13_sha256': os.environ['R13_MAIN_SHA256'],
+              'r41_sha256': os.environ['R41_MAIN_SHA256'],
+              'r41_report_sha256': hashlib.sha256(source).hexdigest(),
+              'checks': 12, 'negative_tests': 4, 'regression_tests': 42,
+              'actionlint_verified': True,  # bound to the verified proof above
+              'actionlint_proof_sha256': hashlib.sha256(proof.read_bytes()).hexdigest(),
+              'kernel_build_performed': False,
+              'flash_allowed': False,
+              'source_tree_post_overlay_fully_rebuilt': False,
+              'external_oem_nine_module_abi_cleared': False
+          }
+          (folder / 'R42_CI_RECEIPT.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          (folder / 'R42_ACTIONLINT_PROOF.txt').write_bytes(proof.read_bytes())
+          print(json.dumps(receipt, sort_keys=True))
+          PY_R42_RECEIPT
+          git diff --quiet && git diff --cached --quiet
+          echo 'R42_REPOSITORY_UNMODIFIED=YES; NO_KERNEL_BUILD; NO_FLASH'
+
+      - name: Upload sanitized source-only reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_R42_R41_SOURCE_CI_NOFLASH
+          path: ${{ runner.temp }}/veux-r42-source-results/*
+          retention-days: 21
+          if-no-files-found: error
