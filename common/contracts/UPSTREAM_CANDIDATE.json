@@ -27,16 +27,16 @@
       "version_kind": "base-version-dynamic-commit-count"
     },
     "resukisu": {
-      "ahead": 83,
+      "ahead": 87,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
       "changed": true,
-      "commit": "5785bdb8091304322f597f67d50e0b79f9815cb2",
+      "commit": "516d3e87fbc986ccefdde2c2765f1700612441a9",
       "compatibility_errors": [],
       "component_gate": false,
       "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
-      "local_version": 4553,
+      "local_version": 4557,
       "ref": "refs/heads/main",
       "review_reasons": [
         "ReSukiSU UAPI changed: 5 -> 6"
@@ -48,13 +48,13 @@
       "tag": "v4.2.0-rc3",
       "uapi": 6,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35253"
+      "version": "35257"
     },
     "susfs": {
-      "ahead": 19,
+      "ahead": 24,
       "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
       "changed": true,
-      "commit": "cfa82d53371b2dacb3ed79e31cb62a9cc349b5d5",
+      "commit": "937232ce8c4bdcbe4216e99a1b3d7b5cf633f7c6",
       "compatibility_errors": [],
       "component_gate": true,
       "current_commit": "5326e21a7eb232f9e21debdd5164e99bee3d1e2f",
@@ -148,7 +148,7 @@
   },
   "note": "PASS means source/integration gates accept the candidate. REVIEW_REQUIRED means a declared interface/version generation changed and must be explicitly reviewed before a manual build is allowed. No status proves that the kernel compiles; only a manually started compile can prove that.",
   "package_performed": false,
-  "repository_sha": "f891fe26da68317786b0cda2c347eac7859210bb",
+  "repository_sha": "02bd6cc2e55bb89e019d7dbe3946c68e2478c16c",
   "review_reasons": [
     "resukisu: ReSukiSU UAPI changed: 5 -> 6",
     "nomount: NoMount declared version changed: 20 -> 22"
