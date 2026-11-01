@@ -1,0 +1,140 @@
+# VEUX R32: source-verified R13/R30-A compiled RMNET metadata vs historical ROM loader rules.
+# Research only: no kernel build, no vendor/init changes, no insmod, no flash.
+name: VEUX R32 ROM-RMNET Loader and Compiled ABI - NO FLASH
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  r32_readonly:
+    name: Read-only ROM loader and compiled ABI proof
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      R32_MAIN: VEUX_R32_RMNET_LOADER_MAIN.zip
+      R32_MAIN_SHA256: 463c22f0e763a702bdf4ade436b947922de201d47dff1b5dc171f150b647f73f
+      R30_MAIN: VEUX_R30_R2_OEM_CRC_MAIN.zip
+      R30_MAIN_SHA256: ec1104a695a96db2515104fad6c0bf2a178b693c66a651ccca511aded146768b
+      R31_MAIN: VEUX_R31_OEM_ABI_ROOTCAUSE_MAIN.zip
+      R31_MAIN_SHA256: 7e0a14ed43a90e39a3b3c253f2b5ee9845a14a6965a5507484d19f49eeb42062
+    steps:
+      - name: Checkout current repository, never save credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify repo, git revision, and all three immutable evidence archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Chrizz100/veux-nongki-universal-kernel
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          for item in R32 R30 R31; do
+            case "$item" in
+              R32) filename="$R32_MAIN"; digest="$R32_MAIN_SHA256" ;;
+              R30) filename="$R30_MAIN"; digest="$R30_MAIN_SHA256" ;;
+              R31) filename="$R31_MAIN"; digest="$R31_MAIN_SHA256" ;;
+            esac
+            test -f "$GITHUB_WORKSPACE/$filename"
+            printf '%s  %s\n' "$digest" "$GITHUB_WORKSPACE/$filename" | sha256sum --check --strict
+          done
+          echo 'R32_REPO_AND_THREE_INPUT_ARCHIVES_SHA256=PASS'
+
+      - name: Authenticate R32 ZIP structure, every member hash, and extract into runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_R32_BOOTSTRAP'
+          from pathlib import Path, PurePosixPath
+          import hashlib,json,os,stat,zipfile
+          src=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['R32_MAIN']
+          target=Path(os.environ['RUNNER_TEMP'])/'veux-r32-private-runner-work'
+          digest=lambda b:hashlib.sha256(b).hexdigest()
+          with zipfile.ZipFile(src) as z:
+              entries=z.infolist()
+              names=[e.filename for e in entries]
+              assert len(names)==len(set(names)) and z.testzip() is None, 'ZIP_CRC_OR_DUPLICATES'
+              assert 'MANIFEST_SHA256.json' in names
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              assert m['schema']==1
+              assert m['description']=='VEUX_R32_RMNET_LOADER_COMPILED_ABI_READONLY'
+              assert m['flash_allowed'] is False and m['kernel_build'] is False
+              assert m['sensitive_original_rc_included'] is False
+              assert set(m['files'])|{'MANIFEST_SHA256.json'}==set(names), 'BAD_MANIFEST_FILES'
+              for e in entries:
+                  p=PurePosixPath(e.filename)
+                  assert not p.is_absolute() and '..' not in p.parts and not e.is_dir(), 'PATH_ESCAPE'
+                  assert stat.S_IFMT(e.external_attr>>16)!=stat.S_IFLNK, 'UNSAFE_SYMLINK'
+                  assert len(p.parts)<=4, 'PATH_DEPTH'
+                  data=z.read(e.filename)
+                  if e.filename!='MANIFEST_SHA256.json':
+                      assert digest(data)==m['files'][e.filename], 'BAD_MEMBER_SHA_'+e.filename
+              assert not target.exists() and not target.is_symlink(), 'REUSED_WORKDIR'
+              target.mkdir(mode=0o700)
+              for e in entries:
+                  if e.filename=='MANIFEST_SHA256.json': continue
+                  dest=target/e.filename
+                  dest.parent.mkdir(parents=True,exist_ok=True)
+                  dest.write_bytes(z.read(e.filename))
+          print('R32_ZIP_ALL_MEMBERS_SHA256_AND_SAFETY=PASS; NO_KERNEL_BUILD; NO_FLASH')
+          PY_R32_BOOTSTRAP
+
+      - name: Run 45 regression and negative tests against authentic inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/veux-r32-private-runner-work"
+          R32_TEST_R30="$GITHUB_WORKSPACE/$R30_MAIN" \
+          R32_TEST_R31="$GITHUB_WORKSPACE/$R31_MAIN" \
+          python3 -B -m unittest discover -s "$root/tests" -p test_r32.py -v
+          python3 -B "$root/source/r32_audit.py" --selftest
+          python3 -m py_compile "$root/source/r32_audit.py" "$root/tests/test_r32.py"
+          sh -n "$root/R32_DEVICE_READONLY.sh"
+          echo 'R32_TESTS=45_OF_45_GREEN; SHELL_AND_PYTHON_SYNTAX=PASS'
+
+      - name: Reproduce the four reports and prove byte-for-byte equality
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/veux-r32-private-runner-work"
+          out="$RUNNER_TEMP/veux-r32-reports"
+          python3 -B "$root/source/r32_audit.py" \
+            --input "$root" \
+            --r30 "$GITHUB_WORKSPACE/$R30_MAIN" \
+            --r31 "$GITHUB_WORKSPACE/$R31_MAIN" \
+            --out "$out"
+          python3 - "$root/preview" "$out" <<'PY_R32_VERIFY'
+          import hashlib,json,sys
+          from pathlib import Path
+          reference=Path(sys.argv[1]);actual=Path(sys.argv[2])
+          names={'R32_RESULTS.json','R32_COMPILED_SYMBOL_PROOF.csv','R32_ROM_LOADER_RULES.csv','R32_PRUEFBERICHT_DE.txt'}
+          assert set(x.name for x in actual.iterdir())==names,'R32_UNEXPECTED_REPORT_FILES'
+          for name in names:
+              a=(reference/name).read_bytes();b=(actual/name).read_bytes()
+              assert hashlib.sha256(a).digest()==hashlib.sha256(b).digest(),'REPORT_CHANGED_'+name
+          result=json.loads((actual/'R32_RESULTS.json').read_text())
+          assert result['status']=='STATIC_EVIDENCE_PASS__CURRENT_DEVICE_LOADER_UNVERIFIED__OEM_ABI_BLOCKED__NO_FLASH'
+          assert result['flash_allowed'] is False and result['device_test_performed'] is False
+          assert result['source_tree_final_post_overlay_verified'] is False
+          assert result['OEM_external_nine_module_paths_ABI']['incompatible']==9
+          assert result['rom_historical_loader_rules']['rule_count']==12
+          assert all(v['found'] for v in result['r30_a_compiled_symbol_evidence'].values())
+          print('R32_REPRODUCED_REPORTS_BYTE_IDENTICAL=4/4; ACTUAL_LOADER=UNVERIFIED; OEM_ABI=BLOCKED')
+          PY_R32_VERIFY
+          git diff --quiet && git diff --cached --quiet
+          echo 'R32_REPO_SOURCE_UNMODIFIED=YES; BUILD=NO; FLASH=NO'
+          cat "$out/R32_PRUEFBERICHT_DE.txt"
+
+      - name: Upload research-only reports, never device captures
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_R32_RMNET_LOADER_RESEARCH_NOFLASH
+          path: ${{ runner.temp }}/veux-r32-reports/R32_*
+          retention-days: 21
+          if-no-files-found: error
