@@ -1,0 +1,110 @@
+{
+  "base_r13_sha256": "15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1",
+  "device_pass_inferred": false,
+  "flash_allowed": false,
+  "historic_original_kernel": {
+    "new_kernel_compiled": false,
+    "old_compiled_kernel_release": "5.4.274-qgki-g82179e362f33",
+    "old_dtb_sha256": "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37",
+    "old_kernel_image_sha256": "434f36efa102262896767734263c104c4a3e5fb028add310783768cca5ee1c37",
+    "old_symvers_sha256": "0b5f909c68ec375533e961ac106da49c71b25f4fc99e6d13d0d093a52a540ec2",
+    "old_vmlinux_sha256": "f7d92241f0a9a6cbac2208c83f7858cb31edf9bfb0b7ef40eaeeaa55b18ba977",
+    "original_kernel_zip_sha256": "531ea25cf626cefbe6faeb1c541476b1ec020734f164d002a2403bbd177c6734",
+    "outer_artifact_sha256": "b933d65cb06aacc48c560a2dd19feb4caddf924c9b1b0051e09840260ba7756e",
+    "status": "EXACT_OLD_R13_BUILD_VERIFIED_REFERENCE_ONLY"
+  },
+  "installer_r41_sha256": "e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff",
+  "kernel_build_performed": false,
+  "new_critical_build_gates": [
+    "real_native54_SUSFS_hooks",
+    "BakaSU_true_git_replay",
+    "native_compilation",
+    "RMNET_132_imports",
+    "OEM_9_priority_module_paths",
+    "DTB_DTBO_boot",
+    "R41_NoMount_605_installer",
+    "AnyKernel3_repack",
+    "rollback_plan"
+  ],
+  "new_upstreams_pending": {
+    "bakasu": "516d3e87fbc986ccefdde2c2765f1700612441a9",
+    "susfs_candidate": "937232ce8c4bdcbe4216e99a1b3d7b5cf633f7c6"
+  },
+  "older_test_gate_requirements": {
+    "r12_r13_regressions": 42,
+    "r41_contracts": 12,
+    "r41_negative": 4,
+    "r51_unit_regressions": 19,
+    "r52_unit_regressions": 40
+  },
+  "r41_authorized_changed_paths": [
+    "ANLEITUNG.txt",
+    "r13/assets/anykernel.sh.in",
+    "r13/audit_revision.py",
+    "r13/package_anykernel.py"
+  ],
+  "schema": "VEUX_R54_HISTORICAL_BUILD_CONTRACT_V1",
+  "status": "ORIGINAL_BUILD_AND_TEST_CHAIN_AUTHENTICATED__NEW_UPSTREAM_BUILD_BLOCKED",
+  "workflow": {
+    "historical_workflow_sha256": "59c79a61417df4b7238609c9776a6dfef1eef12a04f723a1ce792e9a165fb8c6",
+    "protected_steps": [
+      {
+        "name": "01 Authenticate the complete R13 MAIN before executing any payload",
+        "position": 3
+      },
+      {
+        "name": "02 Verify all historical build inputs included inside MAIN",
+        "position": 4
+      },
+      {
+        "name": "Run R1-R5S1 regression tests and all new R5S2 negative tests",
+        "position": 10
+      },
+      {
+        "name": "03 Static Green Pass and packaging regression checks before compilation",
+        "position": 13
+      },
+      {
+        "name": "Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary",
+        "position": 18
+      },
+      {
+        "name": "04 Compile protected baseline and fresh complete CASS candidate",
+        "position": 20
+      },
+      {
+        "name": "Independently require R5S1 module ABI boot AK3 and new 522 compiled proof",
+        "position": 21
+      },
+      {
+        "name": "R55H17-R1 require unchanged CASS config and 132 loaded RMNET CRC imports - NO FLASH",
+        "position": 22
+      },
+      {
+        "name": "R4 require genuine candidate build CASS config DTB version preinit and 132 RMNET proofs",
+        "position": 23
+      },
+      {
+        "name": "05 Record actual toolchain and reproducible build evidence",
+        "position": 24
+      },
+      {
+        "name": "06 Validate complete Image and vmlinux, built-in drivers, and real CI provenance",
+        "position": 25
+      },
+      {
+        "name": "07 Package the freshly built kernel as the normal AnyKernel ZIP",
+        "position": 26
+      },
+      {
+        "name": "Verify checked-out repository stayed unchanged",
+        "position": 28
+      },
+      {
+        "name": "09 Upload the verified kernel artifact",
+        "position": 29
+      }
+    ],
+    "steps_total": 31
+  }
+}

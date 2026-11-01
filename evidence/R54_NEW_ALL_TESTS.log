@@ -1,0 +1,49 @@
+test_01_sha_known (test_r54_gates.ContractTests.test_01_sha_known) ... ok
+test_02_r13_archive_exact (test_r54_gates.ContractTests.test_02_r13_archive_exact) ... ok
+test_03_r41_archive_exact (test_r54_gates.ContractTests.test_03_r41_archive_exact) ... ok
+test_04_archive_count (test_r54_gates.ContractTests.test_04_archive_count) ... ok
+test_05_tampered_archive_rejected (test_r54_gates.ContractTests.test_05_tampered_archive_rejected) ... ok
+test_06_bad_member_count_rejected (test_r54_gates.ContractTests.test_06_bad_member_count_rejected) ... ok
+test_07_real_yaml_gate (test_r54_gates.ContractTests.test_07_real_yaml_gate) ... ok
+test_08_duplicate_yaml_keys_rejected (test_r54_gates.ContractTests.test_08_duplicate_yaml_keys_rejected) ... ok
+test_09_safe_yaml_on_literal (test_r54_gates.ContractTests.test_09_safe_yaml_on_literal) ... ok
+test_10_immutable_old_kernel_artifact (test_r54_gates.ContractTests.test_10_immutable_old_kernel_artifact) ... ok
+test_11_new_upstream_compilation_not_proven (test_r54_gates.ContractTests.test_11_new_upstream_compilation_not_proven) ... ok
+test_12_blob_genuine_format (test_r54_gates.ReferenceTests.test_12_blob_genuine_format) ... ok
+test_13_single_section (test_r54_gates.ReferenceTests.test_13_single_section) ... ok
+test_14_duplicate_patch_target_blocked (test_r54_gates.ReferenceTests.test_14_duplicate_patch_target_blocked) ... ok
+test_15_no_5_4_partial_pass (test_r54_gates.ReferenceTests.test_15_no_5_4_partial_pass) ... ok
+test_16_tamper_reference_sha_rejected (test_r54_gates.ReferenceTests.test_16_tamper_reference_sha_rejected) ... ok
+test_17_prior_only_no_flash (test_r54_gates.ReferenceTests.test_17_prior_only_no_flash) ... ok
+test_18_ref_workflow_file_pins_present (test_r54_gates.ReferenceTests.test_18_ref_workflow_file_pins_present) ... ok
+test_19_missing_workflow_rejected (test_r54_gates.ReferenceTests.test_19_missing_workflow_rejected) ... ok
+test_20_modified_build_source_rejected (test_r54_gates.ReferenceTests.test_20_modified_build_source_rejected) ... ok
+test_01_manual_only (test_r54_workflow.DraftChecks.test_01_manual_only) ... ok
+test_02_no_extra_permissions (test_r54_workflow.DraftChecks.test_02_no_extra_permissions) ... ok
+test_03_one_no_flash_job (test_r54_workflow.DraftChecks.test_03_one_no_flash_job) ... ok
+test_04_branch_main_repo_guard (test_r54_workflow.DraftChecks.test_04_branch_main_repo_guard) ... ok
+test_05_checkout_pinned (test_r54_workflow.DraftChecks.test_05_checkout_pinned) ... ok
+test_06_actionlint_official_sha (test_r54_workflow.DraftChecks.test_06_actionlint_official_sha) ... ok
+test_07_source_script_is_shell (test_r54_workflow.DraftChecks.test_07_source_script_is_shell) ... ok
+test_08_not_auto_publish_yml (test_r54_workflow.DraftChecks.test_08_not_auto_publish_yml) ... ok
+test_09_no_plaintext_secrets_or_write (test_r54_workflow.DraftChecks.test_09_no_plaintext_secrets_or_write) ... ok
+test_10_kernel_compilation_not_claimed (test_r54_workflow.DraftChecks.test_10_kernel_compilation_not_claimed) ... ok
+test_11_old_tests_r41_executed (test_r54_workflow.DraftChecks.test_11_old_tests_r41_executed) ... ok
+test_12_old_tests_r51_r52_executed (test_r54_workflow.DraftChecks.test_12_old_tests_r51_r52_executed) ... ok
+test_13_new_workflow_R54_executed (test_r54_workflow.DraftChecks.test_13_new_workflow_R54_executed) ... ok
+test_14_reference_jack_midori_pinned (test_r54_workflow.DraftChecks.test_14_reference_jack_midori_pinned) ... ok
+test_15_real_bakasu_git_replay (test_r54_workflow.DraftChecks.test_15_real_bakasu_git_replay) ... ok
+test_16_old_unflashed_kernel_not_reused_as_new (test_r54_workflow.DraftChecks.test_16_old_unflashed_kernel_not_reused_as_new) ... ok
+test_17_bash_syntax (test_r54_workflow.DraftChecks.test_17_bash_syntax) ... ok
+test_18_shellcheck_from_pinned_r41_archive (test_r54_workflow.DraftChecks.test_18_shellcheck_from_pinned_r41_archive) ... ok
+test_19_refuse_outside_github (test_r54_workflow.DraftChecks.test_19_refuse_outside_github) ... ok
+test_20_wrong_repository (test_r54_workflow.DraftChecks.test_20_wrong_repository) ... ok
+test_21_four_inline_shell_blocks_valid (test_r54_workflow.DraftChecks.test_21_four_inline_shell_blocks_valid) ... ok
+test_22_no_bad_zip_uploads (test_r54_workflow.DraftChecks.test_22_no_bad_zip_uploads) ... ok
+test_23_all_artifact_step_on_failure (test_r54_workflow.DraftChecks.test_23_all_artifact_step_on_failure) ... ok
+test_24_r13_r41_originals_exact (test_r54_workflow.DraftChecks.test_24_r13_r41_originals_exact) ... ok
+
+----------------------------------------------------------------------
+Ran 44 tests in 1.022s
+
+OK

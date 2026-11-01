@@ -1,0 +1,27 @@
+test_01_real_original_SHA (test_r52_native54.Native54.test_01_real_original_SHA) ... ok
+test_02_original_R41_SHA (test_r52_native54.Native54.test_02_original_R41_SHA) ... ok
+test_03_merge_preserves_entire_preimage (test_r52_native54.Native54.test_03_merge_preserves_entire_preimage) ... ok
+test_04_priority_uid_filter_preserved (test_r52_native54.Native54.test_04_priority_uid_filter_preserved) ... ok
+test_05_duplicate_feature_rejected (test_r52_native54.Native54.test_05_duplicate_feature_rejected) ... ok
+test_06_missing_native_anchor_rejected (test_r52_native54.Native54.test_06_missing_native_anchor_rejected) ... ok
+test_07_missing_upstream_feature_rejected (test_r52_native54.Native54.test_07_missing_upstream_feature_rejected) ... ok
+test_08_missing_priority_uid_filter_rejected (test_r52_native54.Native54.test_08_missing_priority_uid_filter_rejected) ... ok
+test_09_dupe_upstream_anchor_rejected (test_r52_native54.Native54.test_09_dupe_upstream_anchor_rejected) ... ok
+test_10_modified_upstream_block_limit_rejected (test_r52_native54.Native54.test_10_modified_upstream_block_limit_rejected) ... ok
+test_11_missing_hash_include_anchor_rejected (test_r52_native54.Native54.test_11_missing_hash_include_anchor_rejected) ... ok
+test_12_missing_source_hooks_rejected (test_r52_native54.Native54.test_12_missing_source_hooks_rejected) ... ok
+test_13_valid_dependency_source_still_blocked (test_r52_native54.Native54.test_13_valid_dependency_source_still_blocked) ... ok
+test_14_git_blob_matches_git_hash_object (test_r52_native54.Native54.test_14_git_blob_matches_git_hash_object) ... ok
+test_15_diff_patch_roundtrip (test_r52_native54.Native54.test_15_diff_patch_roundtrip) ... ok
+test_16_truncated_r41_rejected (test_r52_native54.Native54.test_16_truncated_r41_rejected) ... ok
+test_17_source_manifest_pin_changes_rejected (test_r52_native54.Native54.test_17_source_manifest_pin_changes_rejected) ... ok
+test_18_no_bootflash_generated_by_patch (test_r52_native54.Native54.test_18_no_bootflash_generated_by_patch) ... ok
+test_19_orig_source_bytes_unmodified_in_memory (test_r52_native54.Native54.test_19_orig_source_bytes_unmodified_in_memory) ... ok
+test_20_source_patch_expected_minimal_sections (test_r52_native54.Native54.test_20_source_patch_expected_minimal_sections) ... ok
+test_21_r51_integrity_not_modified (test_r52_native54.Native54.test_21_r51_integrity_not_modified) ... ok
+test_22_source_parent_identity_refusal (test_r52_native54.Native54.test_22_source_parent_identity_refusal) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 0.055s
+
+OK

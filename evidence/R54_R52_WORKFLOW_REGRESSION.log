@@ -1,0 +1,23 @@
+test_01_yaml_unique_keys (test_r52_workflow.Workflow.test_01_yaml_unique_keys) ... ok
+test_02_workflow_manual_only (test_r52_workflow.Workflow.test_02_workflow_manual_only) ... ok
+test_03_github_read_only (test_r52_workflow.Workflow.test_03_github_read_only) ... ok
+test_04_only_approved_main_branch (test_r52_workflow.Workflow.test_04_only_approved_main_branch) ... ok
+test_05_pinned_actions (test_r52_workflow.Workflow.test_05_pinned_actions) ... ok
+test_06_exact_r41_sha (test_r52_workflow.Workflow.test_06_exact_r41_sha) ... ok
+test_07_official_actionlint_not_unproven (test_r52_workflow.Workflow.test_07_official_actionlint_not_unproven) ... ok
+test_08_no_build_or_flash_commands (test_r52_workflow.Workflow.test_08_no_build_or_flash_commands) ... ok
+test_09_nonrunner_refusal (test_r52_workflow.Workflow.test_09_nonrunner_refusal) ... ok
+test_10_wrong_repo_refusal (test_r52_workflow.Workflow.test_10_wrong_repo_refusal) ... ok
+test_11_wrong_branch_refusal (test_r52_workflow.Workflow.test_11_wrong_branch_refusal) ... ok
+test_12_no_autobuild (test_r52_workflow.Workflow.test_12_no_autobuild) ... ok
+test_13_early_sha_guard (test_r52_workflow.Workflow.test_13_early_sha_guard) ... ok
+test_14_fail_closed_remote_heads (test_r52_workflow.Workflow.test_14_fail_closed_remote_heads) ... ok
+test_15_invariant_build_gate (test_r52_workflow.Workflow.test_15_invariant_build_gate) ... ok
+test_16_no_automatic_credentials (test_r52_workflow.Workflow.test_16_no_automatic_credentials) ... ok
+test_17_branch_guard_below_stage (test_r52_workflow.Workflow.test_17_branch_guard_below_stage) ... ok
+test_18_no_yaml_released (test_r52_workflow.Workflow.test_18_no_yaml_released) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.033s
+
+OK

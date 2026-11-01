@@ -1,0 +1,24 @@
+test_01_real_git_replay_and_preserved_ports (__main__.Replay.test_01_real_git_replay_and_preserved_ports) ... ok
+test_02_wrong_current_upstream_commit_rejected (__main__.Replay.test_02_wrong_current_upstream_commit_rejected) ... ok
+test_03_missing_upstream_commit_rejected (__main__.Replay.test_03_missing_upstream_commit_rejected) ... ok
+test_04_dirty_local_rejected (__main__.Replay.test_04_dirty_local_rejected) ... ok
+test_05_dirty_official_rejected (__main__.Replay.test_05_dirty_official_rejected) ... ok
+test_06_existing_output_never_overwritten (__main__.Replay.test_06_existing_output_never_overwritten) ... ok
+test_07_output_inside_original_repo_rejected (__main__.Replay.test_07_output_inside_original_repo_rejected) ... ok
+test_08_no_source_replaced_and_reportable_git_tree (__main__.Replay.test_08_no_source_replaced_and_reportable_git_tree) ... ok
+test_09_symlink_source_path_rejected (__main__.Replay.test_09_symlink_source_path_rejected) ... ok
+test_10_invalid_r41_hash_fails_closed (__main__.Replay.test_10_invalid_r41_hash_fails_closed) ... ok
+test_11_unprotected_official_new_feature_stays_in_diff (__main__.Replay.test_11_unprotected_official_new_feature_stays_in_diff) ... ok
+test_12_local_port_parent_diff_is_real (__main__.Replay.test_12_local_port_parent_diff_is_real) ... ok
+test_13_git_blob_sha1_is_git_canonical (__main__.SUSFS.test_13_git_blob_sha1_is_git_canonical) ... ok
+test_13_valid_pinned_feature_capture_remains_blocked (__main__.SUSFS.test_13_valid_pinned_feature_capture_remains_blocked) ... ok
+test_14_exact_reference_contains_priority_filter (__main__.SUSFS.test_14_exact_reference_contains_priority_filter) ... ok
+test_14_modified_susfs_blob_rejected (__main__.SUSFS.test_14_modified_susfs_blob_rejected) ... ok
+test_15_missing_selinux_hook_rejected (__main__.SUSFS.test_15_missing_selinux_hook_rejected) ... ok
+test_15_no_explicit_flash_pass_possible (__main__.SUSFS.test_15_no_explicit_flash_pass_possible) ... ok
+test_16_wrong_source_commit_rejected (__main__.SUSFS.test_16_wrong_source_commit_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 1.615s
+
+OK
