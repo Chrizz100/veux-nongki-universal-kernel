@@ -1,1 +1,68 @@
-
+{
+  "status": "R41_SOURCE_MANIFEST_CONTRACT_LOCAL_GREEN__GITHUB_ACTIONLINT_PENDING__NO_FLASH",
+  "source_candidate_sha256": "e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff",
+  "original_r13_sha256": "15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1",
+  "original_r40_sha256": "396c97202fc36a350c7ab17d87b5893d72ce9f12126976d92fbc27c1bc414344",
+  "original_r13_members": 319,
+  "r41_candidate_members": 327,
+  "authorized_modified_members": [
+    "ANLEITUNG.txt",
+    "r13/assets/anykernel.sh.in",
+    "r13/audit_revision.py",
+    "r13/package_anykernel.py"
+  ],
+  "checks": [
+    "R13_319_ARCHIVE_MEMBERS_AUTHENTICATED",
+    "R41_EVERY_ARCHIVE_MEMBER_AUTHENTICATED",
+    "R40_ORIGINAL_ARCHIVE_PIN_MATCH",
+    "R41_NEW_MANIFEST_AND_CONTRACT_PINNED",
+    "ONLY_FOUR_AUTHORIZED_R13_FILES_CHANGED",
+    "CASS_BAKASU_SUSFS_NOMOUNT_KERNEL_CONTRACT_UNCHANGED",
+    "R40_GUARD_AND_DOCUMENTATION_PATCHES_PROVENANCE_VERIFIED",
+    "FOUR_PATCHES_REPRODUCED_BYTE_FOR_BYTE",
+    "R13_AND_R41_REVISION_AUDITS_PASSED",
+    "SHELL_SYNTAX_AND_PINNED_SHELLCHECK_PASS",
+    "ORIGINAL_42_REGRESSIONS_PASSED",
+    "NO_KERNEL_IMAGE_BOOT_IMAGE_OR_WORKFLOW_EMBEDDED"
+  ],
+  "negative_controls": [
+    "ORIGINAL_R13_GUARD_REJECTS_R40_INSTALLER",
+    "R41_AUDITOR_REJECTS_R13_ASSETS_ANYKERNEL.SH.IN",
+    "R41_AUDITOR_REJECTS_R13_PACKAGE_ANYKERNEL.PY",
+    "R41_AUDITOR_REJECTS_R13_SOURCE_CONTRACT.JSON"
+  ],
+  "regression_tests": {
+    "R13_GUARDS": {
+      "passed": 15,
+      "total": 15
+    },
+    "R12_ENV": {
+      "passed": 27,
+      "total": 27
+    }
+  },
+  "revision_audit": {
+    "anykernel_behavior_preserved": false,
+    "authorized_r40_installer_overlay": true,
+    "complete_elf_image_builtin_validator_preserved_except_marker": true,
+    "device_test": false,
+    "full_abi_and_compiler_pins_preserved": true,
+    "genuine_bakasu_commit": "d2537b13ab15fce72e8c0d99e7788805f071aeb4",
+    "genuine_bakasu_version": 35254,
+    "only_new_kernel_path": "KernelSU/kernel/feature/selinux_hide.c",
+    "status": "R41_EXPLICIT_INSTALLER_OVERLAY_PASS",
+    "successful_r12_members_preserved": 275
+  },
+  "limitations": [
+    "no actionlint binary available locally",
+    "no GitHub Actions R41 run",
+    "no fresh kernel compile/repack/DTB/DTBO test",
+    "no on-device NoMount version verification",
+    "no boot partition write or recovery test",
+    "nine external OEM module ABI paths remain unresolved"
+  ],
+  "kernel_build_performed": false,
+  "installer_executed": false,
+  "device_modified": false,
+  "flash_allowed": false
+}

@@ -1,0 +1,6 @@
+VEUX R41 – authentifizierte Quell-/Manifest-Integration (NO FLASH)
+Quelle R13: 15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1
+Patch R40: 396c97202fc36a350c7ab17d87b5893d72ce9f12126976d92fbc27c1bc414344
+R41 ZIP: e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff
+Offline-Kontrollen: 12/12 bestanden; Negativtests: 4/4 abgewiesen; R13/R12 Regressionen: 42 bestanden
+Keine GitHub-CI-/actionlint-Freigabe. Kein Kernelbau, kein Flash, keine Moduländerung.
