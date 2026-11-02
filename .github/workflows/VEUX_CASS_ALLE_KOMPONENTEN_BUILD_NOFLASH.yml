@@ -20,7 +20,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       GIT_TERMINAL_PROMPT: '0'
       CASS_MAIN: VEUX_CASS_ALLE_KOMPONENTEN_MAIN.zip
-      CASS_MAIN_SHA256: ab97ad7b44c2340dffc6d158e5ca9d87449f083aeee0fd8854d222c473bca825
+      CASS_MAIN_SHA256: 9b714cd32a7ca67cda793f279bf834fd03cf15e7b2aac026305e707d0a00a1d8
     steps:
       - name: Checkout exact repository SHA without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
