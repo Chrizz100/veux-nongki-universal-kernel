@@ -1,0 +1,134 @@
+# VEUX Stock Linux 5.4.274 + JackAltman SUSFS 5.4 reference bridge.
+# This creates review-only source differences. NO NEW KERNEL BUILD / NO FLASH.
+name: VEUX CASS Jack54 Source Bridge - NO BUILD NO FLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-cass-jack54-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  jack54_source_review:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONOPTIMIZE: '0'
+      GIT_TERMINAL_PROMPT: '0'
+      CASS_MAIN: VEUX_JACK54_CASS_MAIN_20261102.zip
+      CASS_MAIN_SHA256: d621629e9bc78bf33433bd5357a9649b8d86f32fc864c753b6947126c37a63b1
+    steps:
+      - name: Checkout immutable GitHub repository commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Authenticate and extract JACK54 MAIN with every member hash
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          printf '%s  %s\n' "$CASS_MAIN_SHA256" "$GITHUB_WORKSPACE/$CASS_MAIN" | sha256sum --check --strict
+          printf '%s  %s\n' '15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1' "$GITHUB_WORKSPACE/VEUX_R13_CASS_MAIN.zip" | sha256sum --check --strict
+          printf '%s  %s\n' 'e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff' "$GITHUB_WORKSPACE/VEUX_R41_NOMOUNT_SOURCE_MAIN.zip" | sha256sum --check --strict
+          python3 -I - <<'PY_MAIN_AUTH'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,os,stat
+          p=Path(os.environ['GITHUB_WORKSPACE'])/os.environ['CASS_MAIN']
+          out=Path(os.environ['RUNNER_TEMP'])/'veux-jack54-payload'
+          assert not out.exists() and not out.is_symlink()
+          with ZipFile(p) as z:
+              infos=z.infolist(); names=[x.filename for x in infos]
+              assert names and len(infos)<15 and len(names)==len(set(names))
+              assert z.testzip() is None and sum(i.file_size for i in infos)<3_000_000
+              for i in infos:
+                  path=PurePosixPath(i.filename)
+                  assert path.parts and not path.is_absolute() and '..' not in path.parts
+                  assert '.' not in path.parts and '\\' not in i.filename and not i.is_dir()
+                  assert stat.S_IFMT(i.external_attr >> 16) in (0,stat.S_IFREG)
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              assert m.get('schema')=='VEUX_CASS_JACK54_SOURCE_BRIDGE_V1'
+              assert m.get('flash_allowed') is False and m.get('kernel_compiled') is False
+              assert set(names)==set(m['files'])|{'MANIFEST_SHA256.json'}
+              for name,h in m['files'].items():
+                  assert hashlib.sha256(z.read(name)).hexdigest()==h
+              out.mkdir(mode=0o700)
+              for i in infos:
+                  t=out/i.filename;t.parent.mkdir(parents=True,exist_ok=True)
+                  t.write_bytes(z.read(i.filename))
+          print('CASS_JACK54_MAIN_AND_NESTED_HASHES=PASS')
+          PY_MAIN_AUTH
+          echo "R58_PAYLOAD=$RUNNER_TEMP/veux-jack54-payload" >> "$GITHUB_ENV"
+      - name: Official actionlint 1.7.12, pinned ShellCheck and script syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error --location --retry 2 --connect-timeout 20 --max-time 90 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            --output "$RUNNER_TEMP/r58-actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/r58-actionlint.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/r58-actionlint"
+          tar -xzf "$RUNNER_TEMP/r58-actionlint.tar.gz" -C "$RUNNER_TEMP/r58-actionlint" actionlint
+          "$RUNNER_TEMP/r58-actionlint/actionlint" -oneline .github/workflows/VEUX_JACK54_CASS_SOURCE_GATE_20261102.yml
+          unzip -p "$GITHUB_WORKSPACE/VEUX_R41_NOMOUNT_SOURCE_MAIN.zip" r12/host-tools/shellcheck > "$RUNNER_TEMP/r58-shellcheck"
+          printf '%s  %s\n' '4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b' "$RUNNER_TEMP/r58-shellcheck" | sha256sum --check --strict
+          chmod 700 "$RUNNER_TEMP/r58-shellcheck"
+          bash -n "$R58_PAYLOAD/tools/run_jack54_bridge.sh"
+          "$RUNNER_TEMP/r58-shellcheck" --severity=warning "$R58_PAYLOAD/tools/run_jack54_bridge.sh"
+          python3 -B -m py_compile "$R58_PAYLOAD/tools/jack54_reference_gate.py"
+          echo 'CASS_JACK54_YAML_BASH_SHELLCHECK_PYTHON=PASS'
+      - name: Run local-in-CI negative tests on authenticated original archives
+        shell: bash
+        env:
+          R58_INPUT_R13: ${{ github.workspace }}/VEUX_R13_CASS_MAIN.zip
+          R58_INPUT_R41: ${{ github.workspace }}/VEUX_R41_NOMOUNT_SOURCE_MAIN.zip
+          R58_INPUT_R56: ${{ runner.temp }}/veux-jack54-payload/refs/VEUX_R56_R3_UPDATED_CASS_MAIN_SUSFS_RC_FIX.zip
+        run: |
+          set -Eeuo pipefail
+          PYTHONPATH="$R58_PAYLOAD/tools" python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" -p 'test_*.py' -v
+          echo 'CASS_JACK54_13_NEGATIVE_AND_REFERENCE_UNIT_TESTS=PASS'
+      - name: Download and authenticate pinned Jack54 and stock SELinux references - NO FLASH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash "$R58_PAYLOAD/tools/run_jack54_bridge.sh"
+      - name: Record explicit unresolved CASS build blockers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -I - "$RUNNER_TEMP/veux-jack54-stock-reference/VEUX_JACK54_REFERENCE_GATE.json" "$GITHUB_STEP_SUMMARY" <<'PY_GATE_REPORT'
+          from pathlib import Path
+          import json,sys
+          r=json.loads(Path(sys.argv[1]).read_text())
+          assert r['flash_allowed'] is False and r['new_kernel_compiled'] is False
+          assert r['all_updates_integrated'] is False
+          with open(sys.argv[2],'a') as f:
+              f.write('## VEUX CASS Jack54 – verified reference only\n\n')
+              f.write('Stock R13/R41: SHA256 verified. Jack v2.3 patch: Git blob verified.\n\n')
+              f.write('**NEW UPDATED KERNEL: NOT BUILT. FLASH: NOT APPROVED.**\n\n')
+              for reason in r['missing_checks']:
+                  f.write('- OPEN: '+reason+'\n')
+          print('CASS_JACK54_SOURCE_AUDIT=PASS__UPDATED_KERNEL_BUILD=BLOCKED__NO_FLASH')
+          PY_GATE_REPORT
+      - name: Upload only source-diff proofs - never a kernel/AK3/boot.img
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_CASS_JACK54_SOURCE_REVIEW_NOFLASH
+          path: |
+            ${{ runner.temp }}/veux-jack54-stock-reference/VEUX_JACK54_REFERENCE_GATE.json
+            ${{ runner.temp }}/veux-jack54-stock-reference/JACK_5.4_REFERENCE.patch
+            ${{ runner.temp }}/veux-jack54-stock-reference/JACK_NATIVE54_SUSFS_REVIEW_ONLY.diff
+            ${{ runner.temp }}/veux-jack54-stock-reference/R55_CASS_AVD_BRIDGE_REFERENCE.patch
+            ${{ runner.temp }}/veux-jack54-stock-reference/services_avd_REVIEW_ONLY/*.patch
+            ${{ runner.temp }}/veux-jack54-stock-reference/services_avd_REVIEW_ONLY/*.json
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 8
