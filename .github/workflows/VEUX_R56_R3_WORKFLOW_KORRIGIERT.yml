@@ -1,0 +1,160 @@
+# VEUX R56: real-source BakaSU/SUSFS update check, inherited CASS regressions,
+# stringent FAIL-CLOSED path toward a future real 5.4.274 compiler build.
+# THIS IS NOT A FLASHABLE KERNEL BUILD. No PC/Termux script or user secrets.
+# An old R13 compilation must never count as a fresh updated R56 compilation.
+name: VEUX R56-R3 Verified BakaSU Historical Trees - NO BUILD NO FLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-r56-r2-source-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  source_integration_gate:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: Authenticated BakaSU Git replay, native 5.4 SUSFS / AVD and prior test gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONOPTIMIZE: '0'
+      GIT_TERMINAL_PROMPT: '0'
+      R56_MAIN: VEUX_R56_R3_UPDATED_CASS_MAIN_DELTA_FIXED.zip
+      R56_MAIN_SHA256: 215b48c658d74fb7cb150f46e4e05e73dda1819f83412b5640cfdbb6571945b6
+    steps:
+      - name: Checkout the immutable repository revision without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Authenticate R56 MAIN archive, all member hashes, R13/R41 and original workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          # R56-R3: a new SHA-pinned source archive is required. Never silently
+          # fall back to the old R56/R57 bundle or historical kernel Image.
+          if [[ ! -f "$GITHUB_WORKSPACE/$R56_MAIN" ]]; then
+            echo "::error::R56_R3_MAIN_NOT_AT_REPO_ROOT: $R56_MAIN" >&2
+            exit 3
+          fi
+          printf '%s  %s\n' "$R56_MAIN_SHA256" "$GITHUB_WORKSPACE/$R56_MAIN" | sha256sum -c --strict
+          export R56_MAIN_PATH="$GITHUB_WORKSPACE/$R56_MAIN"
+          printf '%s  %s\n' '15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1' "$GITHUB_WORKSPACE/VEUX_R13_CASS_MAIN.zip" | sha256sum -c --strict
+          printf '%s  %s\n' 'e9ea57fc1feb8d4d0e840a61b21174ad1d83d496216794bd9285b40f17026bff' "$GITHUB_WORKSPACE/VEUX_R41_NOMOUNT_SOURCE_MAIN.zip" | sha256sum -c --strict
+          python3 -I - <<'PY_R56_AUTH'
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,os,stat
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          archive=Path(os.environ['R56_MAIN_PATH'])
+          target=Path(os.environ['RUNNER_TEMP'])/'veux-r56-main-authenticated'
+          if target.exists() or target.is_symlink(): raise SystemExit('R56_OUTPUT_PREEXISTS')
+          with ZipFile(archive) as z:
+              infos=z.infolist();names=[x.filename for x in infos]
+              if not names or len(names)>70 or len(names)!=len(set(names)) or z.testzip() is not None:
+                  raise SystemExit('R56_DUPLICATES_OR_ZIP_CRC')
+              if sum(x.file_size for x in infos)>4000000:
+                  raise SystemExit('R56_ZIP_EXPANSION_LIMIT')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (manifest.get('schema')!='VEUX_R56_UPDATED_CASS_MAIN_V1' or
+                  manifest.get('flash_allowed') is not False or
+                  manifest.get('kernel_build_completed') is not False or
+                  manifest.get('automatic_flash') is not False):
+                  raise SystemExit('R56_UNSAFE_MANIFEST')
+              if set(names)!=set(manifest['files'])|{'MANIFEST_SHA256.json'}:
+                  raise SystemExit('R56_MANIFEST_MEMBERS_MISMATCH')
+              data={}
+              for info in infos:
+                  name=info.filename
+                  p=PurePosixPath(name)
+                  if (p.is_absolute() or not p.parts or '..' in p.parts or '.' in p.parts
+                      or '\\' in name or info.is_dir() or info.file_size>1200000
+                      or stat.S_IFMT(info.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise SystemExit('R56_UNSAFE_ARCHIVE_MEMBER:'+name)
+                  data[name]=z.read(info)
+                  if name!='MANIFEST_SHA256.json':
+                      if hashlib.sha256(data[name]).hexdigest()!=manifest['files'][name]:
+                          raise SystemExit('R56_FILE_SHA256_MISMATCH:'+name)
+              target.mkdir(mode=0o700)
+              for name,raw in data.items():
+                  out=target/name;out.parent.mkdir(parents=True,exist_ok=True)
+                  out.write_bytes(raw)
+          print('R56_ARCHIVE_AND_ALL_MEMBERS_AUTHENTICATED; BUILD=NO; FLASH=NO')
+          PY_R56_AUTH
+          echo "R56_PAYLOAD=$RUNNER_TEMP/veux-r56-main-authenticated" >> "$GITHUB_ENV"
+          echo 'R56_STAGING_INPUTS_AUTHENTICATED=PASS'
+      - name: Verify exact current YAML with official actionlint 1.7.12 and pinned ShellCheck
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          pack="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 2 --connect-timeout 20 --max-time 90 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' --output "$pack"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$pack" | sha256sum -c --strict
+          mkdir -p "$RUNNER_TEMP/r56-actionlint"
+          tar -xzf "$pack" -C "$RUNNER_TEMP/r56-actionlint" actionlint
+          "$RUNNER_TEMP/r56-actionlint/actionlint" -oneline .github/workflows/VEUX_R56_R3_WORKFLOW_KORRIGIERT.yml
+          unzip -p "$GITHUB_WORKSPACE/VEUX_R41_NOMOUNT_SOURCE_MAIN.zip" r12/host-tools/shellcheck > "$RUNNER_TEMP/r56-shellcheck"
+          printf '%s  %s\n' '4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b' "$RUNNER_TEMP/r56-shellcheck" | sha256sum -c --strict
+          chmod 700 "$RUNNER_TEMP/r56-shellcheck"
+          bash -n "$R56_PAYLOAD/tools/R56_GITHUB_SOURCE_AND_BOOT_GATES_NOFLASH.sh"
+          "$RUNNER_TEMP/r56-shellcheck" --severity=warning "$R56_PAYLOAD/tools/R56_GITHUB_SOURCE_AND_BOOT_GATES_NOFLASH.sh"
+          echo 'R56_REAL_OFFICIAL_ACTIONLINT_AND_SHELLCHECK=PASS'
+      - name: Execute all inherited tests, genuine BakaSU replay and safe native54 SUSFS AVD source stage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash "$R56_PAYLOAD/tools/R56_GITHUB_SOURCE_AND_BOOT_GATES_NOFLASH.sh"
+          echo 'R56_SOURCE_STAGING_COMPLETED; NO_KERNEL_BUILD; NO_FLASH'
+      - name: Deny kernel build or flash until all native54 source and OEM ABI gates pass
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          dir="$RUNNER_TEMP/veux-r56-real-source-proof"
+          python3 -B "$R56_PAYLOAD/tools/r56_source_gate.py" --postbuild "$dir" --out "$dir/R56_POSTBUILD_GATE.json"
+          python3 -I - "$dir" "$GITHUB_STEP_SUMMARY" <<'PY_R56_FINAL'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          p=root/'R56_REAL_SOURCE_GATE.json'
+          if not p.is_file():
+              print('R56_FAIL_CLOSED: real source replay did not finish')
+              raise SystemExit(3)
+          r=json.loads(p.read_text())
+          summary=Path(sys.argv[2])
+          with summary.open('a') as f:
+              f.write('## R56: source-only CI – NO FLASH\n\n')
+              f.write('BakaSU replay: '+str(r.get('genuine_BakaSU_replay_version'))+'\n\n')
+              f.write('SUSFS/SELinux 5.4 full integration: **BLOCKED**\n\n')
+              f.write('New kernel compiled: **NO**; AK3/boot.img device pass: **NO**\n\n')
+              f.write('No flash or auto-reboot is performed.\n')
+          if (r.get('source_stage_accepted') is True and
+              r.get('all_updates_integrated') is False and
+              r.get('kernel_compiled') is False and
+              r.get('OEM_ABI_CLEARED') is False and
+              r.get('flash_allowed') is False):
+              print('R56_R2_SOURCE_ONLY_PASS__KERNEL_BUILD_BLOCKED__NO_FLASH')
+              raise SystemExit(0)
+          raise SystemExit('R56_R2_SOURCE_STATUS_INVALID_OR_BUILD_REVIEW_REQUIRED')
+          PY_R56_FINAL
+      - name: Preserve reports only - never upload an unvalidated AK3 or boot image
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_R56_SOURCE_ONLY_EVIDENCE_NOFLASH
+          path: |
+            ${{ runner.temp }}/veux-r56-real-source-proof/*.json
+            ${{ runner.temp }}/veux-r56-real-source-proof/*.log
+            ${{ runner.temp }}/veux-r56-real-source-proof/R56_BAKASU_AVD_PATCH/*.patch
+            ${{ runner.temp }}/veux-r56-real-source-proof/R56_STOCK_SERVICES_AVD_PATCH/*.patch
+            ${{ runner.temp }}/veux-r54-no-flash-*/R54_*.json
+            ${{ runner.temp }}/veux-r54-no-flash-*/R54_*.patch
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 8
