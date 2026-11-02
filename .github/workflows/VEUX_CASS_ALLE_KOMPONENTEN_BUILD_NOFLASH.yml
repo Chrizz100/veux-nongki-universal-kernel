@@ -1,0 +1,135 @@
+# VEUX CASS 5.4.274 real full ARM64 compile, BakaSU + SUSFS + NoMount v22.
+# Controls the *existing pinned full-build workflow* (R55H6); no new kernel is
+# marked flashable. Additional candidate commits are recorded, not smuggled in.
+name: VEUX CASS alle Komponenten - echter Build ohne Flash
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: write  # GitHub's automatically provided token, no PAT/custom secrets
+concurrency:
+  group: veux-cass-all-compile-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  real_combined_kernel_build:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: Prove real R55H6 full ARM64 compile, never approve a flash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      CASS_MAIN: VEUX_CASS_ALLE_KOMPONENTEN_MAIN.zip
+      CASS_MAIN_SHA256: ab97ad7b44c2340dffc6d158e5ca9d87449f083aeee0fd8854d222c473bca825
+    steps:
+      - name: Checkout exact repository SHA without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Authenticate MAIN and extract all component controls
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          test -f "$GITHUB_WORKSPACE/$CASS_MAIN"
+          printf '%s  %s\n' "$CASS_MAIN_SHA256" "$GITHUB_WORKSPACE/$CASS_MAIN" | sha256sum --check --strict
+          python3 -I - <<'PY_EXTRACT'
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,os,stat
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          archive=root/os.environ['CASS_MAIN']
+          out=Path(os.environ['RUNNER_TEMP'])/'veux-cass-full-control'
+          assert not out.exists() and not out.is_symlink()
+          with ZipFile(archive) as z:
+              infos=z.infolist();names=[x.filename for x in infos]
+              assert names and len(names)==len(set(names)) and len(names)<40
+              assert z.testzip() is None
+              assert sum(x.file_size for x in infos)<1_000_000
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              assert m['schema']=='VEUX_CASS_ALL_COMPONENT_BUILD_V1'
+              assert m['kernel_compiled'] is False and m['flash_allowed'] is False
+              assert m['automatic_flash'] is False
+              assert set(names)==set(m['files'])|{'MANIFEST_SHA256.json'}
+              payload={}
+              for info in infos:
+                  p=PurePosixPath(info.filename)
+                  assert not p.is_absolute() and '..' not in p.parts and '.' not in p.parts
+                  assert not info.is_dir() and '\\' not in info.filename
+                  assert stat.S_IFMT(info.external_attr>>16) in (0,stat.S_IFREG)
+                  raw=z.read(info);payload[info.filename]=raw
+                  if info.filename!='MANIFEST_SHA256.json':
+                      assert hashlib.sha256(raw).hexdigest()==m['files'][info.filename]
+              out.mkdir(mode=0o700)
+              for n,raw in payload.items():
+                  dst=out/n;dst.parent.mkdir(parents=True,exist_ok=True);dst.write_bytes(raw)
+          print('FULL_COMPONENT_CONTROLLER_AND_ARCHIVE_AUTHENTICATED=PASS')
+          PY_EXTRACT
+          echo "VEUX_CONTROL=$RUNNER_TEMP/veux-cass-full-control" >> "$GITHUB_ENV"
+          echo "VEUX_CONTROL_REPORT=$RUNNER_TEMP/veux-cass-real-build-results" >> "$GITHUB_ENV"
+      - name: Official actionlint and Python compile/test gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fLsS --retry 2 --connect-timeout 20 --max-time 90 \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
+            -o "$RUNNER_TEMP/veux-actionlint-1.7.12.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/veux-actionlint-1.7.12.tar.gz" | sha256sum -c --strict
+          mkdir -p "$RUNNER_TEMP/veux-actionlint"
+          tar -xzf "$RUNNER_TEMP/veux-actionlint-1.7.12.tar.gz" -C "$RUNNER_TEMP/veux-actionlint" actionlint
+          "$RUNNER_TEMP/veux-actionlint/actionlint" -oneline .github/workflows/VEUX_CASS_ALLE_KOMPONENTEN_BUILD_NOFLASH.yml
+          python3 -B -m py_compile "$VEUX_CONTROL/tools/contracts.py" "$VEUX_CONTROL/tools/trigger_build.py"
+          python3 -B -m unittest discover -s "$VEUX_CONTROL/tests" -p 'test_*.py' -v
+          echo 'FULL_COMPONENT_ACTIONLINT_AND_REGRESSIONS=PASS'
+      - name: Verify original R13 R41 Jack54 and immutable genuine combined build workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$VEUX_CONTROL_REPORT"
+          python3 -B "$VEUX_CONTROL/tools/contracts.py" \
+            --repo "$GITHUB_WORKSPACE" --refs "$VEUX_CONTROL/references" \
+            --sha "$GITHUB_SHA" --out "$VEUX_CONTROL_REPORT/COMPONENT_PINS.json"
+          echo 'COMPONENT_PINS_PINNED_AND_REVIEW_LOCKS=PASS'
+      - name: Trigger, monitor, and verify actual R55H6 combined kernel compilation
+        shell: bash
+        timeout-minutes: 340
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          python3 -B -u "$VEUX_CONTROL/tools/trigger_build.py" \
+            --sha "$GITHUB_SHA" --out "$VEUX_CONTROL_REPORT" --timeout 19600
+          echo 'REAL_R55H6_FULL_ARM64_KERNEL_COMPILE_PROVEN__FLASH_NOT_APPROVED'
+      - name: Record exact work remaining for CASS and ABI, never infer device success
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-cass-real-build-results"
+          python3 -I - "$RUNNER_TEMP/veux-cass-real-build-results" "$GITHUB_STEP_SUMMARY" <<'PY_SUMMARY'
+          from pathlib import Path
+          import json,sys
+          d=Path(sys.argv[1]);p=d/'BUILD_STATUS.json'
+          status=json.loads(p.read_text()) if p.is_file() else None
+          with Path(sys.argv[2]).open('a') as out:
+              out.write('## VEUX CASS — echter Kernelbau, KEINE FLASHFREIGABE\n\n')
+              out.write('BakaSU 35252 + SUSFS 2.3.0 + NoMount v22: '+('COMPILER VERIFIED' if status and status.get('compiler_integrated_three_components') else 'NOT PROVEN')+'\n\n')
+              out.write('Neuere BakaSU/SUSFS/NoMount-Kandidaten: **NICHT FREIGEGEBEN**\n\n')
+              out.write('CASS/vmlinux, 132 RMNET CRC, OEM DTB/DTBO, boot.img/AK3: **OFFEN**\n\n')
+              out.write('Flash erlaubt: **NEIN**\n')
+          print('CASS_ALL_COMPONENTS_FINAL_FLASH_ALLOWED=NO')
+          PY_SUMMARY
+      - name: Preserve real compilation evidence only; never publish a flashable image
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-CASS-ALL-COMPONENTS-REAL-COMPILE-REVIEW-NOFLASH
+          path: ${{ runner.temp }}/veux-cass-real-build-results/
+          if-no-files-found: warn
+          retention-days: 21
+          compression-level: 8
