@@ -32,8 +32,8 @@ env:
   REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
   VEUX_EXECUTION_MODE: ci
-  R60_MAIN: VEUX_R60_R6_FIXED_ENGINE_GIT_BLOB_MAIN_NOFLASH.zip
-  R60_MAIN_SHA256: 953db30d325a27b0a2166253bc99d6eb8cf4073990d144854f788baa5fc8f7f7
+  R60_MAIN: VEUX_R60_R8_R13_HOST_SOURCE_PIN_MAIN_NOFLASH.zip
+  R60_MAIN_SHA256: 103b9cc2380b7c1222d05c45346532a193abd922f4b4168240a3fefba7d64c0d
   R56_MAIN: VEUX_R56_R4_STOCK_AVD_PATH_MAIN_NOFLASH.zip
   R56_MAIN_SHA256: b745ba93ebf92482fa3fcfa10a27b08c62fc72e07479e029dbae685949ae6117
 jobs:
@@ -635,6 +635,20 @@ jobs:
           --d726 "$R5S1_OVERLAY/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c" \
           --reference "$R5S1_REFERENCE"
         echo 'R5S2_GREEN_R5S1_SOURCE_AND_SUSFS_PIN=PASS'
+    - name: R60-R8 precheck native54 SELinux host anchors before slow baseline compiler
+      shell: bash
+      run: |
+        # Fail early on incompatible source anatomy, without modifying the kernel tree.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps" "$RUNNER_TEMP/veux-r58-summary"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-r8-host-preflight.log") 2>&1
+        set -Eeuo pipefail
+        early="$RUNNER_TEMP/veux-r5s2-work/source-audit/5.4.274/source-work/kernel"
+        test -d "$early"
+        test ! -L "$early"
+        python3 -B "$R58_PAYLOAD/tools/r59_host.py" \
+          --kernel "$early" --preflight \
+          --out "$RUNNER_TEMP/veux-r58-summary/R60_R8_HOST_PREFLIGHT.json"
+        echo 'R60_R8_EARLY_SELINUX_HOST_ANCHORS=PASS; NO_SOURCE_WRITE; NO_FLASH'
     - name: R55H17-R2 pin and verify official BakaSU 35252 and NoMount 2.1.1/v22 source
       shell: bash
       run: |
