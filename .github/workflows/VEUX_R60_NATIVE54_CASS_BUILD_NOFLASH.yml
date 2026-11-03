@@ -556,7 +556,30 @@ jobs:
       run: |
         set -euo pipefail
         export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
-        "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4
+        if "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4; then
+          echo 'R60_R13_LEGACY_WORKER=PASS'
+        else
+          worker_exit=$?
+          # Original fleet worker already saves its decoded stdout/stderr to this path.
+          # Never conceal a failure, and never upload any kernel, DTB, or boot image.
+          buildlog="$RUNNER_TEMP/veux-r5s2-work/report/BUILD_5.4.274.log"
+          diagnostic="$RUNNER_TEMP/veux-r58-summary"
+          mkdir -p "$diagnostic"
+          {
+            printf 'R60_R13_LEGACY_WORKER=FAIL\nR60_LEGACY_WORKER_EXIT=%s\n' "$worker_exit"
+            printf 'R60_FAILED_STAGE=22_BEFORE_UPDATED_R60_NATIVE54_COMPILER\n'
+            if [[ -f "$buildlog" && ! -L "$buildlog" ]]; then
+              printf 'R60_WORKER_LOG_SHA256='; sha256sum "$buildlog"
+              printf 'R60_WORKER_COMPILER_LOG_LAST_250_LINES_BEGIN\n'
+              tail -n 250 "$buildlog"
+              printf 'R60_WORKER_COMPILER_LOG_LAST_250_LINES_END\n'
+            else
+              printf 'R60_WORKER_COMPILER_LOG_MISSING_OR_UNSAFE\n'
+            fi
+            printf 'R60_KERNEL_COMPILER_GREEN=NO\nFLASH_ALLOWED=NO\n'
+          } 2>&1 | tee "$diagnostic/R60_BASELINE_WORKER_FAILURE.txt" >&2
+          exit "$worker_exit"
+        fi
       id: r12_compile
     - name: Independently require R5S1 module ABI boot AK3 and new 522 compiled proof
       shell: bash
@@ -855,6 +878,7 @@ jobs:
           ${{ runner.temp }}/veux-r58/*.json
           ${{ runner.temp }}/veux-r58/*.log
           ${{ runner.temp }}/veux-r58-summary/*.txt
+          ${{ runner.temp }}/veux-r5s2-work/report/BUILD_5.4.274.log
           ${{ runner.temp }}/veux-r56-real-source-proof/R56_REAL_SOURCE_GATE.json
         retention-days: 21
         if-no-files-found: warn
