@@ -20,8 +20,8 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       PYTHONOPTIMIZE: '0'
       GIT_TERMINAL_PROMPT: '0'
-      R56_MAIN: VEUX_R56_R3_UPDATED_CASS_MAIN_DELTA_FIXED.zip
-      R56_MAIN_SHA256: 215b48c658d74fb7cb150f46e4e05e73dda1819f83412b5640cfdbb6571945b6
+      R56_MAIN: VEUX_R56_R3_UPDATED_CASS_MAIN_SUSFS_RC_FIX.zip
+      R56_MAIN_SHA256: 7c78b9817b9247159354ec36c04818bde0c4ea4b203d121e1f723624b077e5a2
     steps:
       - name: Checkout the immutable repository revision without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -155,6 +155,9 @@ jobs:
             ${{ runner.temp }}/veux-r56-real-source-proof/R56_STOCK_SERVICES_AVD_PATCH/*.patch
             ${{ runner.temp }}/veux-r54-no-flash-*/R54_*.json
             ${{ runner.temp }}/veux-r54-no-flash-*/R54_*.patch
+            ${{ runner.temp }}/veux-r54-no-flash-*/R54_SUSFS_STDOUT.txt
+            ${{ runner.temp }}/veux-r54-no-flash-*/R54_OFFICIAL_SUSFS_HEAD.txt
+            ${{ runner.temp }}/veux-r54-no-flash-*/R54_PARTIAL_SUSFS_PORT/R52_SOURCE_RECEIPT.json
           if-no-files-found: warn
           retention-days: 21
           compression-level: 8
