@@ -28,8 +28,8 @@ env:
   REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
   VEUX_EXECUTION_MODE: ci
-  R60_MAIN: VEUX_R60_R4_R13_SERVICES_PIN_MAIN_NOFLASH.zip
-  R60_MAIN_SHA256: f0e5bb7cd371e6d78abb12614a64aeac328fd5fcdf6e441eb6895e8909adfbcf
+  R60_MAIN: VEUX_R60_R5_PINNED_CLANG_TRANSPORT_MAIN_NOFLASH.zip
+  R60_MAIN_SHA256: 72a7ef15301b338930b452dd99ce44780e6262dee5816dcd14e509ab2b1c0655
   R56_MAIN: VEUX_R56_R4_STOCK_AVD_PATH_MAIN_NOFLASH.zip
   R56_MAIN_SHA256: b745ba93ebf92482fa3fcfa10a27b08c62fc72e07479e029dbae685949ae6117
 jobs:
@@ -524,11 +524,31 @@ jobs:
         set -euo pipefail
         "$R5S2_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
           prepare --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
+    - name: Activate authenticated clang-r416183b mirror fallback and in-run archive cache
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        bridge="$R58_PAYLOAD/tools/veux_r60_clang_transport.py"
+        tests="$R58_PAYLOAD/tests/test_r60_clang_transport.py"
+        test -f "$bridge" && test ! -L "$bridge"
+        test -f "$tests" && test ! -L "$tests"
+        python3 -B -m py_compile "$bridge" "$tests"
+        python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" -p 'test_r60_clang_transport.py' -v
+        cache="$RUNNER_TEMP/veux-r60-clang-cache"
+        test ! -e "$cache" && test ! -L "$cache"
+        mkdir -m 0700 "$cache"
+        {
+          printf 'VEUX_R60_REPO=%s\n' "$GITHUB_WORKSPACE"
+          printf 'VEUX_R60_BASE_TEMP=%s\n' "$RUNNER_TEMP"
+          printf 'VEUX_R60_CLANG_CACHE_DIR=%s\n' "$cache"
+          printf 'VEUX_R60_BRIDGE=%s\n' "$bridge"
+        } >> "$GITHUB_ENV"
+        echo 'R60_CLANG_TRANSPORT_PREPARED=PASS; PINNED_AOSP_AND_VERIFIED_GIT_SUBTREE; NO_FLASH'
     - name: Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary
       shell: bash
       run: |
         set -euo pipefail
-        "$R5S2_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+        "$R5S2_PY" -B -u "$VEUX_R60_BRIDGE" launch "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
           preflight --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
         export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
         "$R5S2_PY" -u "$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py" audit \
@@ -556,7 +576,7 @@ jobs:
       run: |
         set -euo pipefail
         export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
-        if "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4; then
+        if "$R5S2_PY" -B -u "$VEUX_R60_BRIDGE" launch "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4; then
           echo 'R60_R13_LEGACY_WORKER=PASS'
         else
           worker_exit=$?
@@ -869,6 +889,25 @@ jobs:
           'DTBO, safe boot.img, AK3 and device validation are OPEN.' \
           'KERNEL_PACKAGE=NOT_PUBLISHED' 'FLASH_ALLOWED=NO' > "$RUNNER_TEMP/veux-r58-summary/NO_FLASH.txt"
         cat "$RUNNER_TEMP/veux-r58-summary/NO_FLASH.txt"
+    - name: Show original source transport failure log (diagnosis only; do not change build verdict)
+      if: ${{ failure() }}
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        audit="$RUNNER_TEMP/veux-r5s2-work/source-audit/5.4.274"
+        if [[ ! -d "$audit" || -L "$audit" ]]; then
+          echo 'R60_SOURCE_AUDIT_DIRECTORY_NOT_AVAILABLE'
+          exit 0
+        fi
+        found=0
+        for file in "$audit"/source-*.log; do
+          if [[ -f "$file" && ! -L "$file" ]]; then
+            found=$((found + 1))
+            printf 'R60_SOURCE_LOG=%s\n' "$(basename -- "$file")"
+            tail -n 130 -- "$file"
+          fi
+        done
+        printf 'R60_SOURCE_LOG_COUNT=%d\n' "$found"
     - name: Preserve only actual source, compiler and ABI evidence - no kernel or boot files
       if: ${{ always() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -879,6 +918,9 @@ jobs:
           ${{ runner.temp }}/veux-r58/*.log
           ${{ runner.temp }}/veux-r58-summary/*.txt
           ${{ runner.temp }}/veux-r5s2-work/report/BUILD_5.4.274.log
+          ${{ runner.temp }}/veux-r5s2-work/source-audit/5.4.274/source-*.log
+          ${{ runner.temp }}/veux-r60-clang-cache/clang-r416183b.sha256
+          ${{ runner.temp }}/veux-r5s2-work/source-audit/5.4.274/integration.json
           ${{ runner.temp }}/veux-r56-real-source-proof/R56_REAL_SOURCE_GATE.json
         retention-days: 21
         if-no-files-found: warn
