@@ -2,7 +2,8 @@
 # Based on successful R12 CI-R3, with one pinned native5.4 SELinux commit.
 # Original full ABI, 132 CRC, compiler, Image/ELF and built-in gates retained.
 # Historical internal stage IDs/paths stay explicit; new source proof is R13.
-# R60-R9: repair authentic already-installed R13 SUSFS-AVC audit hook; no double insertion.
+# R60-R10: restore pinned clang from verified, surviving cache after R13 worker cleanup.
+# R60-R9: preserve authentic R13 SUSFS-AVC audit hook; no double insertion.
 # R60-R7: always upload bounded *text-only* job logs; never publish Image, vmlinux,
 # Module.symvers, *.ko, DTB, DTBO, boot.img or any flashable archive.
 # Exit code 3 from a validated OEM review means FLASH BLOCKED, NOT compilation failed.
@@ -33,8 +34,8 @@ env:
   REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
   VEUX_EXECUTION_MODE: ci
-  R60_MAIN: VEUX_R60_R9_EXISTING_SUSFS_AVC_SAFE_NATIVE54_MAIN_NOFLASH.zip
-  R60_MAIN_SHA256: dc713a36b5a6b914f55c958280fbcb8c6f3793667faffd8d3fa8d45f2dad877d
+  R60_MAIN: VEUX_R60_R10_PINNED_CLANG_RESTORE_MAIN_NOFLASH.zip
+  R60_MAIN_SHA256: 59adfe9c85c2c2c729cc27b7c6af97f28435363ca6a7fbbdf9eac848f1b9ee94
   R56_MAIN: VEUX_R56_R4_STOCK_AVD_PATH_MAIN_NOFLASH.zip
   R56_MAIN_SHA256: b745ba93ebf92482fa3fcfa10a27b08c62fc72e07479e029dbae685949ae6117
 jobs:
@@ -650,6 +651,11 @@ jobs:
           --kernel "$early" --preflight \
           --out "$RUNNER_TEMP/veux-r58-summary/R60_R8_HOST_PREFLIGHT.json"
         echo 'R60_R8_EARLY_SELINUX_HOST_ANCHORS=PASS; NO_SOURCE_WRITE; NO_FLASH'
+        # Copy the authenticated source-audit tarball BEFORE the historical
+        # worker deletes its own temporary toolchain after the baseline build.
+        python3 -B "$R58_PAYLOAD/tools/veux_r60_clang_transport.py" seed-source-archive
+        python3 -B "$R58_PAYLOAD/tools/veux_r60_clang_transport.py" verify-cache
+        echo 'R60_R10_CLANG_CACHE_PRECHECK=PASS; ARCHIVE_SURVIVES_R13_WORKER_CLEANUP'
     - name: R55H17-R2 pin and verify official BakaSU 35252 and NoMount 2.1.1/v22 source
       shell: bash
       run: |
@@ -959,6 +965,7 @@ jobs:
           --r13-main "$GITHUB_WORKSPACE/VEUX_R13_CASS_MAIN.zip" \
           --r56-main "$GITHUB_WORKSPACE/$R56_MAIN" \
           --r13-config "$RUNNER_TEMP/veux-r55h17-r4/build/.config"
+        python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" -p 'test_r60_r10_clang_restore.py' -v
         echo 'R59_ARCHIVES_CONFIG_AND_SOURCE_NEGATIVE_TESTS=PASS'
     - name: Reconstruct independent BakaSU 35259 replay and native54 R56 source patches
       shell: bash
