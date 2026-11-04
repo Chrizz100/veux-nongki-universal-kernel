@@ -82,6 +82,9 @@ jobs:
         test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
         test -z "$(git status --porcelain --untracked-files=all)"
         echo 'R12_IMMUTABLE_REPOSITORY=PASS'
+        echo 'R60_DISK_DIAG_INITIAL'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
     - name: Authenticate R60 MAIN SHA256 and manifest before any source execution
       shell: bash
       run: |
@@ -703,6 +706,14 @@ jobs:
         mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
         exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-22.log") 2>&1
         set -euo pipefail
+        echo 'R60_DISK_DIAG_BEFORE_BASELINE'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
+        for diagnostic_path in "$RUNNER_TEMP/veux-r5s2-work" "$RUNNER_TEMP/veux-r60-clang-cache" "$RUNNER_TEMP/veux-real-bakasu-history" "$RUNNER_TEMP/veux-r58" "$GITHUB_WORKSPACE"; do
+          if [[ -d "$diagnostic_path" && ! -L "$diagnostic_path" ]]; then
+            du -sh -- "$diagnostic_path" || true
+          fi
+        done
         export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
         if "$R5S2_PY" -B -u "$VEUX_R60_BRIDGE" launch "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4; then
           echo 'R60_R13_LEGACY_WORKER=PASS'
@@ -1014,6 +1025,14 @@ jobs:
         mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
         exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-28.log") 2>&1
         set -Eeuo pipefail
+        echo 'R60_DISK_DIAG_BEFORE_NATIVE54'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
+        for diagnostic_path in "$RUNNER_TEMP/veux-r5s2-work" "$RUNNER_TEMP/veux-r60-clang-cache" "$RUNNER_TEMP/veux-real-bakasu-history" "$RUNNER_TEMP/veux-r58" "$GITHUB_WORKSPACE"; do
+          if [[ -d "$diagnostic_path" && ! -L "$diagnostic_path" ]]; then
+            du -sh -- "$diagnostic_path" || true
+          fi
+        done
         bash "$R58_PAYLOAD/tools/r59_build_no_flash.sh"
     - name: R60 OEM ABI release review - validate intentional block independently of compiler
       id: r60_oem_review
