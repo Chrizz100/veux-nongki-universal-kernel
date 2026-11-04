@@ -1,0 +1,1379 @@
+# VEUX R13: one YAML + one MAIN; no user secrets or inputs.
+# Based on successful R12 CI-R3, with one pinned native5.4 SELinux commit.
+# Original full ABI, 132 CRC, compiler, Image/ELF and built-in gates retained.
+# Historical internal stage IDs/paths stay explicit; new source proof is R13.
+# R60-R10: restore pinned clang from verified, surviving cache after R13 worker cleanup.
+# R60-R9: preserve authentic R13 SUSFS-AVC audit hook; no double insertion.
+# R60-R7: always upload bounded *text-only* job logs; never publish Image, vmlinux,
+# Module.symvers, *.ko, DTB, DTBO, boot.img or any flashable archive.
+# Exit code 3 from a validated OEM review means FLASH BLOCKED, NOT compilation failed.
+# All actual source/compiler/security failures remain fatal and are logged.
+name: VEUX R61 - frozen R60 BakaSU35260 SUSFS230 with NoMount v22 - NOFLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-r60-native54-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONOPTIMIZE: '0'
+  GIT_TERMINAL_PROMPT: '0'
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  R5S2_MAIN_ZIP: VEUX_R5S2_BAKASU522_MAIN.zip
+  R5S2_MAIN_SHA256: 37a85d967df5cd9fa4dd3302e2073bc3b9ce461a6e03cd0ef51914fa5f5358b8
+  BAKASU_522: 522081c5b1c58587c4c743242eecf445ccebed5d
+  VERSION_MAIN_ZIP: VEUX_R5S2_GENUINE_BAKASU35234_MAIN.zip
+  VERSION_MAIN_SHA256: d3c0b0da02af4355d1cc0b77b14320c0e8a32fd15995dee7bfbe9acd263e2457
+  BAKASU_SYNC: f308ed0936bdd31163cb53da3f42bc7a698f5512
+  R4_PACKAGE_NAME: VEUX_R55H17_R4_CASS_UPDATE_MAIN.zip
+  R4_MANIFEST_SHA256: 5222d47522356998c6141908af436c23e3731b04ce1a3376f04e12527eed6311
+  REPRO_PACKAGE: VEUX_R13_CASS_MAIN.zip
+  REPRO_ARCHIVE_SHA256: 15770d93410c01ed9ad149ffc82b93d54a3ea73e6c53a274bd767b249cc975c1
+  REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
+  R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
+  VEUX_EXECUTION_MODE: ci
+  R60_MAIN: VEUX_R60_R12_VALIDATED_CLANG_ROUTE_MAIN_NOFLASH.zip
+  R60_MAIN_SHA256: d6b0e06d60374c131a5f3730790db1f2f35e538adddeb407f50d5c8874b58d67
+  R56_MAIN: VEUX_R56_R4_STOCK_AVD_PATH_MAIN_NOFLASH.zip
+  R56_MAIN_SHA256: b745ba93ebf92482fa3fcfa10a27b08c62fc72e07479e029dbae685949ae6117
+jobs:
+  r5s2_bakasu_522:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    name: R60 ARM64 compiler evidence, separate OEM release review, text logs always
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+    - name: Initialize R60 log receipt before checkout
+      id: r60_log_init
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        umask 077
+        root="$RUNNER_TEMP/veux-r60-logs"
+        test ! -L "$root"
+        mkdir -p "$root/steps"
+        {
+          printf 'R60_LOG_RECORD=INITIALIZED\n'
+          printf 'GITHUB_RUN_ID=%s\n' "$GITHUB_RUN_ID"
+          printf 'GITHUB_RUN_ATTEMPT=%s\n' "$GITHUB_RUN_ATTEMPT"
+          printf 'GITHUB_SHA=%s\n' "$GITHUB_SHA"
+          printf 'GITHUB_REF=%s\n' "$GITHUB_REF"
+          printf 'KERNEL_PACKAGE=NOT_PUBLISHED\nFLASH_ALLOWED=NO\n'
+          printf 'START_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        } > "$root/INITIAL_STATUS.txt"
+        cat "$root/INITIAL_STATUS.txt"
+    - name: Checkout exact git commit, no stored credentials
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Verify exact repository and checked-out commit
+      id: r12_repository
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-02.log") 2>&1
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'R12_IMMUTABLE_REPOSITORY=PASS'
+        echo 'R60_DISK_DIAG_INITIAL'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
+    - name: Authenticate R60 MAIN SHA256 and manifest before any source execution
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-03.log") 2>&1
+        set -Eeuo pipefail
+        printf '%s  %s\n' "$R60_MAIN_SHA256" "$GITHUB_WORKSPACE/$R60_MAIN" | sha256sum -c --strict
+        python3 -I - "$GITHUB_WORKSPACE/$R60_MAIN" "$RUNNER_TEMP/veux-r58-payload" <<'PY_R58_AUTH'
+        from pathlib import Path, PurePosixPath
+        import sys, hashlib, json, stat, zipfile
+        archive=Path(sys.argv[1]); out=Path(sys.argv[2])
+        assert out.parent.is_dir() and not out.exists() and not out.is_symlink()
+        with zipfile.ZipFile(archive) as z:
+            infos=z.infolist();names=[i.filename for i in infos]
+            assert len(names)==len(set(names)) and len(names)<50 and z.testzip() is None
+            assert sum(x.file_size for x in infos)<3_500_000
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            assert m['schema']=='VEUX_R60_REAL_CASS_COMPILER_V1'
+            assert m['kernel_compiled'] is False and m['flash_allowed'] is False
+            assert m['automatic_flash'] is False and m['contains_boot_img'] is False
+            assert set(names)==set(m['files'])|{'MANIFEST_SHA256.json'}
+            for i in infos:
+                p=PurePosixPath(i.filename)
+                assert not p.is_absolute() and '..' not in p.parts and '.' not in p.parts
+                assert not i.is_dir() and '\\' not in i.filename
+                assert stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG)
+                if i.filename!='MANIFEST_SHA256.json':
+                    assert hashlib.sha256(z.read(i)).hexdigest()==m['files'][i.filename]
+            out.mkdir(mode=0o700)
+            for i in infos:
+                p=out/i.filename;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read(i))
+        print('R60_MAIN_HASHES_AND_MANIFEST_AUTHENTICATED=PASS')
+        PY_R58_AUTH
+        echo "R58_PAYLOAD=$RUNNER_TEMP/veux-r58-payload" >> "$GITHUB_ENV"
+    - name: 01 Authenticate the complete R13 MAIN before executing any payload
+      id: r12_auth
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-04.log") 2>&1
+        set -euo pipefail
+        test -f "$GITHUB_WORKSPACE/$REPRO_PACKAGE"
+        cat > "$RUNNER_TEMP/r12-bootstrap.py" <<'PY_R11_BOOTSTRAP'
+        #!/usr/bin/env python3
+        """Authenticate every executable payload byte before extracting a new directory."""
+        import argparse
+        import hashlib
+        import json
+        from pathlib import Path, PurePosixPath
+        import re
+        import stat
+        import zipfile
+
+
+        def extract(archive, destination, archive_sha, manifest_sha):
+            archive, destination = Path(archive), Path(destination)
+            if destination.exists() or destination.is_symlink():
+                raise ValueError('PAYLOAD_DESTINATION_EXISTS')
+            if hashlib.sha256(archive.read_bytes()).hexdigest() != archive_sha:
+                raise ValueError('PAYLOAD_ARCHIVE_SHA_CHANGED')
+            with zipfile.ZipFile(archive) as source:
+                items = source.infolist()
+                names = [item.filename for item in items]
+                if len(names) != len(set(names)):
+                    raise ValueError('DUPLICATE_ZIP_ENTRY')
+                if sum(item.file_size for item in items) > 100 * 1024 * 1024:
+                    raise ValueError('PAYLOAD_TOO_LARGE')
+                for item in items:
+                    path = PurePosixPath(item.filename)
+                    if (path.is_absolute() or '..' in path.parts or '.' in path.parts
+                            or str(path) != item.filename or '\\' in item.filename
+                            or item.is_dir() or '\x00' in item.filename
+                            or stat.S_ISLNK(item.external_attr >> 16)):
+                        raise ValueError('UNSAFE_PAYLOAD_PATH')
+                if source.testzip() is not None:
+                    raise ValueError('PAYLOAD_ZIP_CRC_FAILED')
+                raw = source.read('PAYLOAD_MANIFEST.json')
+                if hashlib.sha256(raw).hexdigest() != manifest_sha:
+                    raise ValueError('PAYLOAD_MANIFEST_SHA_CHANGED')
+                manifest = json.loads(raw)
+                if manifest.get('schema') != 1 or manifest.get('automatic_flash') is not False:
+                    raise ValueError('UNTRUSTED_MANIFEST_SCHEMA')
+                files = manifest.get('files')
+                if (not isinstance(files, dict) or not files
+                        or not all(isinstance(k, str) and isinstance(v, str)
+                                   and re.fullmatch('[0-9a-f]{64}', v) for k, v in files.items())):
+                    raise ValueError('INVALID_PAYLOAD_HASH_MAP')
+                if set(names) != set(files) | {'PAYLOAD_MANIFEST.json'}:
+                    raise ValueError('UNMANIFESTED_OR_MISSING_ENTRY')
+                for name, expected in files.items():
+                    if hashlib.sha256(source.read(name)).hexdigest() != expected:
+                        raise ValueError('PAYLOAD_FILE_SHA_CHANGED:' + name)
+                destination.mkdir(parents=True)
+                for name in sorted(names):
+                    target = destination / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read(name))
+            return {'status': 'AUTHENTICATED', 'files': len(files),
+                    'archive_sha256': archive_sha, 'manifest_sha256': manifest_sha,
+                    'automatic_flash': False}
+
+
+        def main():
+            p = argparse.ArgumentParser(description=__doc__)
+            p.add_argument('--archive', required=True)
+            p.add_argument('--out', required=True)
+            p.add_argument('--archive-sha256', required=True)
+            p.add_argument('--manifest-sha256', required=True)
+            a = p.parse_args()
+            print(json.dumps(extract(a.archive, a.out, a.archive_sha256, a.manifest_sha256)))
+
+
+        if __name__ == '__main__':
+            main()
+        PY_R11_BOOTSTRAP
+        python3 -B "$RUNNER_TEMP/r12-bootstrap.py" \
+          --archive "$GITHUB_WORKSPACE/$REPRO_PACKAGE" \
+          --out "$RUNNER_TEMP/veux-r12-payload" \
+          --archive-sha256 "$REPRO_ARCHIVE_SHA256" \
+          --manifest-sha256 "$REPRO_MANIFEST_SHA256"
+        printf 'REPRO_PAYLOAD=%s\n' "$RUNNER_TEMP/veux-r12-payload" >> "$GITHUB_ENV"
+    - name: 02 Verify all historical build inputs included inside MAIN
+      id: r12_legacy_inputs
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-05.log") 2>&1
+        set -euo pipefail
+        inputs="$REPRO_PAYLOAD/reference/root_inputs"
+        printf '%s  %s\n' \
+          "$R5S2_MAIN_SHA256" "$inputs/$R5S2_MAIN_ZIP" \
+          "$VERSION_MAIN_SHA256" "$inputs/$VERSION_MAIN_ZIP" \
+          "$R4_ARCHIVE_SHA256" "$inputs/$R4_PACKAGE_NAME" | sha256sum --check --status
+        {
+          printf 'R5S2_ARCHIVE=%s\n' "$inputs/$R5S2_MAIN_ZIP"
+          printf 'VERSION_ARCHIVE=%s\n' "$inputs/$VERSION_MAIN_ZIP"
+          printf 'R4_ARCHIVE=%s\n' "$inputs/$R4_PACKAGE_NAME"
+        } >> "$GITHUB_ENV"
+        echo 'R12_ALL_LEGACY_ARCHIVES_AUTHENTICATED_INSIDE_MAIN=PASS'
+    - name: R4 authenticate source-port payload and run isolation negative tests before baseline build
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-06.log") 2>&1
+        set -euo pipefail
+        test -f "$R4_ARCHIVE"
+        cat > "$RUNNER_TEMP/r4-extract-payload.py" <<'PY_R4_EXTRACT'
+        #!/usr/bin/env python3
+        """Extract a SHA-pinned executable payload, refusing unsafe ZIP entries."""
+        import argparse
+        import hashlib
+        import json
+        from pathlib import Path, PurePosixPath
+        import stat
+        import zipfile
+
+
+        def extract(archive: Path, destination: Path, manifest_sha: str) -> dict:
+            if destination.exists() or destination.is_symlink():
+                raise ValueError('R4_PAYLOAD_DESTINATION_EXISTS')
+            with zipfile.ZipFile(archive) as source:
+                if source.testzip() is not None:
+                    raise ValueError('R4_PAYLOAD_ZIP_CRC_FAILED')
+                names = source.namelist()
+                if len(names) != len(set(names)):
+                    raise ValueError('R4_DUPLICATE_ZIP_ENTRY')
+                raw = source.read('PAYLOAD_MANIFEST.json')
+                if hashlib.sha256(raw).hexdigest() != manifest_sha:
+                    raise ValueError('R4_PAYLOAD_MANIFEST_HASH_CHANGED')
+                manifest = json.loads(raw)
+                if manifest.get('schema') != 1 or manifest.get('flash_allowed') is not False:
+                    raise ValueError('R4_UNTRUSTED_MANIFEST_SCHEMA')
+                files = manifest.get('files', {})
+                if not files or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+                    raise ValueError('R4_INVALID_PAYLOAD_HASH_MAP')
+                # The final workflow and human-facing checksum wrapper are optional ZIP
+                # companions. They are not executed from this extracted payload.
+                companions = {'R55H17_R4_CASS_UPDATE_BUILD_NOFLASH.yml', 'SHA256SUMS', 'README.txt'}
+                extras = set(names) - set(files) - {'PAYLOAD_MANIFEST.json'}
+                if not extras <= companions:
+                    raise ValueError('R4_UNMANIFESTED_PAYLOAD_ENTRY')
+                for item in source.infolist():
+                    path = PurePosixPath(item.filename)
+                    if (path.is_absolute() or '..' in path.parts or '\\' in item.filename
+                            or item.filename.endswith('/') or '\x00' in item.filename
+                            or stat.S_ISLNK(item.external_attr >> 16)):
+                        raise ValueError('R4_UNSAFE_PAYLOAD_PATH')
+                for name, expected in files.items():
+                    data = source.read(name)
+                    if hashlib.sha256(data).hexdigest() != expected:
+                        raise ValueError('R4_PAYLOAD_FILE_HASH_CHANGED:' + name)
+                destination.mkdir(parents=True)
+                for name in ['PAYLOAD_MANIFEST.json', *sorted(files)]:
+                    target = destination / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read(name))
+            return {'status': 'R4_PAYLOAD_AUTHENTICATED', 'files': len(files),
+                    'manifest_sha256': manifest_sha, 'flash_allowed': False}
+
+
+        def main():
+            parser = argparse.ArgumentParser()
+            parser.add_argument('--archive', type=Path, required=True)
+            parser.add_argument('--out', type=Path, required=True)
+            parser.add_argument('--manifest-sha256', required=True)
+            args = parser.parse_args()
+            print(json.dumps(extract(args.archive, args.out, args.manifest_sha256), sort_keys=True))
+
+
+        if __name__ == '__main__':
+            main()
+        PY_R4_EXTRACT
+        python3 -B "$RUNNER_TEMP/r4-extract-payload.py" --archive "$R4_ARCHIVE" --out "$RUNNER_TEMP/veux-r55h17-r4-payload" --manifest-sha256 "$R4_MANIFEST_SHA256"
+        printf 'R4_PAYLOAD=%s\n' "$RUNNER_TEMP/veux-r55h17-r4-payload" >> "$GITHUB_ENV"
+        python3 -B -m unittest discover -s "$RUNNER_TEMP/veux-r55h17-r4-payload/workflow" -p test_cass_r4.py -v
+        python3 -B - "$RUNNER_TEMP/veux-r55h17-r4-payload" <<'PY_R4_AST'
+        import ast,sys
+        from pathlib import Path
+        for path in Path(sys.argv[1]).rglob('*.py'):
+            ast.parse(path.read_text(),filename=str(path))
+        print('R4_AUTHENTICATED_PYTHON_SYNTAX=PASS')
+        PY_R4_AST
+    - name: Activate the pinned ShellCheck 0.11.0 included in MAIN
+      id: r12_shellcheck
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-07.log") 2>&1
+        set -euo pipefail
+        tool="$REPRO_PAYLOAD/r12/host-tools/shellcheck"
+        printf '%s  %s\n' '4da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b' "$tool" | sha256sum --check --status
+        chmod 0755 "$tool"
+        printf '%s\n' "$REPRO_PAYLOAD/r12/host-tools" >> "$GITHUB_PATH"
+        "$tool" --version
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        echo 'R12_PINNED_SHELLCHECK=PASS'
+    - name: Verify this workflow using pinned actionlint and runner ShellCheck
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-08.log") 2>&1
+        set -euo pipefail
+        archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+        curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+          https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+          --output "$archive"
+        printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check --status
+        mkdir -p "$RUNNER_TEMP/veux-r5s2-actionlint"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/veux-r5s2-actionlint" actionlint
+        command -v shellcheck
+        "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" -oneline .github/workflows/VEUX_R13_CASS_BUILD.yml
+        "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" -oneline .github/workflows/VEUX_R61_R60_CASS_BAKASU35260_SUSFS230_NOMOUNT22_ONLY_NOFLASH.yml
+        echo 'R5S2_ACTIONLINT_AND_SHELLCHECK=PASS'
+    - name: Authenticate R5S2 archive and full original R5S1 nested CI chain
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-09.log") 2>&1
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+        import hashlib,json,os,stat,zipfile
+        f=Path(os.environ['R5S2_ARCHIVE'])
+        if hashlib.sha256(f.read_bytes()).hexdigest()!=os.environ['R5S2_MAIN_SHA256']:
+            raise SystemExit('R5S2_ROOT_ARCHIVE_CHANGED')
+        with zipfile.ZipFile(f) as z:
+            if z.testzip() is not None:raise SystemExit('R5S2_ARCHIVE_CRC_ERROR')
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            p='common/scripts/veux_r5s2_unpack.py'
+            raw=z.read(p)
+            if m.get('schema')!=1 or m.get('flash_approved') is not False or hashlib.sha256(raw).hexdigest()!=m['files'][p]:
+                raise SystemExit('R5S2_BOOTSTRAP_UNVERIFIED')
+        output=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-bootstrap-authenticated.py'
+        if output.exists():raise SystemExit('BOOTSTRAP_COLLISION')
+        output.write_bytes(raw)
+        PY
+        python3 "$RUNNER_TEMP/veux-r5s2-bootstrap-authenticated.py" \
+          --main "$R5S2_ARCHIVE" \
+          --out "$RUNNER_TEMP/veux-r5s2-overlay"
+        {
+          printf 'R5S2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay"
+          printf 'R5S1_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1"
+          printf 'R5_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r5"
+          printf 'R4_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r4"
+          printf 'NM211_R2_OVERLAY=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/r2"
+          printf 'R5S1_REFERENCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/common/sync/VEUX_SYNC_F308_D726_R5_HOOK.c"
+          printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/R4_COMPILED_REFERENCE_SELINUX.c"
+          printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c"
+          printf 'R5_R4_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/R4_COMPILED_REFERENCE_SELINUX.c"
+          printf 'R5_D726_SOURCE=%s\n' "$RUNNER_TEMP/veux-r5s2-overlay/verified-r5s1/nested_r5_r4_r2/D726_ORIGINAL_REFERENCE_SELINUX.c"
+        } >> "$GITHUB_ENV"
+        echo 'R5S2_FULL_ARCHIVE_CHAIN=PASS'
+    - name: Authenticate isolated BakaSU version module and full R5S2 source chain
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-10.log") 2>&1
+        set -euo pipefail
+        python3 - <<'PY'
+        from pathlib import Path
+        import hashlib,json,os,stat,zipfile
+        archive=Path(os.environ['VERSION_ARCHIVE'])
+        if hashlib.sha256(archive.read_bytes()).hexdigest()!=os.environ['VERSION_MAIN_SHA256']:
+            raise SystemExit('GENUINE_VERSION_ARCHIVE_SHA256_MISMATCH')
+        dst=Path(os.environ['RUNNER_TEMP'])/'veux-real-version-overlay'
+        if dst.exists():raise SystemExit('VERSION_OVERLAY_ALREADY_EXISTS')
+        with zipfile.ZipFile(archive) as z:
+            if z.testzip() is not None:raise SystemExit('VERSION_OVERLAY_CRC_FAILED')
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            if (m.get('schema')!=1 or m.get('flash_approved') is not False
+                or m.get('expected_real_version')!=35234):
+                raise SystemExit('VERSION_MANIFEST_UNTRUSTED')
+            expected=set(m['files'])|{'MANIFEST_SHA256.json'}
+            if set(z.namelist())!=expected:raise SystemExit('VERSION_OVERLAY_FILES_CHANGED')
+            for item in z.infolist():
+                name=item.filename
+                p=Path(name)
+                if (p.is_absolute() or '..' in p.parts or (len(p.parts)<2 and name!='MANIFEST_SHA256.json')
+                    or (item.external_attr>>16)&0o170000==0o120000):
+                    raise SystemExit('UNSAFE_VERSION_OVERLAY_PATH')
+                data=z.read(name)
+                if name!='MANIFEST_SHA256.json' and hashlib.sha256(data).hexdigest()!=m['files'][name]:
+                    raise SystemExit('VERSION_OVERLAY_FILE_SHA_FAILED:'+name)
+            dst.mkdir(parents=True)
+            for item in z.infolist():
+                target=dst/item.filename
+                target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_bytes(z.read(item.filename))
+        print('VEUX_TRUE_VERSION_HASH_PINNED_BOOTSTRAP=PASS')
+        PY
+        printf 'VERSION_OVERLAY=%s\n' "$RUNNER_TEMP/veux-real-version-overlay" >> "$GITHUB_ENV"
+        echo 'R5S2_REAL_VERSION_SOURCE_OVERLAY=PASS'
+    - name: Run R1-R5S1 regression tests and all new R5S2 negative tests
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-11.log") 2>&1
+        set -euo pipefail
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_preflight_r1.py -v
+        python3 -m unittest discover -s "$NM211_R2_OVERLAY/Tests" -p test_veux_r6_nomount211_build_r2.py -v
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_susfs_selinux54_r3.py -v
+        python3 -m unittest discover -s "$R4_OVERLAY/Tests" -p test_veux_r6_susfs_selinux54_build_r4.py -v
+        python3 -m unittest discover -s "$R5_OVERLAY/Tests" -p test_veux_r5_susfs_selinux.py -v
+        python3 -m unittest discover -s "$R5S1_OVERLAY/Tests" -p test_veux_sync_susfs_r1.py -v
+        python3 -m unittest discover -s "$R5S2_OVERLAY/Tests" -p test_veux_r5s2_522.py -v
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts:$PYTHONPATH"
+        python3 -m unittest discover -s "$VERSION_OVERLAY/Tests" -p test_veux_r5s2_true_version.py -v
+        test -z "$(git status --porcelain --untracked-files=all)"
+        echo 'R5S2_HISTORICAL_AND_REAL_GIT_VERSION_TESTS=PASS'
+    - name: Install documented build dependencies and pinned Python packages
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-12.log") 2>&1
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          bc binutils binutils-aarch64-linux-gnu bison build-essential ca-certificates curl dwarves file flex \
+          git jq libelf-dev libncurses-dev libssl-dev openssl perl python3 \
+          python3-venv python3-yaml rsync unzip zip xz-utils zstd
+        python3 -m venv "$RUNNER_TEMP/veux-r5s2-venv"
+        "$RUNNER_TEMP/veux-r5s2-venv/bin/python" -m pip install \
+          --disable-pip-version-check --retries 2 --timeout 30 \
+          ruamel.yaml==0.19.1 PyYAML==6.0.3
+        printf 'R5S2_PY=%s\n' "$RUNNER_TEMP/veux-r5s2-venv/bin/python" >> "$GITHUB_ENV"
+    - name: R4 verify every Bash stage and embedded Python before kernel compilation
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-13.log") 2>&1
+        set -euo pipefail
+        command -v shellcheck
+        mkdir -p "$RUNNER_TEMP/r55h17-r4-shellcheck"
+        python3 - ".github/workflows/VEUX_R13_CASS_BUILD.yml" "$RUNNER_TEMP/r55h17-r4-shellcheck" <<'PY_R4_SC'
+        import ast,re,sys
+        from pathlib import Path
+        import yaml
+        source=Path(sys.argv[1]); destination=Path(sys.argv[2])
+        document=yaml.safe_load(source.read_text())
+        for i,step in enumerate(document['jobs']['r5s2_bakasu_522']['steps']):
+            if 'run' in step:
+                if step.get('shell')!='bash':raise SystemExit('UNREVIEWED_RUN_SHELL')
+                (destination / (str(i)+'-step.sh')).write_text(step['run'])
+                lines=step['run'].splitlines()
+                for j,line in enumerate(lines):
+                    match=re.search(r"<<'(PY[A-Za-z0-9_]*)'",line)
+                    if match:
+                        delimiter=match.group(1)
+                        end=next(k for k in range(j+1,len(lines)) if lines[k]==delimiter)
+                        ast.parse('\n'.join(lines[j+1:end])+'\n')
+        PY_R4_SC
+        for script in "$RUNNER_TEMP"/r55h17-r4-shellcheck/*-step.sh; do
+          bash -n "$script"
+          shellcheck --shell=bash --severity=error "$script"
+        done
+        echo 'R55H17_R4_ALL_BASH_STAGES=PASS; NO_FLASH'
+    - name: 03 Static Green Pass and packaging regression checks before compilation
+      id: r12_static
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-14.log") 2>&1
+        set -euo pipefail
+        python3 -B "$REPRO_PAYLOAD/r13/static_green.py" \
+          --payload "$REPRO_PAYLOAD" \
+          --workflow "$GITHUB_WORKSPACE/.github/workflows/VEUX_R13_CASS_BUILD.yml" \
+          --actionlint "$RUNNER_TEMP/veux-r5s2-actionlint/actionlint" \
+          --out "$RUNNER_TEMP/r12-reports/static"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/pipeline" -p test_pipeline_contract.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/PIPELINE_NEGATIVE_TESTS.log"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r11" -p test_source_update.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/SOURCE_UPDATE_TESTS.log"
+        python3 -B "$REPRO_PAYLOAD/r11/packaging/test_builtin_contract.py" \
+          --reference-pipeline "$REPRO_PAYLOAD/pipeline" \
+          --output "$RUNNER_TEMP/r12-reports/ORIGINAL_INSTALLER_CONTRACT_TESTS.json"
+        python3 -B "$REPRO_PAYLOAD/r12/tests/runhostcheck.py" \
+          --payload "$REPRO_PAYLOAD" \
+          --out "$RUNNER_TEMP/r12-reports/HOST_REGRESSION.json"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r12/tests" -p test_postcompile_abi.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/POSTCOMPILE_ABI_REGRESSION.log"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r12/tests" -p test_environment_lifecycle.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/ENVIRONMENT_LIFECYCLE_REGRESSION.log"
+        python3 -B "$REPRO_PAYLOAD/r13/tests/run_native_tests.py" \
+          --source "$REPRO_PAYLOAD/r13/reference/selinux_hide.updated.c" \
+          --out "$RUNNER_TEMP/r12-reports/r13-native-functions"
+        python3 -B "$REPRO_PAYLOAD/r13/tests/check_regression.py" \
+          --base "$REPRO_PAYLOAD/r13/reference/selinux_hide.r12.c" \
+          --candidate "$REPRO_PAYLOAD/r13/reference/selinux_hide.updated.c" \
+          --out "$RUNNER_TEMP/r12-reports/r13-native-regression"
+        python3 -B -m unittest discover -s "$REPRO_PAYLOAD/r13/tests" -p test_r13_guards.py -v \
+          2>&1 | tee "$RUNNER_TEMP/r12-reports/R13_GUARD_REGRESSION.log"
+    - name: 03 Audit documented Perf source and compile review-only bitmap tests
+      id: r12_perf_audit
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-15.log") 2>&1
+        set -euo pipefail
+        python3 -B "$REPRO_PAYLOAD/perf/audit_perf_source.py" \
+          --output "$RUNNER_TEMP/r12-reports/PERF_SOURCE_AUDIT.json"
+        python3 -B "$REPRO_PAYLOAD/perf/prepare_perf_source_review.py" \
+          --source "$REPRO_PAYLOAD/perf/reference/perflocks/Target.cpp" \
+          --output-dir "$RUNNER_TEMP/r12-reports/perf-source-review"
+        # The reviewed HAL differs from the ROM ABI. No patch is applied to the kernel or ROM.
+    - name: Fetch only exact official BakaSU 522 commit and its parent
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-16.log") 2>&1
+        set -euo pipefail
+        donor="$RUNNER_TEMP/veux-r5s2-official-522-git"
+        test ! -e "$donor"
+        mkdir -p "$donor"
+        git -C "$donor" init --quiet
+        git -C "$donor" remote add origin https://github.com/Baka-SU/BakaSU.git
+        git -C "$donor" fetch --quiet --no-tags --depth=2 --filter=blob:none origin "$BAKASU_522"
+        git -C "$donor" sparse-checkout init --cone
+        git -C "$donor" sparse-checkout set kernel
+        git -C "$donor" checkout --quiet --detach FETCH_HEAD
+        test "$(git -C "$donor" rev-parse HEAD)" = "$BAKASU_522"
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$R5S2_OVERLAY/common/scripts/veux_bakasu_522_r5s2.py" donor --donor "$donor"
+        printf 'BAKASU522_DONOR=%s\n' "$donor" >> "$GITHUB_ENV"
+        echo 'R5S2_OFFICIAL_PARENT_TARGET_AND_20_GIT_BLOBS=PASS'
+    - name: Verify genuine official sync-susfs Git history before source versioning
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-17.log") 2>&1
+        set -euo pipefail
+        history="$RUNNER_TEMP/veux-real-bakasu-history"
+        test ! -e "$history"
+        # The historical sync-susfs branch was deleted upstream. Preserve the
+        # original commit, full ancestry, and version formula without fallback.
+        git init --quiet "$history"
+        git -C "$history" remote add origin https://github.com/Baka-SU/BakaSU.git
+        # Fetch the exact historical commit AND its original official tag.
+        # The branch no longer exists; never create a synthetic tag or version.
+        git -C "$history" fetch --quiet --no-tags origin "$BAKASU_SYNC" \
+          'refs/tags/v4.2.0-rc3:refs/tags/v4.2.0-rc3'
+        git -C "$history" checkout --quiet --detach "$BAKASU_SYNC"
+        test "$(git -C "$history" rev-parse HEAD)" = "$BAKASU_SYNC"
+        test "$(git -C "$history" rev-parse 'refs/tags/v4.2.0-rc3^{commit}')" = 239e1e8871b8fcd51a6e5b3002e0ba522fdd99fb
+        git -C "$history" merge-base --is-ancestor refs/tags/v4.2.0-rc3 HEAD
+        test "$(git -C "$history" describe --abbrev=0 --tags)" = v4.2.0-rc3
+        test "$(git -C "$history" rev-parse 'HEAD^{tree}')" = ac3682909827ba7d3f382e10cfeec9bdd71ae78d
+        test "$(git -C "$history" rev-parse 'HEAD^')" = ebd6382e405b33c67e53f1ea29fdf443b8a533d5
+        test ! -f "$history/.git/shallow"
+        test "$(git -C "$history" rev-list --count HEAD)" = 4533
+        export PYTHONPATH="$VERSION_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$VERSION_OVERLAY/common/scripts/veux_r5s2_true_version.py" donor --sync "$history"
+        printf 'SYNC_DONOR=%s\n' "$history" >> "$GITHUB_ENV"
+        echo 'GENUINE_OFFICIAL_BAKASU_GIT_HISTORY_35233=PASS'
+    - name: Prepare proven R5S1 donor source with pinned NoMount 2.1.1
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-18.log") 2>&1
+        set -euo pipefail
+        "$R5S2_PY" -u "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+          prepare --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
+    - name: Activate authenticated clang-r416183b mirror fallback and in-run archive cache
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-19.log") 2>&1
+        set -Eeuo pipefail
+        bridge="$R58_PAYLOAD/tools/veux_r60_clang_transport.py"
+        tests="$R58_PAYLOAD/tests/test_r60_clang_transport.py"
+        test -f "$bridge" && test ! -L "$bridge"
+        test -f "$tests" && test ! -L "$tests"
+        python3 -B -m py_compile "$bridge" "$tests"
+        python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" -p 'test_r60_clang_transport.py' -v
+        cache="$RUNNER_TEMP/veux-r60-clang-cache"
+        test ! -e "$cache" && test ! -L "$cache"
+        mkdir -m 0700 "$cache"
+        {
+          printf 'VEUX_R60_REPO=%s\n' "$GITHUB_WORKSPACE"
+          printf 'VEUX_R60_BASE_TEMP=%s\n' "$RUNNER_TEMP"
+          printf 'VEUX_R60_CLANG_CACHE_DIR=%s\n' "$cache"
+          printf 'VEUX_R60_BRIDGE=%s\n' "$bridge"
+        } >> "$GITHUB_ENV"
+        # R12: Test the REAL materialize/HERE bypass before any slow source
+        # reconstruction; the R11 transport unit fixtures did not cover this.
+        "$R5S2_PY" -B -m unittest discover -s "$R58_PAYLOAD/tests" \
+          -p 'test_r60_r12_source_transport_bridge.py' -v
+        # PRIME the full, digest-checked, CRC-valid pinned toolchain BEFORE
+        # reconstructing source. Incomplete AOSP curl archives are rejected;
+        # independently pinned CDN/Git alternatives are attempted. The next
+        # source/build worker reads this authenticated cache; never fetches
+        # the unverified 191 MB historical stream again.
+        VEUX_R60_REPO="$GITHUB_WORKSPACE" \
+          VEUX_R60_BASE_TEMP="$RUNNER_TEMP" \
+          VEUX_R60_CLANG_CACHE_DIR="$cache" \
+          python3 -B -u "$bridge" prime-cache
+        echo 'R60_CLANG_TRANSPORT_PREPARED=PASS; PINNED_AOSP_AND_VERIFIED_GIT_SUBTREE; NO_FLASH'
+    - name: Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-20.log") 2>&1
+        set -euo pipefail
+        "$R5S2_PY" -B -u "$VEUX_R60_BRIDGE" launch "$NM211_R2_OVERLAY/common/scripts/veux_r6_nomount211_preflight_r1.py" \
+          preflight --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work" --kernel 5.4.274
+        export PYTHONPATH="$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        "$R5S2_PY" -u "$R5S1_OVERLAY/common/scripts/veux_sync_susfs_r1_build.py" audit \
+          --d726 "$R5S1_OVERLAY/evidence/D726_ORIGINAL_REFERENCE_SELINUX.c" \
+          --reference "$R5S1_REFERENCE"
+        echo 'R5S2_GREEN_R5S1_SOURCE_AND_SUSFS_PIN=PASS'
+    - name: R60-R8 precheck native54 SELinux host anchors before slow baseline compiler
+      shell: bash
+      run: |
+        # Fail early on incompatible source anatomy, without modifying the kernel tree.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps" "$RUNNER_TEMP/veux-r58-summary"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-r8-host-preflight.log") 2>&1
+        set -Eeuo pipefail
+        early="$RUNNER_TEMP/veux-r5s2-work/source-audit/5.4.274/source-work/kernel"
+        test -d "$early"
+        test ! -L "$early"
+        python3 -B "$R58_PAYLOAD/tools/r59_host.py" \
+          --kernel "$early" --preflight \
+          --out "$RUNNER_TEMP/veux-r58-summary/R60_R8_HOST_PREFLIGHT.json"
+        echo 'R60_R8_EARLY_SELINUX_HOST_ANCHORS=PASS; NO_SOURCE_WRITE; NO_FLASH'
+        # R11: reproduce the original QCOM_RTIC=y compiler failure on actual C
+        # syntax before spending time on the legacy kernel. Both RTIC branches
+        # and KSU-disabled cases must pass with the pinned clang-r416183b.
+        pinned_cc="$RUNNER_TEMP/veux-r5s2-work/source-audit/5.4.274/source-work/toolchains/clang-r416183b/bin/clang"
+        test -x "$pinned_cc" && test ! -L "$pinned_cc"
+        VEUX_R11_CC="$pinned_cc" python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" \
+          -p 'test_r60_r11_qcom_rtic_compiler.py' -v
+        echo 'R60_R11_QCOM_RTIC_EXTERNAL_DECLARATIONS=PINNED_CLANG12_COMPILER_PREFLIGHT_PASS'
+        # Copy the authenticated source-audit tarball BEFORE the historical
+        # worker deletes its own temporary toolchain after the baseline build.
+        python3 -B "$R58_PAYLOAD/tools/veux_r60_clang_transport.py" seed-source-archive
+        python3 -B "$R58_PAYLOAD/tools/veux_r60_clang_transport.py" verify-cache
+        echo 'R60_R10_CLANG_CACHE_PRECHECK=PASS; ARCHIVE_SURVIVES_R13_WORKER_CLEANUP'
+    - name: R55H17-R2 pin and verify official BakaSU 35252 and NoMount 2.1.1/v22 source
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-21.log") 2>&1
+        set -euo pipefail
+        fetch_exact() {
+          local url="$1" sha="$2" dest="$3"
+          test ! -e "$dest"
+          git clone --quiet "$url" "$dest"
+          git -C "$dest" checkout --quiet --detach "$sha"
+          test "$(git -C "$dest" rev-parse HEAD)" = "$sha"
+          test -z "$(git -C "$dest" status --porcelain --untracked-files=all)"
+        }
+        fetch_exact https://github.com/Baka-SU/BakaSU.git d5e9e025b8b49155f8014684d64c91742b465f65 "$RUNNER_TEMP/BakaSU35252"
+        fetch_exact https://github.com/maxsteeel/nomount.git bf1847f98fed382369c43bfd652cd93774b9b8e3 "$RUNNER_TEMP/NoMount22"
+        fetch_exact https://github.com/maxsteeel/nomount.git 7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3 "$RUNNER_TEMP/NoMountR5S2"
+        echo 'R55H17_R2_PINNED_OFFICIAL_SOURCES=PASS; NO_FLASH'
+    - name: 04 Compile protected baseline and fresh complete CASS candidate
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-22.log") 2>&1
+        set -euo pipefail
+        echo 'R60_DISK_DIAG_BEFORE_BASELINE'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
+        for diagnostic_path in "$RUNNER_TEMP/veux-r5s2-work" "$RUNNER_TEMP/veux-r60-clang-cache" "$RUNNER_TEMP/veux-real-bakasu-history" "$RUNNER_TEMP/veux-r58" "$GITHUB_WORKSPACE"; do
+          if [[ -d "$diagnostic_path" && ! -L "$diagnostic_path" ]]; then
+            du -sh -- "$diagnostic_path" || true
+          fi
+        done
+        export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
+        if "$R5S2_PY" -B -u "$VEUX_R60_BRIDGE" launch "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4; then
+          echo 'R60_R13_LEGACY_WORKER=PASS'
+        else
+          worker_exit=$?
+          # Original fleet worker already saves its decoded stdout/stderr to this path.
+          # Never conceal a failure, and never upload any kernel, DTB, or boot image.
+          buildlog="$RUNNER_TEMP/veux-r5s2-work/report/BUILD_5.4.274.log"
+          diagnostic="$RUNNER_TEMP/veux-r58-summary"
+          mkdir -p "$diagnostic"
+          {
+            printf 'R60_R13_LEGACY_WORKER=FAIL\nR60_LEGACY_WORKER_EXIT=%s\n' "$worker_exit"
+            printf 'R60_FAILED_STAGE=22_BEFORE_UPDATED_R60_NATIVE54_COMPILER\n'
+            if [[ -f "$buildlog" && ! -L "$buildlog" ]]; then
+              printf 'R60_WORKER_LOG_SHA256='; sha256sum "$buildlog"
+              printf 'R60_WORKER_COMPILER_LOG_LAST_250_LINES_BEGIN\n'
+              tail -n 250 "$buildlog"
+              printf 'R60_WORKER_COMPILER_LOG_LAST_250_LINES_END\n'
+            else
+              printf 'R60_WORKER_COMPILER_LOG_MISSING_OR_UNSAFE\n'
+            fi
+            printf 'R60_KERNEL_COMPILER_GREEN=NO\nFLASH_ALLOWED=NO\n'
+          } 2>&1 | tee "$diagnostic/R60_BASELINE_WORKER_FAILURE.txt" >&2
+          exit "$worker_exit"
+        fi
+      id: r12_compile
+    - name: Independently require R5S1 module ABI boot AK3 and new 522 compiled proof
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-23.log") 2>&1
+        set -euo pipefail
+        "$R5S2_PY" -u "$REPRO_PAYLOAD/r12/verify_legacy_result_r2.py" \
+          --work "$RUNNER_TEMP/veux-r5s2-work" --overlay "$R5S1_OVERLAY"
+        python3 - <<'PY'
+        import json,os
+        from pathlib import Path
+        root=Path(os.environ['RUNNER_TEMP'])/'veux-r5s2-work'
+        row=json.loads((root/'public/5.4.274/RESULT.json').read_text())
+        x=row.get('bakasu_522_r5s2') or {}
+        if (x.get('status')!='EXPERIMENTAL_522_5_4_COMPILED_IN_R5S1_LINEAGE'
+            or x.get('change_count')!=20
+            or x.get('tracepoint_disabled') is not True
+            or x.get('compat_config_y') is not True
+            or x.get('r5s1_selinux_unchanged') is not True
+            or x.get('flash_release') is not False
+            or row.get('device') is not False
+            or row.get('image_sha256')=='49007385ebf2cd21dde154e8ca71a67331802ec624e7c6ebfa571f51cb199e4f'):
+            raise SystemExit('R5S2_522_COMPILED_PROOF_INCOMPLETE')
+        print('R5S2_COMPILE_ABI_CONFIG_AK3_AND_522_COMPAT_PROOFS=PASS; NO_FLASH')
+        PY
+    - name: R55H17-R1 require unchanged CASS config and 132 loaded RMNET CRC imports - NO FLASH
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-24.log") 2>&1
+        set -euo pipefail
+        report_dir="$RUNNER_TEMP/veux-r55h17-r1-audit"
+        mkdir -p "$report_dir"
+        cat > "$RUNNER_TEMP/veux-r55h17-cass-gate.py" <<'PY_R55H17_GATE'
+        #!/usr/bin/env python3
+        """VEUX R55H17 offline proof: CASS baseline, unchanged module ABI, no flash.
+        Strict audit only; cannot attest to device boot or sign an image.
+        """
+        import argparse
+        import base64
+        import csv
+        import hashlib
+        import json
+        from pathlib import Path
+        import sys
+        import zlib
+
+        CONFIG_SHA256 = '405a4b3384212aa693ca2ce19f4c1ebef74f9cfc2568ce5da2107efe84fc0ff4'
+        EXPECTED_RELEASE = '5.4.274-qgki-g82179e362f33'
+        EXPECTED_DTB_SHA256 = '42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+        REFERENCE = json.loads(zlib.decompress(base64.b64decode('eNqdWNty6zYM/Jfz3AeSIinyWzodDnizVVuXSHJy3K8vJMqxHFG225eMndm1SAALLPTnn7/6ugmjGY7Drz9+GQPnc+tMF3rXXfAf5LfmOpYFZ7/++iOPHU52BhJtpSaMZ4AuVmY4t18djMcZy5zXJHifw3YX0zbnqgmmhuE0w6mUjHsZduBdOwyVPa8IKhSRUAoZwqmejz3DgmVFAVxkYOdqGA14bz7hXPkZLVUsqLN+D+3D2YRm7K8rTqCiKJnIPqF1cDb2iByYDl91M6NwRXSh0BlGPQQ3mLE1f1cxVmGY8WUkjCoVM3jMYgpnjEMYEzo4Swi1GXTvLqYP4KeDLVH0grGS8mfgS/MNZ1xqRUnuJFgj5oDfjzCkAuCKFKGgag87tGYIhxrDmU5SChuIyBXAMII7GXc8mQjVeUZHEn2Uzj5FHy7QpxypKEtlSZmDf5njV6gOx1HypIbIpQs+c+4evszQVc0cPkzrDLeFLIQl9BW86j8G+AwzR9BSEk3LJ5wU9NtDuHacgniDgI/pwzC2fXpSoSgjgmxVkoT91fanj0u4JLCPmhHlyAbsoHFY+Vj9cA1+Zpnh2iwKKwqlPVd7rEc0IY5ICduCc20zXOrw3WuUp5QSuZXVVO7NpbahT+UODGJpeQ4X+/Axy+OwaEOpYDHwkAMPP6QBhEfNxTPsShlURcscbJXxELSxqlGwsUliYlYU1BYZyjD27fVHdjAxhWfEbeE9YP4fwVAoSbAFb8AYkmA6OCythReEeRLsDu4+I5wOjgdGc8AP89EOcyfFzxc8fJIoLQsMkt9n9KFuP8MDiYTAvSdPSJfOw/hIco5oDWI7vw6hOSPygK17CjvU1fmaKh0jqUMMecalyXKEIKWiIsuph4PpLuk4MmB30pD78dH8E/oWq2HKwNLItBVeb6vs2KdiATdWS9uw4FjkRO5ik+JSPRJbOin9Lja2/detPQovQqGs2AVXTTXeGhGlXrJdJHbffsSu1ByCaVKNBUk4Z3wrjelXTbNI0wOK3UaaR6UfP4UlFSVngqnteavuU2IHqToTfo9H3y8NXWFZue3zT1ORp7IrSiDOQh7y3ZMo8egnyPb2i+PABLjjoqzAJQ86o+5THeoENHebItEOEG63luA03XwerNhxzmYcblMqOOlAb2th9ilD2y/SsMDBhu0p8BCuuy6DmmngZchhbqbCO1tKDttyqlt/QWeDPa5dyt/GSHmU26vgpyriNVzAgv6OqY5WQIy78N/pHpKVGqjbRZmmSpehzhWUhhwQHSdO1L4F72BpHdYKS5WOu/BLU93B0kUb7LZEmzOYVUAj9ZaWhGdxty5BXABgmU7XQQ+1gb6Hq2m7VEzaxsBDZDtghKFEb4cErGX9DHq5YQkpQUpOn2GxRJtDygGAdqUqnqJv4AL9vC/ENgYdCqruRuPaSzPb7xQyxjT2CMjA8bBpxDqhBDp+ksFM0kN9jIuaqSzA5UIwAeuTr5bGQAsbrY15HJa+uQyLy7AlIzTqbcf5qCuTvs858GiSbsMjTW3ghdOyfE18oJW0pC6yDG0a8Y9OrE12oiicCuitdihrKGpJoOi2yelDTHnB0dCYAcZL/x1UpqXUImY4y6zEf/nwWTls/C2Kslqu4pkHSjL+8JvYtvUjRTLmSs1YhjI7hjk/8x6Wbk688wy2hZk+T82zuzXEktAA1LsdbDWkPosX+U5IWPY85jkRGfWnzzV0xp9zJQCS4uqRMZIb4gMNXRCjQasdGn6e96h7GADjrEQQzwhf1ejSSqGswialts6vH9ECfftaVwLHpufzsJUBlgElEjMtajqka7ursdW47LNoDHlJiizUh1Sv423VK0pLvcjU9dDGcfqGfhDSlVD2WrFtANBOn2/NWWBhRZUpRwQ1rk4bugDNKI6RLeiK+anN10fSkcfdR/jtRVYOckcVGtMrWcbLragbXThJy6jYunhx8T/jQHv7Hcwa/94LkDXjrRcIWcLzlwhrynvbfp7xdONfUd7d5HOUl5v5nfTUYK5gb7nHNf49B7liYHGPLc7y5f2TmrbwfBm9Zeju8Dfdyk/C1JNX1qIAQoiF8gnjtRlZMZ6ahjvufwzvJ+RXA/xO/R8jc0Wev8ceDpMNQCudODwIqeTDerrDGVxfdWPbz9Kf/jfg37ZeGp8K1Gv76leOqGk8fzemhzMbNdGevaJl9zOhC2xqO9p4b4T/xP+nYfyE/Gog/6R2oY/YiKb3MaFJjYhbVaJxFK9YU15Wwzxiu3AS5BMablJXh1L9kdb01Bg9eJqnv5h0d+B/GWN//QvdVCqM')).decode('utf-8'))
+        FEATURES = {
+            'CONFIG_SCHED_CASS': 'y', 'CONFIG_SCHED_WALT': 'n',
+            'CONFIG_NR_CPUS': '8', 'CONFIG_MODULES': 'y',
+            'CONFIG_MODVERSIONS': 'y', 'CONFIG_CFI_CLANG': 'y',
+            'CONFIG_LTO_CLANG': 'y', 'CONFIG_LOCALVERSION': '"-qgki"',
+            'CONFIG_KSU': 'y', 'CONFIG_KSU_SUSFS': 'y',
+        }
+
+
+        def sha256(path):
+            h=hashlib.sha256()
+            with Path(path).open('rb') as f:
+                while True:
+                    data=f.read(1048576)
+                    if not data:break
+                    h.update(data)
+            return h.hexdigest()
+
+
+        def parse_config(text):
+            out={}
+            for line in text.splitlines():
+                if line.startswith('CONFIG_') and '=' in line:
+                    key,val=line.split('=',1)
+                elif line.startswith('# CONFIG_') and line.endswith(' is not set'):
+                    key,val=line[2:].split(' is not set',1)[0],'n'
+                else:continue
+                if key in out:raise ValueError('DUPLICATE_CONFIG_KEY:'+key)
+                out[key]=val
+            return out
+
+
+        def parse_symvers(text):
+            out={}
+            for line in text.splitlines():
+                parts=line.split()
+                if len(parts)<4:raise ValueError('MALFORMED_SYMVERS_LINE:'+line[:60])
+                crc,name=parts[:2]
+                if not crc.startswith('0x'):raise ValueError('SYMVERS_MISSING_CRC:'+name)
+                crc=f'0x{int(crc,16):08x}'
+                if name in out and out[name]!=crc:raise ValueError('SYMVERS_DUPLICATE_DIFFERENT_CRC:'+name)
+                out[name]=crc
+            return out
+
+
+        def audit(config_file, symvers_file, release, dtb_sha256=None, require_config_sha=True):
+            failures=[]
+            conf_path=Path(config_file)
+            cfg=parse_config(conf_path.read_text(encoding='utf-8'))
+            sym=parse_symvers(Path(symvers_file).read_text(encoding='utf-8'))
+            for key,expected in FEATURES.items():
+                if cfg.get(key,'n')!=expected:
+                    failures.append(f'CONFIG_MISMATCH:{key}:expected={expected}:got={cfg.get(key,"n")}')
+            actual_cfg_sha=sha256(conf_path)
+            if require_config_sha and actual_cfg_sha!=CONFIG_SHA256:
+                failures.append('FULL_REFERENCE_CONFIG_SHA_MISMATCH')
+            if release.strip()!=EXPECTED_RELEASE:
+                failures.append('KERNEL_RELEASE_MISMATCH')
+            if dtb_sha256 is not None and dtb_sha256.lower()!=EXPECTED_DTB_SHA256:
+                failures.append('VEUX_DTB_SHA_MISMATCH')
+            crc_rows=[]
+            for mod,name,expected in REFERENCE:
+                actual=sym.get(name)
+                status='MATCH' if actual==expected else ('MISSING' if actual is None else 'CRC_MISMATCH')
+                crc_rows.append({'module':mod,'symbol':name,'original_module_crc':expected,'candidate_crc':actual or '', 'status':status})
+                if status!='MATCH':failures.append(f'RMNET_{status}:{mod}:{name}')
+            report={
+                'schema':1, 'stage':'R55H17_R1_CASS_1TO1_REFERENCE_GATE',
+                'status':'CASS_REFERENCE_STATIC_PASS_NOFLASH' if not failures else 'BLOCKED_CASS_REFERENCE_OR_VENDOR_ABI',
+                'kernel_release':release.strip(), 'config_sha256':actual_cfg_sha,
+                'config_reference_sha256':CONFIG_SHA256,
+                'dtb_sha256_reported':dtb_sha256,
+                'critical_config':{k:cfg.get(k,'n') for k in FEATURES},
+                'rmnet_imports_count':len(crc_rows),
+                'rmnet_imports_matched':sum(x['status']=='MATCH' for x in crc_rows),
+                'rmnet_module_layout_crc':sym.get('module_layout'),
+                'failures':failures, 'flash_allowed':False,
+                'device_test':False,
+                'new_bakasu_35252_integrated':False,
+                'new_nomount_v22_integrated':False,
+                'walt_porting_in_this_stage':False,
+            }
+            return report,crc_rows
+
+
+        def main():
+            ap=argparse.ArgumentParser()
+            ap.add_argument('--config',required=True)
+            ap.add_argument('--symvers',required=True)
+            ap.add_argument('--release-file',required=True)
+            ap.add_argument('--dtb-sha256')
+            ap.add_argument('--report-dir',required=True)
+            ns=ap.parse_args()
+            report,rows=audit(ns.config,ns.symvers,Path(ns.release_file).read_text(),ns.dtb_sha256)
+            d=Path(ns.report_dir)
+            d.mkdir(parents=True,exist_ok=True)
+            (d/'R55H17_R1_CASS_RESULT.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n',encoding='utf-8')
+            with (d/'R55H17_R1_RMNET_132_ABI.csv').open('w',newline='',encoding='utf-8') as f:
+                w=csv.DictWriter(f,fieldnames=list(rows[0]),delimiter=';');w.writeheader();w.writerows(rows)
+            print(f'R55H17_R1_CASS_GATE={report["status"]}; RMNET={report["rmnet_imports_matched"]}/{len(rows)}; NO_FLASH')
+            if report['failures']:
+                for msg in report['failures'][:24]:print('BLOCKER:',msg)
+                raise SystemExit(26)
+
+        if __name__=='__main__':main()
+        PY_R55H17_GATE
+        python3 -m py_compile "$RUNNER_TEMP/veux-r55h17-cass-gate.py"
+        build="$RUNNER_TEMP/veux-r5s2-work/builds/diagnostics/5.4.274"
+        test -s "$build/config-reports/actual-build.config"
+        test -s "$build/build/Module.symvers"
+        test -s "$build/build/include/config/kernel.release"
+        test -s "$build/DTB-CHECK.json"
+        test -s "$build/build-result.json"
+        python3 -B - "$build/DTB-CHECK.json" "$build/build-result.json" <<'PY_DTB_GATE'
+        import json,sys
+        x=json.load(open(sys.argv[1]));b=json.load(open(sys.argv[2]))
+        sha='42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37'
+        assert x['match'] is True and x['actual_sha256']==sha and b['dtb_sha256']==sha
+        assert b['compile'] is True and b['kernelrelease']=='5.4.274-qgki-g82179e362f33'
+        PY_DTB_GATE
+        python3 -B "$RUNNER_TEMP/veux-r55h17-cass-gate.py" \
+          --config "$build/config-reports/actual-build.config" \
+          --symvers "$build/build/Module.symvers" \
+          --release-file "$build/build/include/config/kernel.release" \
+          --dtb-sha256 42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37 \
+          --report-dir "$report_dir"
+        python3 -B - "$report_dir/R55H17_R1_CASS_RESULT.json" <<'PY_FINAL_R55H17'
+        import json,sys
+        x=json.load(open(sys.argv[1]));assert x['status']=='CASS_REFERENCE_STATIC_PASS_NOFLASH'
+        assert x['rmnet_imports_matched']==132 and x['rmnet_imports_count']==132
+        assert x['flash_allowed'] is False and x['device_test'] is False
+        assert x['new_bakasu_35252_integrated'] is False and x['new_nomount_v22_integrated'] is False
+        print('R55H17_R1_BASELINE_CASS_132_132_ABI_AND_STATIC_GATES=PASS; UPDATES=NEXT_STAGE; FLASH=NO')
+        PY_FINAL_R55H17
+    - name: R4 require genuine candidate build CASS config DTB version preinit and 132 RMNET proofs
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-25.log") 2>&1
+        set -euo pipefail
+        python3 -B - "$RUNNER_TEMP/veux-r55h17-r4/evidence/R4_RESULT.json"                   "$RUNNER_TEMP/veux-r55h17-r1-audit/R55H17_R1_CASS_RESULT.json" <<'PY_R4_FINAL'
+        import json,sys
+        from pathlib import Path
+        updated=json.loads(Path(sys.argv[1]).read_text())
+        baseline=json.loads(Path(sys.argv[2]).read_text())
+        if updated.get('status')!='CASS_UPDATED_FULL_BUILD_AND_STATIC_ABI_PASS_NOFLASH':
+            raise SystemExit('UPDATED_CASS_BUILD_OR_STATIC_GATES_INCOMPLETE')
+        for flag in ('compiler_test','source_updates_staged','kernel_image_generated','raw_exported',
+                     'original_baseline_unchanged','embedded_config_matches','cass_linked'):
+            if updated.get(flag) is not True:raise SystemExit('MISSING_PROOF:'+flag)
+        if (updated.get('flash_allowed') is not False or updated.get('device_test') is not False
+            or updated.get('rmnet_imports_matched')!=132
+            or baseline.get('rmnet_imports_matched')!=132
+            or updated.get('bakasu_version',{}).get('count')!=4554
+            or updated.get('bakasu_version',{}).get('version')!=35254
+            or updated.get('bakasu_version',{}).get('commit')!='d2537b13ab15fce72e8c0d99e7788805f071aeb4'
+            or updated.get('bakasu_version',{}).get('parent')!='2cbbcc2363aa8d4b6286fc2266a338063b2b77a7'):
+            raise SystemExit('R4_VERSION_ABI_OR_NOFLASH_CONTRACT_CHANGED')
+        print('R55H17_R4_UPDATED_CASS_BUILD_AND_STATIC_ABI=PASS; DEVICE_TEST=NO; FLASH=NO')
+        PY_R4_FINAL
+      id: r4_verify
+    - name: Authenticate original R56-R4 MAIN and run strict R58 package tests
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-26.log") 2>&1
+        set -Eeuo pipefail
+        printf '%s  %s\n' "$R56_MAIN_SHA256" "$GITHUB_WORKSPACE/$R56_MAIN" | sha256sum -c --strict
+        python3 -I - "$GITHUB_WORKSPACE/$R56_MAIN" "$RUNNER_TEMP/veux-r56-payload" <<'PY_R56_VERIFY'
+        from pathlib import Path,PurePosixPath
+        import sys,json,hashlib,zipfile,stat
+        archive=Path(sys.argv[1]);out=Path(sys.argv[2])
+        assert not out.exists() and not out.is_symlink()
+        with zipfile.ZipFile(archive) as z:
+            a=z.infolist();names=[i.filename for i in a]
+            m=json.loads(z.read('MANIFEST_SHA256.json'))
+            assert m['schema']=='VEUX_R56_UPDATED_CASS_MAIN_V1' and not m['automatic_flash']
+            assert m['flash_allowed'] is False and m['source_integrations_complete'] is False
+            assert set(names)==set(m['files'])|{'MANIFEST_SHA256.json'} and len(names)==len(set(names)) and z.testzip() is None
+            assert sum(i.file_size for i in a)<3_000_000
+            for i in a:
+                p=PurePosixPath(i.filename)
+                assert not p.is_absolute() and '..' not in p.parts and '.' not in p.parts and not i.is_dir()
+                assert '\\' not in i.filename and stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG)
+                if i.filename!='MANIFEST_SHA256.json':assert hashlib.sha256(z.read(i)).hexdigest()==m['files'][i.filename]
+            out.mkdir(mode=0o700)
+            for i in a:
+                p=out/i.filename;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(z.read(i))
+        print('R58_PINS_REAL_R56_INPUT=PASS')
+        PY_R56_VERIFY
+        echo "R56_PAYLOAD=$RUNNER_TEMP/veux-r56-payload" >> "$GITHUB_ENV"
+        python3 -B -m py_compile "$RUNNER_TEMP/veux-r58-payload/tools/r58_integrate.py" "$RUNNER_TEMP/veux-r58-payload/tools/r58_postcompile.py" \
+          "$RUNNER_TEMP/veux-r58-payload/tools/r59_host.py" "$RUNNER_TEMP/veux-r58-payload/tools/r59_postcheck.py" \
+          "$RUNNER_TEMP/veux-r58-payload/tools/r14_vendor_abi_gate.py" \
+          "$RUNNER_TEMP/veux-r58-payload/tools/r60_config_guard.py"
+        bash -n "$RUNNER_TEMP/veux-r58-payload/tools/r59_build_no_flash.sh"
+        shellcheck --shell=bash --severity=error "$RUNNER_TEMP/veux-r58-payload/tools/r59_build_no_flash.sh"
+        "$R5S2_PY" -B -m unittest discover -s "$RUNNER_TEMP/veux-r58-payload/tests" -p 'test_*.py' -v
+        python3 -B "$RUNNER_TEMP/veux-r58-payload/tools/r58_integrate.py" --mode preflight \
+          --r13-main "$GITHUB_WORKSPACE/VEUX_R13_CASS_MAIN.zip" \
+          --r56-main "$GITHUB_WORKSPACE/$R56_MAIN" \
+          --r13-config "$RUNNER_TEMP/veux-r55h17-r4/build/.config"
+        python3 -B -m unittest discover -s "$R58_PAYLOAD/tests" -p 'test_r60_r10_clang_restore.py' -v
+        echo 'R59_ARCHIVES_CONFIG_AND_SOURCE_NEGATIVE_TESTS=PASS'
+    - name: Reconstruct independent BakaSU 35259 replay and native54 R56 source patches
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-27.log") 2>&1
+        set -Eeuo pipefail
+        test ! -e "$RUNNER_TEMP/veux-r56-real-source-proof"
+        bash "$R56_PAYLOAD/tools/R56_GITHUB_SOURCE_AND_BOOT_GATES_NOFLASH.sh"
+        test -s "$RUNNER_TEMP/veux-r56-real-source-proof/R56_REAL_SOURCE_GATE.json"
+        python3 -I - "$RUNNER_TEMP/veux-r56-real-source-proof/R56_REAL_SOURCE_GATE.json" <<'PY_R56_STATUS'
+        import json,sys
+        r=json.load(open(sys.argv[1]))
+        assert r['status']=='REAL_BAKASU_35259_REPLAYED__NATIVE54_AVD_PATCHES_STAGED__FULL_SUSFS_HOOKS_BLOCKED'
+        assert r['source_stage_accepted'] is True and r['kernel_compiled'] is False and r['flash_allowed'] is False
+        print('R58_GENUINE_BAKASU_35259_AND_PRELIMINARY_NATIVE54_PORT=PASS')
+        PY_R56_STATUS
+    - name: Isolate and compile R60 all four native54 SELinux hosts CASS BakaSU SUSFS NoMount - never flash
+      id: r58_fresh_build
+      shell: bash
+      timeout-minutes: 160
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-28.log") 2>&1
+        set -Eeuo pipefail
+        echo 'R60_DISK_DIAG_BEFORE_NATIVE54'
+        df -hP "$RUNNER_TEMP" "$GITHUB_WORKSPACE" || true
+        df -iP "$RUNNER_TEMP" || true
+        for diagnostic_path in "$RUNNER_TEMP/veux-r5s2-work" "$RUNNER_TEMP/veux-r60-clang-cache" "$RUNNER_TEMP/veux-real-bakasu-history" "$RUNNER_TEMP/veux-r58" "$GITHUB_WORKSPACE"; do
+          if [[ -d "$diagnostic_path" && ! -L "$diagnostic_path" ]]; then
+            du -sh -- "$diagnostic_path" || true
+          fi
+        done
+        python3 -B -m py_compile "$GITHUB_WORKSPACE/common/scripts/veux_r61_nomount22_only.py"
+        python3 -B -m unittest discover -s "$GITHUB_WORKSPACE/common/scripts/tests_r61_nomount" -p 'test_*.py' -v
+        python3 -I - "$R58_PAYLOAD/tools/r59_build_no_flash.sh" "$GITHUB_WORKSPACE/$R60_MAIN" <<'PY_R61_HOOK'
+        import hashlib,json,sys,zipfile
+        from pathlib import Path
+        path=Path(sys.argv[1]);archive=Path(sys.argv[2])
+        with zipfile.ZipFile(archive) as z:
+            manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+        source=path.read_bytes()
+        expected=manifest['files']['tools/r59_build_no_flash.sh']
+        assert hashlib.sha256(source).hexdigest()==expected,'R60_ORIGINAL_BUILD_DRIVER_DRIFT'
+        s=source.decode('utf-8')
+        anchor='BUILD="$OUT/build"\n'
+        assert s.count(anchor)==1,'R59_BUILD_ANCHOR_DRIFT'
+        assert s.count('SOURCE="$OUT/stage/kernel"')==1,'R59_STAGED_SOURCE_ANCHOR_DRIFT'
+        assert s.index('SOURCE="$OUT/stage/kernel"')<s.index(anchor),'R59_STAGE_ORDER_DRIFT'
+        graft='python3 -B "$GITHUB_WORKSPACE/common/scripts/veux_r61_nomount22_only.py" stage --kernel "$SOURCE" --donor "$RUNNER_TEMP/NoMount22" --out "$OUT/R61_NOMOUNT22_SOURCE.json"\n'
+        path.write_text(s.replace(anchor,graft+anchor,1),encoding='utf-8')
+        print('R61_RUNTIME_ONLY_NOMOUNT_GRAFT_PROTECTED_BY_R60_MAIN_MANIFEST=PASS')
+        PY_R61_HOOK
+        bash -n "$R58_PAYLOAD/tools/r59_build_no_flash.sh"
+        shellcheck --shell=bash --severity=error "$R58_PAYLOAD/tools/r59_build_no_flash.sh"
+        bash "$R58_PAYLOAD/tools/r59_build_no_flash.sh"
+        python3 -B "$GITHUB_WORKSPACE/common/scripts/veux_r61_nomount22_only.py" verify \
+          --kernel "$RUNNER_TEMP/veux-r58/stage/kernel" \
+          --build "$RUNNER_TEMP/veux-r58/build" \
+          --stage-report "$RUNNER_TEMP/veux-r58/R61_NOMOUNT22_SOURCE.json" \
+          --out "$RUNNER_TEMP/veux-r58/R61_NOMOUNT22_COMPILED.json" 
+    - name: R60 OEM ABI release review - validate intentional block independently of compiler
+      id: r60_oem_review
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-29.log") 2>&1
+        set -Eeuo pipefail
+        report="$RUNNER_TEMP/veux-r58/R60_FINAL_RELEASE_GUARD.json"
+        test ! -e "$report" && test ! -L "$report"
+        # Pinned R6 guard returns 3 for *both* expected OEM block and malformed
+        # input. Only the signed-off machine-readable report distinguishes them.
+        set +e
+        python3 -B "$R58_PAYLOAD/tools/r60_release_guard.py" \
+          --compile-report "$RUNNER_TEMP/veux-r58/R59_FULL_INTEGRATION_EVIDENCE.json" \
+          --cohorts "$RUNNER_TEMP/veux-r58/R60_ABI_COHORT_CONFLICTS.json" \
+          --out "$report"
+        review_rc=$?
+        set -e
+        if [[ "$review_rc" -ne 3 || ! -s "$report" || -L "$report" ]]; then
+          echo "R60_OEM_REVIEW_INVALID_REPORT_OR_UNEXPECTED_EXIT=$review_rc" >&2
+          exit 46
+        fi
+        python3 -I - "$report" "$RUNNER_TEMP/veux-r58/R59_FULL_INTEGRATION_EVIDENCE.json" <<'PY_R60_REVIEW'
+        import json,sys
+        from pathlib import Path
+        review=json.loads(Path(sys.argv[1]).read_text())
+        build=json.loads(Path(sys.argv[2]).read_text())
+        good=(
+          review.get('schema')=='VEUX_R60_CASS_NATIVE54_ISSUE_GATE_V1'
+          and review.get('status')=='BLOCKED_ACTIVE_OEM_MODULE_SET_AND_VENDOR_ABI_NOT_PROVEN'
+          and review.get('source_kernel_compiler_verified') is True
+          and review.get('rmnet_132_crcs_verified') is True
+          and review.get('vendor_imports_checked')==14648
+          and review.get('historical_vendor_files')==218
+          and review.get('historical_conflicting_symbol_names')==836
+          and review.get('full_component_release_approved') is False
+          and review.get('flash_allowed') is False
+          and build.get('source_and_compiler_pass') is True
+          and build.get('rmnet_132_all_match') is True
+          and build.get('full_vendor_crc_match') is False
+          and build.get('oem_abi_green') is False
+          and build.get('flash_allowed') is False
+          and build.get('device_test') is False
+          and sum(review.get(k,0) for k in ('candidate_matching_imports','candidate_crc_mismatches','candidate_not_exported'))==14648
+        )
+        if not good:raise SystemExit('R60_OEM_REVIEW_JSON_CONTRACT_MISMATCH')
+        print('R60_ARM64_FULL_COMPILE=PASS; OEM_REVIEW=BLOCKED; FLASH_ALLOWED=NO')
+        PY_R60_REVIEW
+        {
+          printf '### R60 native54: Compiler verification PASS; OEM release BLOCKED\n\n'
+          printf 'The source/compile/RMNET evidence is valid. The OEM vendor ABI, DTBO, boot and flash approval are not proven.\n'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: R60 compare R13 real ABI receipts and publish the new Image for off-device boot review - NOFLASH
+      id: r60_r13_parity
+      if: ${{ success() }}
+      shell: bash
+      timeout-minutes: 6
+      run: |
+        set -Eeuo pipefail
+        umask 077
+        export R60_PROOF_TEMP="$RUNNER_TEMP"
+        python3 -I - <<'PY_R60_R13_ABI_PARITY'
+        import hashlib, json, os, shutil
+        from pathlib import Path
+        root=Path(os.environ['R60_PROOF_TEMP']).resolve(strict=True)
+        proof=root/'veux-r60-r13-parity-image'
+        assert not proof.exists() and not proof.is_symlink()
+        r13=json.loads((root/'veux-r55h17-r4/evidence/R4_RESULT.json').read_text())
+        new=json.loads((root/'veux-r58/R58_COMPILE_STATUS.json').read_text())
+        compile_report=json.loads((root/'veux-r58/R59_FULL_INTEGRATION_EVIDENCE.json').read_text())
+        delta=json.loads((root/'veux-r58/R60_OLDDEFCONFIG_DELTA.json').read_text())
+        guard=json.loads((root/'veux-r58/R60_FINAL_RELEASE_GUARD.json').read_text())
+        r13_files=r13['outputs']
+        work=root/'veux-r58/build'
+        paths={
+            'Image':work/'arch/arm64/boot/Image',
+            'Module.symvers':work/'Module.symvers',
+            '.config':work/'.config',
+            'veux.dtb':work/'arch/arm64/boot/dts/vendor/xiaomi/veux.dtb',
+        }
+        def digest(f):
+            h=hashlib.sha256()
+            with f.open('rb') as fp:
+                for block in iter(lambda:fp.read(1048576),b''):h.update(block)
+            return h.hexdigest()
+        actual={}
+        for name,p in paths.items():
+            assert p.is_file() and not p.is_symlink(), f'MISSING_NATIVE_BUILD_INPUT:{name}'
+            assert p.resolve().is_relative_to(root), f'UNSAFE_PATH:{name}'
+            actual[name]={'sha256':digest(p),'size':p.stat().st_size}
+            assert actual[name]==new['files'][name], f'R60_REAL_ARTIFACT_RECEIPT_CHANGED:{name}'
+        eq={
+            'MODULE_SYMVERS_IDENTICAL':actual['Module.symvers']['sha256']==r13_files['Module.symvers']['sha256'],
+            'CONFIG_IDENTICAL':actual['.config']['sha256']==r13_files['.config']['sha256'],
+            'DTB_IDENTICAL':actual['veux.dtb']['sha256']==r13_files['arch/arm64/boot/dts/vendor/xiaomi/veux.dtb']['sha256'],
+            'KERNEL_VERSION_IDENTICAL':r13['release']=='5.4.274-qgki-g82179e362f33',
+            'DIFFERENT_KERNEL_BINARY':actual['Image']['sha256']!=r13_files['arch/arm64/boot/Image']['sha256'],
+            'CASS_ACTIVE_AND_WALT_OFF':new['gates'].get('CONFIG_SCHED_CASS') is True and new['gates'].get('WALT_OFF') is True,
+            'EXACT_4664_SETTINGS':delta.get('all_baseline_options_unchanged') is True and delta.get('baseline_settings')==4664 and delta.get('candidate_settings')==4664,
+            '132_RMNET_IMP_MATCH':new['RMNET_132_matched']==132 and compile_report['rmnet_132_all_match'] is True,
+            'NATIVE_KERNEL_BUILT':new['compile_link_proof'] is True and compile_report['source_and_compiler_pass'] is True,
+            'RELEASE_REVIEW_REMAINS_BLOCKED':guard['flash_allowed'] is False and guard['full_component_release_approved'] is False and new['flash_allowed'] is False,
+            'HISTORICAL_OEM_MISMATCH_EXPLICIT':compile_report['full_vendor_crc_match'] is False and guard['historical_vendor_files']==218,
+        }
+        failed=[n for n,yes in eq.items() if not yes]
+        assert not failed, 'R60_R13_PARITY_FAILURE='+','.join(failed)
+        proof.mkdir(mode=0o700)
+        shutil.copyfile(paths['Image'],proof/'Image')
+        receipt={
+          'schema':'VEUX_R60_R13_ABI_PARITY_IMAGE_EXPORT_V1',
+          'status':'KERNEL_IMAGE_AVAILABLE_FOR_OFF_DEVICE_STATIC_BOOT_REVIEW',
+          'checks':eq,
+          'actual':actual,
+          'prior_r13_image_sha256':r13_files['arch/arm64/boot/Image']['sha256'],
+          'kernel_release':r13['release'],
+          'old_module_crc_mismatches_are_inherited':True,
+          'historical_218_vendor_abi':guard['status'],
+          'boot_img_generated':False,
+          'ak3_generated':False,
+          'device_boot_verified':False,
+          'flash_allowed':False,
+        }
+        (proof/'R60_R13_PARITY_RECEIPT.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+        shutil.copyfile(root/'veux-r58/R61_NOMOUNT22_SOURCE.json', proof/'R61_NOMOUNT22_SOURCE.json')
+        shutil.copyfile(root/'veux-r58/R61_NOMOUNT22_COMPILED.json', proof/'R61_NOMOUNT22_COMPILED.json')
+        (proof/'SHA256SUMS').write_text(f"{actual['Image']['sha256']}  Image\n")
+        assert digest(proof/'Image')==actual['Image']['sha256']
+        print('R60_R13_ABI_PARITY=PASS',len(eq),'CHECKS')
+        print('R60_IMAGE_SHA256='+actual['Image']['sha256'])
+        print('R60_KNOWN_R13_COMPATIBLE_ABI=RECEIPTS_MATCH')
+        print('DEVICE_TEST=NO; OEM_RELEASE=BLOCKED; FLASH_ALLOWED=NO')
+        PY_R60_R13_ABI_PARITY
+    - name: Upload R60 ARM64 kernel Image and parity proof - NOT FLASHABLE
+      if: ${{ success() && steps.r60_r13_parity.outcome == 'success' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R61-FROZEN-BAKASU35260-SUSFS230-NOMOUNT22-IMAGE-NOT-FLASHABLE-${{ github.run_id }}
+        path: ${{ runner.temp }}/veux-r60-r13-parity-image/
+        if-no-files-found: error
+        retention-days: 21
+        compression-level: 6
+        include-hidden-files: false
+    - name: Record strict NOFLASH verdict; 218 OEM modules, DTBO, AK3, boot still open
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-30.log") 2>&1
+        set -Eeuo pipefail
+        mkdir -p "$RUNNER_TEMP/veux-r58-summary"
+        printf '%s\n' 'R60: native-5.4 SELinux host sources, BakaSU, SUSFS, CASS and NoMount are independently gated.' \
+          'BakaSU official 35259 replay; local source commit is derived; not an official release.' \
+          'Host patches for avc.c, hooks.c, selinuxfs.c, services.c are included; only a real build can prove them.' \
+          'In addition to 132 RMNET CRCs, candidate Module.symvers is compared with 14,648 real OEM imports in 218 modules.' \
+          'DTBO, safe boot.img, AK3 and device validation are OPEN.' \
+          'KERNEL_PACKAGE=NOT_PUBLISHED' 'FLASH_ALLOWED=NO' > "$RUNNER_TEMP/veux-r58-summary/NO_FLASH.txt"
+        printf 'COMPILER_RESULT=SEE_R60_FINAL_STATUS_JSON\nOEM_RELEASE=BLOCKED_OR_NOT_REACHED\n' >> "$RUNNER_TEMP/veux-r58-summary/NO_FLASH.txt"
+        cat "$RUNNER_TEMP/veux-r58-summary/NO_FLASH.txt"
+    - name: Show original source transport failure log (diagnosis only; do not change build verdict)
+      if: ${{ failure() }}
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-31.log") 2>&1
+        set -Eeuo pipefail
+        audit="$RUNNER_TEMP/veux-r5s2-work/source-audit/5.4.274"
+        if [[ ! -d "$audit" || -L "$audit" ]]; then
+          echo 'R60_SOURCE_AUDIT_DIRECTORY_NOT_AVAILABLE'
+          exit 0
+        fi
+        found=0
+        for file in "$audit"/source-*.log; do
+          if [[ -f "$file" && ! -L "$file" ]]; then
+            found=$((found + 1))
+            printf 'R60_SOURCE_LOG=%s\n' "$(basename -- "$file")"
+            tail -n 130 -- "$file"
+          fi
+        done
+        printf 'R60_SOURCE_LOG_COUNT=%d\n' "$found"
+    - name: Ensure checked-out GitHub source remained unchanged
+      id: r60_checkout_immutability
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-32.log") 2>&1
+        set -Eeuo pipefail
+        if [[ -d "$GITHUB_WORKSPACE/.git" && ! -L "$GITHUB_WORKSPACE/.git" ]]; then
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
+          echo 'R60_GITHUB_PROJECT_TREE_UNTOUCHED=PASS; NEVER_FLASH'
+        else
+          echo 'R60_IMMUTABLE_CHECK=CHECKOUT_NOT_AVAILABLE' >&2
+          exit 21
+        fi
+    - name: Collect R60 text-only logs and outcome report even on early failure
+      id: r60_collect_logs
+      if: ${{ always() }}
+      shell: bash
+      env:
+        R60_BASELINE_OUTCOME: ${{ steps.r12_compile.outcome }}
+        R60_UPDATED_OUTCOME: ${{ steps.r58_fresh_build.outcome }}
+        R60_OEM_REVIEW_OUTCOME: ${{ steps.r60_oem_review.outcome }}
+        R60_REPO_CHECK_OUTCOME: ${{ steps.r60_checkout_immutability.outcome }}
+        R60_JOB_STATUS: ${{ job.status }}
+      run: |
+        # R60-R7: preserve this complete stage output in the always-uploaded log artifact.
+        mkdir -p "$RUNNER_TEMP/veux-r60-logs/steps"
+        exec > >(tee -a "$RUNNER_TEMP/veux-r60-logs/steps/step-33.log") 2>&1
+        set -Eeuo pipefail
+        umask 077
+        dest="$RUNNER_TEMP/veux-r60-logpack"
+        mkdir -p "$dest"
+        # Receipt is independent of checkout, MAIN extraction and compiler.
+        {
+          printf 'RUN_ID=%s\nATTEMPT=%s\nCOMMIT=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA"
+          printf 'JOB_STATUS_AT_COLLECTION=%s\n' "$R60_JOB_STATUS"
+          printf 'R13_BASELINE_STEP=%s\nR60_NATIVE54_BUILD_STEP=%s\n' "$R60_BASELINE_OUTCOME" "$R60_UPDATED_OUTCOME"
+          printf 'R60_OEM_REVIEW_STEP=%s\nREPO_IMMUTABILITY_STEP=%s\n' "$R60_OEM_REVIEW_OUTCOME" "$R60_REPO_CHECK_OUTCOME"
+          printf 'KERNEL_ARTIFACT_PUBLISHED=NO\nBOOT_FLASH_ALLOWED=NO\n'
+          printf 'INVARIANT=OEM_RELEASE_IS_NOT_COMPILER_VERDICT\n'
+        } > "$dest/00_RUN_STATUS.txt"
+        set +e
+        python3 -I - <<'PY_R60_BUNDLE'
+        import hashlib,json,os,shutil,stat,sys
+        from pathlib import Path
+        root=Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+        out=root/'veux-r60-logpack'
+        if out.is_symlink() or not out.is_dir():
+            raise SystemExit('UNSAFE_LOGPACK_OUTPUT')
+        accepted={'.log','.txt','.json','.csv'}
+        dirs=[
+          ('steps', root/'veux-r60-logs/steps'),
+          ('run-receipt',root/'veux-r60-logs'),
+          ('legacy-source-audit',root/'veux-r5s2-work/source-audit/5.4.274'),
+          ('legacy-report',root/'veux-r5s2-work/report'),
+          ('legacy-compiler',root/'veux-r5s2-work/builds/diagnostics/5.4.274'),
+          ('native54',root/'veux-r58'),
+          ('native54-summary',root/'veux-r58-summary'),
+          ('source-replay',root/'veux-r56-real-source-proof'),
+          ('R55H17-evidence',root/'veux-r55h17-r4/evidence'),
+          ('R55H17-rmnet',root/'veux-r55h17-r1-audit'),
+        ]
+        dirs += [('R54-source', p) for p in sorted(root.glob('veux-r54-no-flash-*')) if p.is_dir() and not p.is_symlink()]
+        manifest=[]; files_seen=set(); total=0
+        for label,directory in dirs:
+            if not directory.is_dir() or directory.is_symlink():continue
+            for p in sorted(directory.iterdir()):
+                if p.suffix.lower() not in accepted or not p.is_file() or p.is_symlink():continue
+                if p.name in files_seen and label=='steps':raise ValueError('STEP_LOG_COLLISION')
+                real=p.resolve(strict=True)
+                if not real.is_relative_to(root):raise ValueError('LOG_SOURCE_ESCAPES_RUNNER_TEMP')
+                size=p.stat().st_size
+                if len(manifest)>=500 or total>=90_000_000:
+                    break
+                target=out/label/p.name
+                target.parent.mkdir(parents=True,exist_ok=True)
+                # Truncate only huge text logs, retaining last 16 MiB.
+                with p.open('rb') as f:
+                    if size>16_000_000:f.seek(-16_000_000,2)
+                    data=f.read(16_000_000)
+                target.write_bytes(data)
+                total+=len(data)
+                manifest.append({'path':str(target.relative_to(out)),'source':label,
+                                 'original_bytes':size,'stored_bytes':len(data),
+                                 'truncated':size>len(data),
+                                 'sha256':hashlib.sha256(data).hexdigest()})
+                if label=='steps':files_seen.add(p.name)
+        # Status file is always present, even if no compiler ever started.
+        native=root/'veux-r58/R59_FULL_INTEGRATION_EVIDENCE.json'
+        compiled=False
+        if native.is_file() and not native.is_symlink():
+            try:
+                report=json.loads(native.read_text())
+                compiled=(report.get('schema')=='VEUX_R59_FULL_COMPONENTS_BUILD_EVIDENCE_V1'
+                          and report.get('source_and_compiler_pass') is True
+                          and report.get('rmnet_132_all_match') is True
+                          and report.get('flash_allowed') is False)
+            except (OSError,ValueError):pass
+        summary={'schema':'VEUX_R60_LOG_ONLY_VERDICT_V1',
+                 'run_id':os.environ.get('GITHUB_RUN_ID'),
+                 'commit':os.environ.get('GITHUB_SHA'),
+                 'baseline_step':os.environ.get('R60_BASELINE_OUTCOME'),
+                 'updated_compile_step':os.environ.get('R60_UPDATED_OUTCOME'),
+                 'oem_review_step':os.environ.get('R60_OEM_REVIEW_OUTCOME'),
+                 'repository_check':os.environ.get('R60_REPO_CHECK_OUTCOME'),
+                 'native54_compile_evidence_present':compiled,
+                 'oem_release_approved':False,'kernel_artifact_published':False,
+                 'flash_allowed':False,'artifact_kind':'LOGS_ONLY',
+                 'collected_files':len(manifest)}
+        (out/'01_FINAL_STATUS.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+        (out/'02_LOG_MANIFEST.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+        print('R60_LOG_BUNDLE_FILES=',len(manifest),'BYTES=',total,
+              'NATIVE54_COMPILED=',compiled,'OEM_APPROVED=NO','FLASH=NO')
+        PY_R60_BUNDLE
+        collector_exit=$?
+        set -e
+        if [[ "$collector_exit" -ne 0 ]]; then
+          printf 'R60_LOG_COLLECTOR_FAILED_EXIT=%s\n' "$collector_exit" > "$dest/99_LOG_COLLECTOR_FAILED.txt"
+          exit "$collector_exit"
+        fi
+        test -s "$dest/00_RUN_STATUS.txt"
+    - name: Always upload R60 diagnostic logs only - no binaries or kernel package
+      if: ${{ always() }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: VEUX-R61-NOMOUNT22-LOGS-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/veux-r60-logpack/
+        retention-days: 21
+        if-no-files-found: error
+        compression-level: 8
+        include-hidden-files: false
