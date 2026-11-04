@@ -1,0 +1,569 @@
+# VEUX R60 boot-v3 / AVB OFFLINE review from existing GitHub release, no device access.
+# Does not compile kernel, flash, disable modules, access /data/adb or write firmware.
+# Repository source: Chrizz100/veux-nongki-universal-kernel
+# Baseline boot: v1.0.0-beta1 custom VEUX 5.4.274 Boot image, not pristine Xiaomi stock.
+# Kernel: R60 compiled artifact from successful workflow run 41817912643.
+# Order: static green -> offline boot.img/AVB proof -> AK3 package based on the SAME Image -> artifact.
+# Both outputs are NOFLASH review candidates; explicit user flashing is NOT approved.
+name: VEUX R60 - 01 boot.img, 02 AK3 - Offline Pruefung NOFLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r60-release-boot-offline-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  EXPECTED_REPO: Chrizz100/veux-nongki-universal-kernel
+  SOURCE_RUN: '41817912643'
+  SOURCE_R60_ARTIFACT_ID: '13319208681'
+  R60_ARTIFACT_ZIP_SHA256: bcc5754440d0196bce57653572684ccd390a3aa81dcd5b65069f19dcb3744305
+  R60_IMAGE_SHA256: da5c47840115cf71bf6c3edde7fb41da69f1c34b61722b271af6195a21794e27
+  R13_ARTIFACT_ID: '12923335311'
+  R13_ARTIFACT_ZIP_SHA256: b933d65cb06aacc48c560a2dd19feb4caddf924c9b1b0051e09840260ba7756e
+  R13_KERNEL_ZIP_SHA256: 531ea25cf626cefbe6faeb1c541476b1ec020734f164d002a2403bbd177c6734
+  R13_MAGISKBOOT_SHA256: d7440e2cd89899426e809554bf793baef9804ccbe5a52ce34a8b6242725d3c77
+  R13_REPACK_SHA256: 68228ef26d83c711e5499f475ec5481bdbc17b6994d062610aa9cacc92e446e9
+  R13_AK3_CORE_SHA256: f7a51cfe2e093016a34a76e16de6c9885c2d1992c3482fcabc668680e1f0f6bb
+  R13_UPDATE_BINARY_SHA256: cf3ebe7183d5e3f25e9215cde7ef9dd956e836232a70f2a671891ab4889c7e7d
+  R13_BUSYBOX_SHA256: 66436dc1e97d22886ed2d35bd69a9cb82bb0fdba4e4267c5184cee1d39a2f5f4
+  RELEASE_BOOT: VEUX-5.4.274-ReSukiSU-35157-UAPI4-SUSFS-2.3.0.BOOT.img
+  RELEASE_BOOT_SHA256: 3836c55cbf28e17d4e7156eaf6a9a1ca2b885a6fbbb621263e8ecb27115eed31
+  STOCK_RAMDISK_SHA256: 0bc8b54373b5501818e8b252517419786db207771047b6def7ec9bc89beb607a
+jobs:
+  static_yaml:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact Git revision without stored credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify YAML, actionlint and all embedded shells before offline repack
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          file=.github/workflows/VEUX_R60_BOOT_DANN_AK3_OFFLINE_NOFLASH.yml
+          test -s "$file" && test ! -L "$file"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-yaml shellcheck
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-yaml shellcheck
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 --max-time 180 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum -c --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -oneline "$file"
+          python3 - "$file" "$RUNNER_TEMP" <<'PY_SHELL_EXTRACT'
+          from pathlib import Path
+          import sys
+          try:
+              import yaml
+          except ImportError:
+              raise SystemExit('PyYAML unavailable; refuse skip of stage introspection')
+          data=yaml.safe_load(Path(sys.argv[1]).read_text())
+          assert data['on']=={'workflow_dispatch':{}}, 'UNEXPECTED_EVENTS'
+          assert len(data['jobs'])==2
+          stages=[x.get('name','') for x in data['jobs']['repack_release_boot']['steps']]
+          require=['Offline R60 Boot-v3 repack with unchanged audited R13 ARM64 tool and original unsigned AVB hash gate',
+                   'Independently verify output Image and Ramdisk and emit NOFLASH manifest',
+                   'After boot.img create and validate R60 AnyKernel3 with no module transitions',
+                   'Independently validate boot.img and AK3 pairing; publish both NOFLASH outputs']
+          positions=[stages.index(name) for name in require]
+          assert positions==sorted(positions) and len(set(positions))==4, 'BOOT_MUST_PRECEDE_AK3'
+          i=0
+          for job in data['jobs'].values():
+              for stage in job['steps']:
+                  if 'run' not in stage:continue
+                  assert stage['shell']=='bash'
+                  script=Path(sys.argv[2])/f'veux_r60_shell_{i}.sh'
+                  script.write_text(stage['run'])
+                  i+=1
+          print('R60_OFFLINE_BUILD_EMBEDDED_SHELLS=',i)
+          PY_SHELL_EXTRACT
+          for script in "$RUNNER_TEMP"/veux_r60_shell_*.sh; do
+            bash -n "$script"
+            if command -v shellcheck >/dev/null; then
+              shellcheck --shell=bash --severity=error "$script"
+            fi
+          done
+          echo 'VEUX_R60_RELEASE_BOOT_WORKFLOW_STATIC_GREEN=PASS; NO_FLASH'
+
+  repack_release_boot:
+    needs: static_yaml
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 80
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Refuse non-ARM64 runner, prepare isolated output
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = aarch64
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPO"
+          mkdir -m 0700 "$RUNNER_TEMP/r60-release-input" "$RUNNER_TEMP/r60-release-tools" "$RUNNER_TEMP/r60-release-artifact"
+          echo 'R60_OFFLINE_REPACK_ARM64_RUNNER=PASS'
+
+      - name: Download known-good custom BOOT.img from this repository release and verify SHA-256
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$RUNNER_TEMP/r60-release-input"
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/v1.0.0-beta1/$RELEASE_BOOT"
+          curl --fail --location --silent --show-error --retry 4 --retry-all-errors --max-time 900 \
+            "$url" --output "$base/published-reference.img"
+          printf '%s  %s\n' "$RELEASE_BOOT_SHA256" "$base/published-reference.img" | sha256sum -c --strict
+          test "$(stat -c %s "$base/published-reference.img")" = 134217728
+          echo 'R60_5_4_274_PUBLISHED_BOOT_REFERENCE_AUTHENTICATED=PASS; NOT_PRISTINE_STOCK'
+
+      - name: Download pinned R60 Image and original R13 repacker from historical Actions artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$RUNNER_TEMP/r60-release-input"
+          for pair in "$SOURCE_R60_ARTIFACT_ID r60-github.zip" "$R13_ARTIFACT_ID r13-github.zip"; do
+            read -r id file <<< "$pair"
+            curl --fail --location --silent --show-error --retry 4 --retry-all-errors --max-time 600 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" \
+              --output "$base/$file"
+          done
+          printf '%s  %s\n' \
+            "$R60_ARTIFACT_ZIP_SHA256" "$base/r60-github.zip" \
+            "$R13_ARTIFACT_ZIP_SHA256" "$base/r13-github.zip" | sha256sum -c --strict
+          python3 -I - <<'PY_R60_EXTRACT'
+          from pathlib import Path
+          import hashlib,io,json,os,zipfile
+          base=Path(os.environ['RUNNER_TEMP'])/'r60-release-input'
+          tools=Path(os.environ['RUNNER_TEMP'])/'r60-release-tools'
+          def check(data, expected):
+              if hashlib.sha256(data).hexdigest()!=expected:raise ValueError('HASH_MISMATCH')
+          with zipfile.ZipFile(base/'r60-github.zip') as a:
+              assert a.testzip() is None
+              assert set(a.namelist())=={'Image','SHA256SUMS','R60_R13_PARITY_RECEIPT.json'}
+              image=a.read('Image')
+              check(image,os.environ['R60_IMAGE_SHA256'])
+              assert len(image)==34900480
+              r=json.loads(a.read('R60_R13_PARITY_RECEIPT.json'))
+              assert r['status']=='KERNEL_IMAGE_AVAILABLE_FOR_OFF_DEVICE_STATIC_BOOT_REVIEW'
+              assert r['flash_allowed'] is False and r['boot_img_generated'] is False
+              assert len(r['checks'])==11 and all(r['checks'].values())
+              assert r['actual']['Image']['sha256']==os.environ['R60_IMAGE_SHA256']
+              assert a.read('SHA256SUMS').decode().strip()==os.environ['R60_IMAGE_SHA256']+'  Image'
+              (base/'Image').write_bytes(image)
+          with zipfile.ZipFile(base/'r13-github.zip') as a:
+              assert a.testzip() is None
+              inner=a.read('VEUX_R13_CASS_KERNEL.zip')
+              check(inner,os.environ['R13_KERNEL_ZIP_SHA256'])
+          (base/'r13-kernel.zip').write_bytes(inner)
+          with zipfile.ZipFile(io.BytesIO(inner)) as z:
+              assert z.testzip() is None
+              names={'tools/r12-boot-repack.sh':('r12-boot-repack.sh','R13_REPACK_SHA256'),
+                     'tools/r12-magiskboot':('r12-magiskboot','R13_MAGISKBOOT_SHA256')}
+              for src,(dst,env) in names.items():
+                  assert src in z.namelist()
+                  data=z.read(src)
+                  check(data,os.environ[env])
+                  target=tools/dst
+                  target.write_bytes(data)
+                  target.chmod(0o700 if dst.endswith('magiskboot') else 0o600)
+          print('R60_IMAGE_AND_R13_ORIGINAL_FILE_ONLY_TOOLS=PASS; NO_AK3_INSTALLER_EXTRACTED')
+          PY_R60_EXTRACT
+
+      - name: Validate published boot-v3 header and stock ramdisk identity before repack
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -I - <<'PY_R60_BOOT_INPUT'
+          from pathlib import Path
+          import hashlib,os,struct
+          p=Path(os.environ['RUNNER_TEMP'])/'r60-release-input/published-reference.img'
+          with p.open('rb') as f:
+              header=f.read(4096)
+              assert header[:8]==b'ANDROID!'
+              k,r=struct.unpack_from('<II',header,8)
+              assert struct.unpack_from('<I',header,20)[0]==1580
+              assert struct.unpack_from('<I',header,40)[0]==3
+              assert 1_000_000<k<70_000_000 and 1_000<r<20_000_000
+              off=4096+((k+4095)//4096)*4096
+              f.seek(off)
+              raw=f.read(r)
+          observed=hashlib.sha256(raw).hexdigest()
+          expected=os.environ['STOCK_RAMDISK_SHA256']
+          print('PUBLISHED_BOOT_RAMDISK_SHA256='+observed)
+          if observed!=expected:
+              raise SystemExit('RELEASE_BOOT_RAMDISK_NOT_EQUAL_DOCUMENTED_VEUX_ROM_REFERENCE; ABORT_SAFE')
+          print('R60_RELEASE_BOOT_V3_AND_DOCUMENTED_ROM_RAMDISK=PASS')
+          PY_R60_BOOT_INPUT
+
+      - name: Offline R60 Boot-v3 repack with unchanged audited R13 ARM64 tool and original unsigned AVB hash gate
+        id: r60_boot_repack
+        shell: bash
+        timeout-minutes: 25
+        run: |
+          set -Eeuo pipefail
+          base="$RUNNER_TEMP/r60-release-input"
+          tools="$RUNNER_TEMP/r60-release-tools"
+          out="$RUNNER_TEMP/r60-release-artifact"
+          bash -n "$tools/r12-boot-repack.sh"
+          bash "$tools/r12-boot-repack.sh" \
+            --original "$base/published-reference.img" \
+            --kernel "$base/Image" \
+            --output "$out/boot.img" \
+            --magiskboot "$tools/r12-magiskboot" \
+            --work "$RUNNER_TEMP/r60-file-only-repack-work"
+          test -s "$RUNNER_TEMP/r60-file-only-repack-work/REPACK_RESULT.txt"
+          echo 'R60_RELEASE_BOOT_FILE_REPACK=PASS; NO_BLOCK_WRITE; NO_MODULE_CHANGES'
+
+      - name: Independently verify output Image and Ramdisk and emit NOFLASH manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -I - <<'PY_R60_BOOT_FINAL'
+          import hashlib,json,os,struct
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          inp=root/'r60-release-input/published-reference.img'
+          out=root/'r60-release-artifact/boot.img'
+          work=root/'r60-file-only-repack-work/REPACK_RESULT.txt'
+          def sha(p):
+              with p.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+          def region(p):
+              with p.open('rb') as f:
+                  h=f.read(4096);assert h[:8]==b'ANDROID!'
+                  k,r=struct.unpack_from('<II',h,8)
+                  assert struct.unpack_from('<I',h,40)[0]==3
+                  assert struct.unpack_from('<I',h,20)[0]==1580
+                  f.seek(4096); kernel=f.read(k)
+                  f.seek(4096+((k+4095)//4096)*4096); ramdisk=f.read(r)
+              return k,r,hashlib.sha256(kernel).hexdigest(),hashlib.sha256(ramdisk).hexdigest()
+          assert inp.stat().st_size==out.stat().st_size==134217728
+          ok=sha(inp)==os.environ['RELEASE_BOOT_SHA256']
+          a=region(inp);b=region(out)
+          ok=ok and b[0]==34900480 and b[1]==a[1] and b[2]==os.environ['R60_IMAGE_SHA256']
+          ok=ok and a[3]==b[3]==os.environ['STOCK_RAMDISK_SHA256']
+          receipt=dict(x.split('=',1) for x in work.read_text().splitlines() if '=' in x)
+          ok=ok and receipt.get('status')=='FILE_REPACK_AND_AVB_HASH_PASS'
+          ok=ok and receipt.get('original_sha256')==os.environ['RELEASE_BOOT_SHA256']
+          ok=ok and receipt.get('output_sha256')==sha(out)
+          ok=ok and receipt.get('kernel_sha256')==os.environ['R60_IMAGE_SHA256']
+          ok=ok and receipt.get('raw_ramdisk_sha256')==os.environ['STOCK_RAMDISK_SHA256']
+          ok=ok and receipt.get('header_changes')=='kernel_size_only'
+          ok=ok and receipt.get('avb_changes')=='hash_image_size_and_digest_only'
+          if not ok:raise SystemExit('R60_BOOT_FINAL_INDEPENDENT_VALIDATION_FAILED')
+          meta={
+             'schema':'VEUX_R60_RELEASE_BOOT_OFFLINE_V1',
+             'status':'OFFLINE_BOOT_V3_AND_UNSIGNED_AVB_PROFILE_VALIDATED',
+             'kernel_sha256':os.environ['R60_IMAGE_SHA256'],
+             'source_boot_release':'v1.0.0-beta1',
+             'source_boot_sha256':os.environ['RELEASE_BOOT_SHA256'],
+             'source_is_custom_not_pristine_stock':True,
+             'source_boot_ramdisk_sha256':a[3],
+             'repacked_boot_sha256':sha(out),
+             'repacked_boot_bytes':out.stat().st_size,
+             'r13_r60_abi_parity_is_not_a_vendor_abi_device_gate':True,
+             'module_files_modified':False,
+             'boot_partition_written':False,
+             'ak3_installer_generated':False,  # AK3 is the subsequent gated stage
+             'device_validation_performed':False,
+             'oem_release_approved':False,
+             'flash_allowed':False,
+          }
+          dest=out.parent
+          (dest/'R60_BOOT_OFFLINE_VALIDATION.json').write_text(json.dumps(meta,indent=2,sort_keys=True)+'\n')
+          (dest/'SHA256SUMS.txt').write_text(sha(out)+'  '+out.name+'\n')
+          (dest/'README_NOT_FLASHABLE.txt').write_text(
+              'R60 file-only boot-v3 repack from earlier published custom VEUX boot.\n'
+              'NO FLASH APPROVAL. AK3 PACKAGE IS BUILT ONLY AFTER THIS BOOT PASSES. NO DEVICE TEST.\n'
+              'OEM vendor ABI remains unresolved; older release boot != current installed boot.\n')
+          print('R60_BOOT_OFFLINE_STATIC_VALIDATION=PASS; IMAGE_SHA256='+sha(out)+'; FLASH=NO')
+          PY_R60_BOOT_FINAL
+
+      - name: After boot.img create and validate R60 AnyKernel3 with no module transitions
+        id: r60_ak3_pack
+        if: ${{ success() && steps.r60_boot_repack.conclusion == 'success' }}
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -Eeuo pipefail
+          python3 -I - <<'PY_R60_AK3'
+          import hashlib,io,json,os,stat,zipfile
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+          base=root/'r60-release-input'
+          files=root/'r60-release-artifact'
+          rawboot=files/'boot.img'
+          assert rawboot.is_file() and rawboot.stat().st_size==134217728
+          receipt=json.loads((files/'R60_BOOT_OFFLINE_VALIDATION.json').read_text())
+          assert receipt['flash_allowed'] is False and receipt['ak3_installer_generated'] is False
+
+          def hash_file(path):
+              with path.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+          def hash_bytes(data):return hashlib.sha256(data).hexdigest()
+          assert receipt['repacked_boot_sha256']==hash_file(rawboot)
+          assert receipt['kernel_sha256']==os.environ['R60_IMAGE_SHA256']
+          image=(base/'Image').read_bytes()
+          assert hash_bytes(image)==os.environ['R60_IMAGE_SHA256'] and len(image)==34900480
+          with rawboot.open('rb') as f:
+              h=f.read(4096)
+              assert h[:8]==b'ANDROID!'
+              import struct
+              k,r=struct.unpack_from('<II',h,8)
+              assert k==len(image) and struct.unpack_from('<I',h,40)[0]==3
+              embedded=f.read(k)
+          assert embedded==image,'AK3_IMAGE_MUST_MATCH_CREATED_BOOT_KERNEL'
+          archive=base/'r13-kernel.zip'
+          assert hash_file(archive)==os.environ['R13_KERNEL_ZIP_SHA256']
+          with zipfile.ZipFile(archive) as z:
+              assert z.testzip() is None
+              wanted={
+                'META-INF/com/google/android/update-binary': 'R13_UPDATE_BINARY_SHA256',
+                'META-INF/com/google/android/updater-script': None,
+                'tools/ak3-core.sh':'R13_AK3_CORE_SHA256',
+                'tools/busybox':'R13_BUSYBOX_SHA256',
+                'tools/r12-boot-repack.sh':'R13_REPACK_SHA256',
+                'tools/r12-magiskboot':'R13_MAGISKBOOT_SHA256',
+                'LICENSE':None,
+              }
+              preserved={name:z.read(name) for name in wanted}
+          for name,sha_env in wanted.items():
+              if sha_env:assert hash_bytes(preserved[name])==os.environ[sha_env],f'R13_SOURCE_HASH_BAD:{name}'
+          script=r'''#!/sbin/sh
+          # R60 VEUX / A13, boot partition only. Never touches /data/adb or modules.
+          # Only use after separate device-specific approval. This is NOT proof of bootability.
+          properties() { cat <<'R60_PROPERTIES'
+          kernel.string=VEUX R60 5.4.274 CASS BakaSU SUSFS NoMount | BOOT ONLY
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=1
+          device.name1=veux
+          supported.versions=13
+          supported.patchlevels=
+          R60_PROPERTIES
+          }
+          # Properties must start in column 1 for the AK3 updater's file_getprop parser.
+          set -eu
+          set -o pipefail
+          BLOCK=boot
+          IS_SLOT_DEVICE=1
+          SLOT_SELECT=active
+          RAMDISK_COMPRESSION=auto
+          PATCH_VBMETA_FLAG=0
+
+          r60_hash() {
+            local line
+            line=$(sha256sum "$1") || return 1
+            printf '%s\n' "${line%% *}"
+          }
+          r60_fail() {
+            ui_print "R60 BOOT ABORT: $*"
+            echo "R60_BOOT_ABORT: $*" >&2
+            exit 1
+          }
+          # Verify code BEFORE sourcing the framework.
+          [ "$(r60_hash tools/ak3-core.sh)" = '@@CORE_SHA@@' ] || exit 1
+          . tools/ak3-core.sh
+
+          [ "$(getprop ro.product.device 2>/dev/null)" = veux ] || r60_fail 'Wrong device'
+          [ "$(getprop ro.build.version.release 2>/dev/null)" = 13 ] || r60_fail 'Wrong Android version'
+          [ "$(r60_hash "$AKHOME/Image")" = '@@IMAGE_SHA@@' ] || r60_fail 'Kernel Image corrupted'
+          [ "$(r60_hash "$AKHOME/tools/r12-boot-repack.sh")" = '@@REPACK_SHA@@' ] || r60_fail 'Repacker corrupted'
+          [ "$(r60_hash "$AKHOME/tools/r12-magiskboot")" = '@@MAGISK_SHA@@' ] || r60_fail 'Magiskboot corrupted'
+          case "$SLOT" in _a|_b) ;; *) r60_fail 'Unknown active A/B slot' ;; esac
+          case "$BLOCK" in
+            /dev/block/by-name/boot_a|/dev/block/by-name/boot_b|/dev/block/bootdevice/by-name/boot_a|/dev/block/bootdevice/by-name/boot_b|/dev/block/platform/*/by-name/boot_a|/dev/block/platform/*/by-name/boot_b) ;;
+            *) r60_fail 'Unexpected boot partition path' ;;
+          esac
+          [ "${BLOCK##*/}" = "boot$SLOT" ] || r60_fail 'Wrong boot slot'
+          [ -b "$BLOCK" ] || r60_fail 'Boot partition is not a block device'
+          CURRENT_DEVICE=$(readlink -f "$BLOCK") || r60_fail 'Cannot resolve block path'
+          case "$CURRENT_DEVICE" in /dev/block/*) ;; *) r60_fail 'Block path outside /dev/block' ;; esac
+          [ "$(blockdev --getsize64 "$BLOCK")" = 134217728 ] || r60_fail 'Unexpected boot partition size'
+
+          # Persistent backup on userdata. Never access or modify Root modules.
+          [ -d /data ] && [ -w /data ] || r60_fail 'Writable userdata needed for boot backup'
+          BACKUP_ROOT=/data/local/tmp/veux-r60-boot-backups
+          mkdir -p "$BACKUP_ROOT" || r60_fail 'Cannot prepare backup folder'
+          chmod 700 "$BACKUP_ROOT" || r60_fail 'Cannot protect backup folder'
+          BACKUP_DIR=$(mktemp -d "$BACKUP_ROOT/boot${SLOT}_XXXXXXXX") || r60_fail 'Cannot create unique backup'
+          chmod 700 "$BACKUP_DIR" || r60_fail 'Cannot protect backup folder'
+          ui_print "Backing up active boot in $BACKUP_DIR"
+          dd if="$BLOCK" of="$BACKUP_DIR/boot-before.img" bs=1048576 count=128 iflag=fullblock \
+            || r60_fail 'Boot backup failed'
+          [ "$(wc -c < "$BACKUP_DIR/boot-before.img" | tr -d '[:space:]')" = 134217728 ] || r60_fail 'Boot backup truncated'
+          BEFORE_SHA=$(r60_hash "$BACKUP_DIR/boot-before.img") || r60_fail 'Boot backup hash failed'
+          [ "$(r60_hash "$BLOCK")" = "$BEFORE_SHA" ] || r60_fail 'Boot changed during backup'
+          printf '%s  boot-before.img\n' "$BEFORE_SHA" > "$BACKUP_DIR/SHA256SUMS"
+
+          # Repack current *device* boot, not the old historical release image.
+          # Original 5.4.274 R13 file-only tool validates boot-v3, ramdisk and AVB digest.
+          WORK="$AKHOME/boot-review-work"
+          OUT="$AKHOME/boot-review.img"
+          [ ! -e "$WORK" ] && [ ! -e "$OUT" ] || r60_fail 'Unsafe existing staging files'
+          sh "$AKHOME/tools/r12-boot-repack.sh" \
+            --original "$BACKUP_DIR/boot-before.img" \
+            --kernel "$AKHOME/Image" \
+            --output "$OUT" \
+            --magiskboot "$AKHOME/tools/r12-magiskboot" \
+            --work "$WORK" || r60_fail 'Boot-v3/AVB offline repack did not pass'
+          [ "$(blockdev --getsize64 "$BLOCK")" = 134217728 ] || r60_fail 'Block size changed'
+          [ "$(r60_hash "$BLOCK")" = "$BEFORE_SHA" ] || r60_fail 'Boot changed before write'
+          AFTER_SHA=$(r60_hash "$OUT") || r60_fail 'Repacked boot hash failed'
+          [ "$(wc -c < "$OUT" | tr -d '[:space:]')" = 134217728 ] || r60_fail 'Invalid output size'
+          grep -qx 'status=FILE_REPACK_AND_AVB_HASH_PASS' "$WORK/REPACK_RESULT.txt" || r60_fail 'No AVB/ramdisk proof'
+          grep -qx "original_sha256=$BEFORE_SHA" "$WORK/REPACK_RESULT.txt" || r60_fail 'Wrong original image'
+          grep -qx "output_sha256=$AFTER_SHA" "$WORK/REPACK_RESULT.txt" || r60_fail 'Wrong output hash'
+          grep -qx 'raw_ramdisk_unchanged=true' "$WORK/REPACK_RESULT.txt" || r60_fail 'Ramdisk changed'
+          [ "$(r60_hash "$AKHOME/Image")" = '@@IMAGE_SHA@@' ] || r60_fail 'Image changed before write'
+          sync || r60_fail 'Cannot flush persistent backup'
+
+          # Only the active boot partition. No vendor_boot, dtbo, vbmeta, no Root module.
+          ui_print 'Boot backup and offline checks passed; writing active boot only.'
+          blockdev --setrw "$BLOCK" || r60_fail 'Boot block remains read-only'
+          dd if="$OUT" of="$BLOCK" bs=1048576 count=128 iflag=fullblock conv=notrunc,fsync \
+            || r60_fail 'Boot write failed; do not reboot'
+          sync || r60_fail 'Boot write could not be flushed; do not reboot'
+          READBACK=$(r60_hash "$BLOCK") || r60_fail 'Readback failed; do not reboot'
+          [ "$READBACK" = "$AFTER_SHA" ] || r60_fail 'Readback differs; do not reboot'
+          printf 'R60_BOOT_READBACK=PASS\nBEFORE=%s\nAFTER=%s\n' "$BEFORE_SHA" "$AFTER_SHA" > "$BACKUP_DIR/R60_RESULT.txt"
+          sync || r60_fail 'Cannot flush result'
+          ui_print 'Boot partition readback matched. No automatic reboot. No Root modules changed.'
+          '''
+          for key,value in {
+            '@@IMAGE_SHA@@':os.environ['R60_IMAGE_SHA256'],
+            '@@CORE_SHA@@':os.environ['R13_AK3_CORE_SHA256'],
+            '@@REPACK_SHA@@':os.environ['R13_REPACK_SHA256'],
+            '@@MAGISK_SHA@@':os.environ['R13_MAGISKBOOT_SHA256'],
+          }.items():script=script.replace(key,value)
+          assert '@@' not in script
+          assert 'do.modules=0' in script and 'do.systemless=0' in script
+          assert '/data/adb' not in '\n'.join(x for x in script.splitlines() if not x.strip().startswith('#'))
+          assert 'dd if="$OUT" of="$BLOCK"' in script
+          assert 'do.devicecheck=1' in script and 'device.name1=veux' in script
+          assert 'supported.versions=13' in script
+          assert 'R13' not in script.splitlines()[0]
+          entries={'Image':image,'anykernel.sh':script.encode(),**preserved}
+          archive_out=files/'VEUX_R60_5.4.274_AK3_BOOT_ONLY_NOFLASH_REVIEW.zip'
+          assert not archive_out.exists()
+          with zipfile.ZipFile(archive_out,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=7,allowZip64=True) as z:
+              for name,data in sorted(entries.items()):
+                  assert not name.startswith('/') and '..' not in Path(name).parts
+                  i=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0))
+                  i.create_system=3
+                  i.external_attr=((0o100755 if name=='META-INF/com/google/android/update-binary' or name=='anykernel.sh' or name.startswith('tools/') else 0o100644)<<16)
+                  i.compress_type=zipfile.ZIP_DEFLATED
+                  z.writestr(i,data,compress_type=zipfile.ZIP_DEFLATED,compresslevel=7)
+          with zipfile.ZipFile(archive_out) as z:
+              assert z.testzip() is None
+              assert set(z.namelist())==set(entries)
+              assert hash_bytes(z.read('Image'))==os.environ['R60_IMAGE_SHA256']
+              assert z.read('anykernel.sh')==script.encode()
+              assert b'do.modules=0' in z.read('anykernel.sh')
+              assert b'do.systemless=0' in z.read('anykernel.sh')
+              assert z.read('tools/r12-boot-repack.sh')==preserved['tools/r12-boot-repack.sh']
+          sha_boot=hash_file(rawboot)
+          sha_ak3=hash_file(archive_out)
+          (files/'SHA256SUMS.txt').write_text(sha_boot+'  boot.img\n'+sha_ak3+'  '+archive_out.name+'\n')
+          report={
+            'schema':'VEUX_R60_BOOT_THEN_AK3_EVIDENCE_V1',
+            'status':'BOOT_CREATED_AND_VERIFIED__AK3_CREATED_AND_VERIFIED_NOFLASH',
+            'order':['01_boot_img_success','02_AK3_success'],
+            'boot_img_sha256':sha_boot,
+            'ak3_zip_sha256':sha_ak3,
+            'image_sha256':os.environ['R60_IMAGE_SHA256'],
+            'kernel_same_in_boot_img_and_AK3':True,
+            'ak3_boot_only_no_nomount_transition':True,
+            'legacy_R13_anykernel_installer_reused':False,
+            'original_R13_tool_files_hash_authenticated':True,
+            'oem_vendor_abi_approved':False,
+            'device_boot_tested':False,
+            'flash_allowed':False,
+          }
+          (files/'R60_BOOT_AND_AK3_RESULT.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          (files/'README_NOT_FLASHABLE.txt').write_text(
+           'VEUX R60 two outputs: boot.img CREATED FIRST, then AnyKernel3 ZIP.\n'
+           'AK3 boot-only installer does NOT disable/delete Root modules.\n'
+           'The AK3 install mechanism is UNTESTED on a live device.\n'
+           'OEM ABI / active device / rollback not approved. DO NOT FLASH.\n'
+          )
+          print('R60_BOOT_IMG=PASS; BOOT_SHA256='+sha_boot)
+          print('R60_AK3_PACKAGE=PASS; AK3_SHA256='+sha_ak3)
+          print('R60_KERNEL_PARITY_BOOT_AND_AK3=PASS; NOFLASH')
+          PY_R60_AK3
+          echo 'R60_ORDER=BOOT_FIRST_AK3_SECOND; NOFLASH'
+
+      - name: Independently validate boot.img and AK3 pairing; publish both NOFLASH outputs
+        id: r60_boot_and_ak3_gate
+        if: ${{ success() && steps.r60_ak3_pack.conclusion == 'success' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="$RUNNER_TEMP/r60-release-artifact"
+          test -s "$base/boot.img"
+          test -s "$base/VEUX_R60_5.4.274_AK3_BOOT_ONLY_NOFLASH_REVIEW.zip"
+          test -s "$base/R60_BOOT_AND_AK3_RESULT.json"
+          (cd "$base" && sha256sum -c --strict SHA256SUMS.txt)
+          python3 -I - "$base" <<'PY_R60_PAIR_FINAL'
+          from pathlib import Path
+          import hashlib,json,sys,zipfile,struct
+          root=Path(sys.argv[1])
+          data=json.loads((root/'R60_BOOT_AND_AK3_RESULT.json').read_text())
+          assert data['flash_allowed'] is False
+          assert data['order']==['01_boot_img_success','02_AK3_success']
+          with (root/'boot.img').open('rb') as f:
+              header=f.read(4096)
+              assert header[:8]==b'ANDROID!' and struct.unpack_from('<I',header,40)[0]==3
+              kernel_size=struct.unpack_from('<I',header,8)[0]
+              kernel=f.read(kernel_size)
+          with zipfile.ZipFile(root/'VEUX_R60_5.4.274_AK3_BOOT_ONLY_NOFLASH_REVIEW.zip') as z:
+              assert z.testzip() is None
+              assert z.read('Image')==kernel
+              installer=z.read('anykernel.sh').decode()
+              assert 'do.modules=0' in installer
+              assert 'do.systemless=0' in installer
+              assert 'device.name1=veux' in installer
+              assert '/data/adb' not in '\n'.join(l for l in installer.splitlines() if not l.lstrip().startswith('#'))
+          assert hashlib.sha256(kernel).hexdigest()==data['image_sha256']
+          assert data['oem_vendor_abi_approved'] is False
+          print('R60_FIRST_BOOT_THEN_AK3_INDEPENDENT_GATE=PASS; BOTH_FILES; NOFLASH')
+          PY_R60_PAIR_FINAL
+
+      - name: Upload boot.img FIRST and AK3 SECOND - artifact NOFLASH
+        if: ${{ success() && steps.r60_boot_and_ak3_gate.conclusion == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX_R60_BOOT_IMG_AND_AK3_OFFLINE_NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/r60-release-artifact/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          include-hidden-files: false
+
+      - name: Show bounded failure reason if release boot is not compatible with audited R13 tool
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set +e
+          work="$RUNNER_TEMP/r60-file-only-repack-work"
+          for log in "$work/unpack-original.log" "$work/repack.log" "$work/REPACK_RESULT.txt"; do
+            if [[ -f "$log" && ! -L "$log" ]]; then
+              printf 'DIAGNOSTIC=%s\n' "$(basename "$log")"
+              tail -n 100 "$log"
+            fi
+          done
+          printf 'FLASH_ALLOWED=NO\nDEVICE_TEST=NO\n'
