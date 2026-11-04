@@ -34,8 +34,8 @@ env:
   REPRO_MANIFEST_SHA256: 7f5a75c88736534aab25c7e503e1acd2f21ecf8249bbfbea22f0e6c0a2841d75
   R4_ARCHIVE_SHA256: 88907c8f1bd0a39826092edcd3bf824c05a40bb70d894a53437e001927f75380
   VEUX_EXECUTION_MODE: ci
-  R60_MAIN: VEUX_R60_R11_QCOM_RTIC_HOST_COMPILER_FIX_MAIN_NOFLASH.zip
-  R60_MAIN_SHA256: 2449dc3a8716a7e11996df249bbe6746b16fd954f2c0e53814469f64b9d3b003
+  R60_MAIN: VEUX_R60_R12_VALIDATED_CLANG_ROUTE_MAIN_NOFLASH.zip
+  R60_MAIN_SHA256: d6b0e06d60374c131a5f3730790db1f2f35e538adddeb407f50d5c8874b58d67
   R56_MAIN: VEUX_R56_R4_STOCK_AVD_PATH_MAIN_NOFLASH.zip
   R56_MAIN_SHA256: b745ba93ebf92482fa3fcfa10a27b08c62fc72e07479e029dbae685949ae6117
 jobs:
@@ -622,6 +622,19 @@ jobs:
           printf 'VEUX_R60_CLANG_CACHE_DIR=%s\n' "$cache"
           printf 'VEUX_R60_BRIDGE=%s\n' "$bridge"
         } >> "$GITHUB_ENV"
+        # R12: Test the REAL materialize/HERE bypass before any slow source
+        # reconstruction; the R11 transport unit fixtures did not cover this.
+        "$R5S2_PY" -B -m unittest discover -s "$R58_PAYLOAD/tests" \
+          -p 'test_r60_r12_source_transport_bridge.py' -v
+        # PRIME the full, digest-checked, CRC-valid pinned toolchain BEFORE
+        # reconstructing source. Incomplete AOSP curl archives are rejected;
+        # independently pinned CDN/Git alternatives are attempted. The next
+        # source/build worker reads this authenticated cache; never fetches
+        # the unverified 191 MB historical stream again.
+        VEUX_R60_REPO="$GITHUB_WORKSPACE" \
+          VEUX_R60_BASE_TEMP="$RUNNER_TEMP" \
+          VEUX_R60_CLANG_CACHE_DIR="$cache" \
+          python3 -B -u "$bridge" prime-cache
         echo 'R60_CLANG_TRANSPORT_PREPARED=PASS; PINNED_AOSP_AND_VERIFIED_GIT_SUBTREE; NO_FLASH'
     - name: Verify preserved SUSFS 2.3.0 and R5S1 SELinux backport boundary
       shell: bash
