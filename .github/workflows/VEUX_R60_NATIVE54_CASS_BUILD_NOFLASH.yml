@@ -992,7 +992,7 @@ jobs:
           "$RUNNER_TEMP/veux-r58-payload/tools/r60_config_guard.py"
         bash -n "$RUNNER_TEMP/veux-r58-payload/tools/r59_build_no_flash.sh"
         shellcheck --shell=bash --severity=error "$RUNNER_TEMP/veux-r58-payload/tools/r59_build_no_flash.sh"
-        python3 -B -m unittest discover -s "$RUNNER_TEMP/veux-r58-payload/tests" -p 'test_*.py' -v
+        "$R5S2_PY" -B -m unittest discover -s "$RUNNER_TEMP/veux-r58-payload/tests" -p 'test_*.py' -v
         python3 -B "$RUNNER_TEMP/veux-r58-payload/tools/r58_integrate.py" --mode preflight \
           --r13-main "$GITHUB_WORKSPACE/VEUX_R13_CASS_MAIN.zip" \
           --r56-main "$GITHUB_WORKSPACE/$R56_MAIN" \
