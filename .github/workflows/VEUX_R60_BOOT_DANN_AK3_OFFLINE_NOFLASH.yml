@@ -1,3 +1,4 @@
+# R60-R2: remove arbitrary boot header-size thresholds, preserve exact AVB/ramdisk gates.
 # VEUX R60 boot-v3 / AVB OFFLINE review from existing GitHub release, no device access.
 # Does not compile kernel, flash, disable modules, access /data/adb or write firmware.
 # Repository source: Chrizz100/veux-nongki-universal-kernel
@@ -191,19 +192,42 @@ jobs:
           from pathlib import Path
           import hashlib,os,struct
           p=Path(os.environ['RUNNER_TEMP'])/'r60-release-input/published-reference.img'
+          # The original <70 MB kernel / <20 MB ramdisk thresholds were
+          # arbitrary and rejected valid boot-v3 payload sizes. Mirror the
+          # *actual* pinned R13 repacker's page alignment and 64 KiB AVB space.
+          partition_bytes=134217728
+          page_bytes=4096
+          if p.stat().st_size != partition_bytes:
+              raise SystemExit('RELEASE_BOOT_PARTITION_SIZE_MISMATCH')
           with p.open('rb') as f:
-              header=f.read(4096)
-              assert header[:8]==b'ANDROID!'
+              header=f.read(page_bytes)
+              if len(header)!=page_bytes or header[:8]!=b'ANDROID!':
+                  raise SystemExit('RELEASE_BOOT_INVALID_ANDROID_HEADER')
               k,r=struct.unpack_from('<II',header,8)
-              assert struct.unpack_from('<I',header,20)[0]==1580
-              assert struct.unpack_from('<I',header,40)[0]==3
-              assert 1_000_000<k<70_000_000 and 1_000<r<20_000_000
-              off=4096+((k+4095)//4096)*4096
+              header_size=struct.unpack_from('<I',header,20)[0]
+              header_version=struct.unpack_from('<I',header,40)[0]
+              print(f'RELEASE_BOOT_HEADER_KERNEL_BYTES={k}',flush=True)
+              print(f'RELEASE_BOOT_HEADER_RAMDISK_BYTES={r}',flush=True)
+              print(f'RELEASE_BOOT_HEADER_VERSION={header_version}; HEADER_SIZE={header_size}',flush=True)
+              if header_size!=1580 or header_version!=3:
+                  raise SystemExit('RELEASE_BOOT_UNSUPPORTED_BOOT_V3_PROFILE')
+              # The pinned R13 repacker explicitly requires a raw ARM64
+              # kernel and a nonempty boot ramdisk. Reject those other cases
+              # rather than inventing or silently substituting a ramdisk.
+              if not (64<k<partition_bytes and 0<r<partition_bytes):
+                  raise SystemExit('RELEASE_BOOT_HAS_EMPTY_OR_UNBOUNDED_PAYLOAD; R13_REPACK_REQUIRES_NONEMPTY_RAMDISK')
+              off=page_bytes+((k+page_bytes-1)//page_bytes)*page_bytes
+              end=off+((r+page_bytes-1)//page_bytes)*page_bytes
+              print(f'RELEASE_BOOT_PAYLOAD_END={end}; PARTITION_BYTES={partition_bytes}',flush=True)
+              if end>=partition_bytes-65536:
+                  raise SystemExit('RELEASE_BOOT_PAYLOAD_EXCEEDS_AVB_MARGIN')
               f.seek(off)
               raw=f.read(r)
+          if len(raw)!=r:
+              raise SystemExit('RELEASE_BOOT_RAMDISK_TRUNCATED')
           observed=hashlib.sha256(raw).hexdigest()
           expected=os.environ['STOCK_RAMDISK_SHA256']
-          print('PUBLISHED_BOOT_RAMDISK_SHA256='+observed)
+          print('PUBLISHED_BOOT_RAMDISK_SHA256='+observed,flush=True)
           if observed!=expected:
               raise SystemExit('RELEASE_BOOT_RAMDISK_NOT_EQUAL_DOCUMENTED_VEUX_ROM_REFERENCE; ABORT_SAFE')
           print('R60_RELEASE_BOOT_V3_AND_DOCUMENTED_ROM_RAMDISK=PASS')
