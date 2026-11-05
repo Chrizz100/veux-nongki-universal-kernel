@@ -1,0 +1,113 @@
+name: VEUX R62 - xxKSU SUSFS 2.3 NoMount 2.2
+'on':
+  workflow_dispatch: {}
+  push:
+    branches: [codex/veux-r62-xxksu]
+    paths: [VEUX_R62_XXKSU_MAIN.zip, .github/workflows/VEUX_R62_XXKSU_5_4_274.yml]
+permissions:
+  contents: read
+concurrency:
+  group: veux-r62-xxksu-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    env:
+      ARCH: arm64
+      CC: clang
+      LD: ld.lld
+      LLVM: '1'
+      LLVM_IAS: '1'
+      KCFLAGS: -D__ANDROID_COMMON_KERNEL__
+      KBUILD_BUILD_USER: veux-builder
+      KBUILD_BUILD_HOST: github-actions
+      GIT_TERMINAL_PROMPT: '0'
+      MAIN_SHA256: dc44db1e53fd6362231a5b2aabc9e966d804d998e0d1a534d374f3ec84e4cb4e
+    steps:
+      - name: Checkout build package
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install compiler prerequisites
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bc bison flex build-essential libelf-dev libssl-dev python3 zip unzip
+      - name: Checkout immutable native VEUX source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          path: kernel
+          persist-credentials: false
+      - name: Checkout Clang 12.0.5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b
+          ref: 54220fd601050b350b2af7adc913089ebf0e7aed
+          path: clang
+          persist-credentials: false
+      - name: Checkout AnyKernel3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: osm0sis/AnyKernel3
+          ref: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
+          path: ak3
+          persist-credentials: false
+      - name: Verify and extract MAIN
+        run: |
+          set -Eeuo pipefail
+          printf '%s  %s\n' "$MAIN_SHA256" VEUX_R62_XXKSU_MAIN.zip | sha256sum -c --strict
+          python3 - <<'PY'
+          from pathlib import Path,PurePosixPath
+          import zipfile,stat
+          with zipfile.ZipFile('VEUX_R62_XXKSU_MAIN.zip') as z:
+              infos=z.infolist()
+              assert z.testzip() is None and len(infos)==len(set(i.filename for i in infos))
+              assert sum(i.file_size for i in infos)<10_000_000
+              for i in infos:
+                  p=PurePosixPath(i.filename)
+                  assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
+                  assert stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG)
+                  target=Path('payload')/i.filename
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  target.write_bytes(z.read(i))
+          PY
+          python3 payload/prepare.py "$GITHUB_WORKSPACE/kernel"
+      - name: Configure static xxKSU and built-in SUSFS / NoMount
+        run: |
+          set -Eeuo pipefail
+          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          mkdir -p logs
+          clang --version | tee logs/compiler.txt
+          make -C kernel O="$GITHUB_WORKSPACE/out" veux_defconfig 2>&1 | tee logs/configure.log
+          make -C kernel O="$GITHUB_WORKSPACE/out" init/version.o 2>&1 | tee logs/version.log
+      - name: Compile ARM64 kernel and device trees
+        run: |
+          set -Eeuo pipefail
+          make -C kernel O="$GITHUB_WORKSPACE/out" -j2 Image dtbs modules 2>&1 | tee logs/build.log
+      - name: Validate linked components and create candidate AK3
+        run: |
+          set -Eeuo pipefail
+          python3 payload/postcheck.py "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/ak3" "$GITHUB_WORKSPACE/dist" 2>&1 | tee logs/postcheck.log
+          cd dist
+          sha256sum Image build.config Module.symvers VEUX_R62_XXKSU_EXPERIMENTAL_NOFLASH_AK3.zip BUILD_RESULT.json README_NOFLASH.txt > SHA256SUMS.txt
+      - name: Upload compiled candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX_R62_XXKSU_5.4.274_${{ github.run_id }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX_R62_XXKSU_LOGS_${{ github.run_id }}
+          path: |
+            logs/
+            out/.config
+          if-no-files-found: warn
+          retention-days: 30
