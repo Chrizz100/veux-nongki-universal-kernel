@@ -1,0 +1,126 @@
+# VEUX STOCK 5.4.274 source candidate diagnostic R1 - NOFLASH
+# The donor is pinned to an independently verified PUBLIC commit.
+# Config/headers from a user-provided stock image are evidence, not a recovered original source tree.
+name: VEUX STOCK 5.4.274 source candidate R1 - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stock-54274-source-r1-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  stock_source_reference:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      MAIN_ARCHIVE: VEUX_STOCK_54274_SOURCE_RECON_R1_MAIN.zip
+      MAIN_SHA256: 04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+    steps:
+      - name: Checkout exact selected main revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify MAIN archive SHA256 and tightly scoped source/reference paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$MAIN_SHA256" "$GITHUB_WORKSPACE/$MAIN_ARCHIVE" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/veux-stock-r1/reports"
+          python3 -I - "$GITHUB_WORKSPACE/$MAIN_ARCHIVE" "$RUNNER_TEMP/veux-stock-r1/main" <<'PY_MAIN_AUTH'
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,stat,sys
+          archive=Path(sys.argv[1]);dest=Path(sys.argv[2])
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          assert archive.is_file() and not archive.is_symlink(), 'MAIN_FILE_UNSAFE'
+          assert sha(archive.read_bytes())=='04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789', 'MAIN_HASH_CHANGED'
+          assert not dest.exists(), 'MAIN_DEST_ALREADY_EXISTS'
+          with ZipFile(archive) as z:
+              infos=z.infolist()
+              names=[i.filename for i in infos]
+              assert len(names)==len(set(names)), 'MAIN_DUPLICATE_ENTRY'
+              assert 1<=len(names)<=15, 'MAIN_ENTRY_COUNT'
+              assert sum(i.file_size for i in infos)<10_000_000, 'MAIN_TOO_LARGE'
+              assert z.testzip() is None, 'MAIN_CORRUPT'
+              assert 'MANIFEST_SHA256.json' in names, 'MAIN_NO_MANIFEST'
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              assert manifest['schema']=='VEUX_STOCK_54274_REFERENCE_MAIN_R1', 'MAIN_SCHEMA_DRIFT'
+              assert manifest['flash_allowed'] is False, 'MAIN_FLASH_DRIFT'
+              assert manifest['stock_source_exact_claim'] is False, 'MAIN_FALSE_STOCK_CLAIM'
+              assert manifest['donor_commit']=='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632', 'MAIN_DONOR_DRIFT'
+              expected=set(manifest['files'])|{'MANIFEST_SHA256.json'}
+              assert set(names)==expected, 'MAIN_UNEXPECTED_PATHS'
+              dest.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  pp=PurePosixPath(i.filename)
+                  assert not pp.is_absolute() and '..' not in pp.parts and '\\' not in i.filename, 'MAIN_UNSAFE_PATH'
+                  assert str(pp)==i.filename and (len(pp.parts)>1 or i.filename in ('MANIFEST_SHA256.json', 'README_ERST_LESEN.md')), 'MAIN_INVALID_PATH'
+                  assert not i.is_dir() and stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG), 'MAIN_NONREGULAR_ENTRY'
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json':
+                      assert sha(raw)==manifest['files'][i.filename], 'MAIN_INNER_HASH_CHANGED:'+i.filename
+                  dest.joinpath(*pp.parts).parent.mkdir(parents=True,exist_ok=True)
+                  dest.joinpath(*pp.parts).write_bytes(raw)
+          print('MAIN_SHA256_AND_PATH_VERIFICATION=PASS')
+          PY_MAIN_AUTH
+
+      - name: Recheck stock config and 7717 embedded kernel headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN="$RUNNER_TEMP/veux-stock-r1/main"
+          python3 -B "$MAIN/tools/verify_reference.py" --main "$MAIN" \
+            --out "$RUNNER_TEMP/veux-stock-r1/reports/STOCK_REFERENCE_VERIFIED.json"
+          python3 -B -m unittest discover -s "$MAIN/tools" -p 'test_*.py' -v
+
+      - name: Fetch only pinned public donor 5.4.268 source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/veux-stock-r1/donor"
+          mkdir -p "$SRC"
+          git -C "$SRC" init -q
+          git -C "$SRC" remote add origin "$DONOR_URL"
+          git -C "$SRC" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 \
+            fetch --no-tags --filter=blob:none --depth=1 origin "$DONOR_SHA"
+          git -C "$SRC" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$DONOR_SHA"
+          git -C "$SRC" status --porcelain
+          echo 'DONOR_EXACT_COMMIT=PASS'
+
+      - name: Resolve stock .config under donor Kconfig without compiling a kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/veux-stock-r1/donor"
+          BUILD="$RUNNER_TEMP/veux-stock-r1/kconfig-out"
+          MAIN="$RUNNER_TEMP/veux-stock-r1/main"
+          mkdir -p "$BUILD"
+          cp "$MAIN/reference/stock.config" "$BUILD/.config"
+          make -C "$SRC" O="$BUILD" ARCH=arm64 olddefconfig 2>&1 | \
+            tee "$RUNNER_TEMP/veux-stock-r1/reports/olddefconfig.log"
+          cp "$BUILD/.config" "$RUNNER_TEMP/veux-stock-r1/reports/Donor_olddefconfig.config"
+
+      - name: Compare all 7717 original headers and stock versus historical R13 config
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r1"
+          python3 -B "$ROOT/main/tools/compare_candidate.py" \
+            --main "$ROOT/main" --source "$ROOT/donor" --out "$ROOT/reports" \
+            --resolved-config "$ROOT/kconfig-out/.config"
+          echo 'SOURCE_REFERENCE_COMPARISON=COMPLETE; ORIGINAL_XIAOMI_SOURCE=UNPROVEN; FLASH=NO'
+
+      - name: Publish diagnostic evidence only (no Image boot img or AK3)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-SOURCE-R1-DIAGNOSTIC-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-stock-r1/reports/
+          if-no-files-found: warn
+          retention-days: 30
