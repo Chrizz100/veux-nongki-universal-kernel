@@ -1,0 +1,272 @@
+# VEUX Stock 5.4.274 R12: five genuine Qualcomm WALT interface headers; object-only diagnostic.
+# Original Stock task_struct is fixed, original donor remains clean, NOFLASH and no binaries.
+name: VEUX STOCK 5.4.274 R12 verified WALT interface-header probe - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-stock-r12-walt-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  walt_component_probe_r12:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      R12_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R12_MAIN.zip
+      R12_MAIN_SHA256: 71a2984347ce1302f9503e240b832b8fb07506961879dceec1790e3572bfe6ee
+      PAIR_URL: https://github.com/shandongtlb/kernel_xiaomi_sm8350_M11.git
+      PAIR_SHA: 01cb3a8824b7b4caf3e3540274e71abba5ade538
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+      CLANG_BRANCH: android11-qpr2-release
+      CLANG_TREE: 1c7dcc2e7095197f7a05dff22a875b6b02ed7117
+    steps:
+      - name: Checkout read-only exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate R12 workflow using pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r12-actionlint"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" .github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R12_NOFLASH.yml
+          echo 'R12_ACTIONLINT=PASS'
+
+      - name: Authenticate R12 MAIN and nested R11 provenance, refuse ZIP traversal
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R12_MAIN_SHA256" "$GITHUB_WORKSPACE/$R12_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R12_MAIN" "$ROOT/r12" <<'PY_R12_AUTH'
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,stat,sys
+          archive,dst=map(Path,sys.argv[1:])
+          if not archive.is_file() or archive.is_symlink() or dst.exists():
+              raise RuntimeError('R12_UNSAFE_OUTER_ARCHIVE')
+          with ZipFile(archive) as z:
+              all_items=z.infolist(); names=[i.filename for i in all_items]
+              if len(names)!=len(set(names)) or not names or z.testzip() is not None:
+                  raise RuntimeError('R12_DUPLICATE_OR_CORRUPT')
+              if sum(i.file_size for i in all_items)>3_000_000:
+                  raise RuntimeError('R12_UNPACKED_DATA_EXCESSIVE')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if manifest.get('schema')!='VEUX_R12_WALT_PINNED_INTERFACE_HEADER_PROBE_NOFLASH':
+                  raise RuntimeError('R12_WRONG_SCHEMA')
+              if manifest.get('flash_allowed') is not False or manifest.get('production_source_patch_approved') is not False or manifest.get('oem_abi_verified') is not False:
+                  raise RuntimeError('R12_ABI_OR_FLASH_GUARD')
+              if set(names)!=(set(manifest['files'])|{'MANIFEST_SHA256.json'}):
+                  raise RuntimeError('R12_WRONG_FILESET')
+              dst.mkdir(parents=True,exist_ok=False)
+              for item in all_items:
+                  rel=PurePosixPath(item.filename)
+                  if (rel.is_absolute() or '..' in rel.parts or '\\' in item.filename or
+                      str(rel)!=item.filename or item.is_dir() or
+                      stat.S_IFMT(item.external_attr >> 16) not in (0,stat.S_IFREG)):
+                      raise RuntimeError('R12_ARCHIVE_UNSAFE_PATH_OR_KIND')
+                  raw=z.read(item.filename)
+                  if item.filename!='MANIFEST_SHA256.json' and hashlib.sha256(raw).hexdigest()!=manifest['files'][item.filename]:
+                      raise RuntimeError('R12_CONTENT_HASH_DRIFT')
+                  target=dst.joinpath(*rel.parts);target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw)
+          print('R12_OUTER_MANIFEST_AND_SOURCE_HASHES=PASS')
+          PY_R12_AUTH
+          python3 -B "$ROOT/r12/tools/r12_walt_headers.py" verify --root "$ROOT/r12"
+          python3 -I - "$ROOT/r12/reference/R11_MAIN_ORIGINAL.zip" "$ROOT/r11" <<'PY_R11_AUTH'
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          import hashlib,json,stat,sys
+          arc,dst=map(Path,sys.argv[1:])
+          if dst.exists(): raise RuntimeError('R12_R11_STAGE_EXISTS')
+          with ZipFile(arc) as z:
+              infos=z.infolist(); names=[i.filename for i in infos]
+              if not infos or len(set(names))!=len(names) or z.testzip() is not None:
+                  raise RuntimeError('R12_R11_BAD_NESTED_ZIP')
+              if sum(i.file_size for i in infos)>3_000_000:
+                  raise RuntimeError('R12_R11_OVERSIZED')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m.get('schema')!='VEUX_R11_STOCK_TASK_WALT_OBJECT_PROBE_NOFLASH':
+                  raise RuntimeError('R12_R11_UNEXPECTED_MANIFEST')
+              if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R12_R11_UNEXPECTED_CONTENTS')
+              dst.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  rel=PurePosixPath(i.filename)
+                  if rel.is_absolute() or '..' in rel.parts or '\\' in i.filename or str(rel)!=i.filename or i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R12_R11_PATH_TRAVERSAL')
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and hashlib.sha256(raw).hexdigest()!=m['files'][i.filename]:
+                      raise RuntimeError('R12_R11_INTERNAL_HASH_DRIFT')
+                  out=dst.joinpath(*rel.parts);out.parent.mkdir(parents=True,exist_ok=True);out.write_bytes(raw)
+          print('R12_NESTED_R11_STOCK_WALT_PROVENANCE=PASS')
+          PY_R11_AUTH
+
+      - name: Run R12 and inherited R11 negative and Git-worktree tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          python3 -B -m unittest discover -s "$ROOT/r12/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R12_TESTS.log"
+          python3 -B -m unittest discover -s "$ROOT/r11/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R11_TESTS.log"
+          python3 -B "$ROOT/r11/tools/r11_walt_probe.py" verify --root "$ROOT/r11" > "$ROOT/reports/R12_R11_SOURCE_PREFLIGHT.json"
+          echo 'R12_20_NEW_AND_21_R11_REGRESSIONS=PASS'
+
+      - name: Fetch exact pinned 5.4.268 donor (production repository untouched)
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          git init -q "$ROOT/donor"
+          git -C "$ROOT/donor" remote add origin "$DONOR_URL"
+          git -C "$ROOT/donor" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$DONOR_SHA"
+          git -C "$ROOT/donor" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$ROOT/donor" rev-parse HEAD)" = "$DONOR_SHA"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+
+      - name: Stage original stock task_struct and known WALT source in isolated R11-style trial
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          python3 -B "$ROOT/r11/tools/r11_walt_probe.py" stage \
+            --root "$ROOT/r11" --donor "$ROOT/donor" \
+            --stage-dir "$ROOT/walt-trial" --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R12_ORIGINAL_STOCK_TASK_STRUCT_UNCHANGED=PASS'
+
+      - name: Fetch five exact pinned Qualcomm interface headers (full Git provenance)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          PAIR="$ROOT/header-source"
+          git init -q "$PAIR"
+          git -C "$PAIR" remote add origin "$PAIR_URL"
+          git -C "$PAIR" sparse-checkout init --no-cone
+          git -C "$PAIR" sparse-checkout set --no-cone \
+            'include/linux/sched/stat.h' \
+            'include/linux/sched/cpufreq.h' \
+            'include/linux/sched/sysctl.h' \
+            'include/linux/arch_topology.h' \
+            'include/linux/topology.h'
+          git -C "$PAIR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$PAIR_SHA"
+          git -C "$PAIR" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$PAIR" rev-parse HEAD)" = "$PAIR_SHA"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          echo 'R12_FIVE_GENUINE_SOURCE_HEADERS_FROM_EXACT_COMMIT=FETCHED'
+
+      - name: Stage only five verified upstream headers, preserve stock and donor originals
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          python3 -B "$ROOT/r12/tools/r12_walt_headers.py" stage \
+            --root "$ROOT/r12" --donor "$ROOT/donor" \
+            --pair "$ROOT/header-source" --trial "$ROOT/walt-trial" --reports "$ROOT/reports"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R12_REAL_VENDOR_HEADERS_NOT_DUMMY_DECLARATIONS=STAGED'
+
+      - name: Fetch and pin exact stock Android Clang 11.0.2 toolchain
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          CLANG="$ROOT/aosp-clang"
+          git init -q "$CLANG"
+          git -C "$CLANG" remote add origin "$CLANG_URL"
+          git -C "$CLANG" sparse-checkout init --cone
+          git -C "$CLANG" sparse-checkout set clang-r383902b1
+          git -C "$CLANG" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=180 fetch --no-tags --depth=1 --filter=blob:none origin "refs/heads/$CLANG_BRANCH" 2>&1 | tee "$ROOT/reports/R12_CLANG_FETCH.log"
+          git -C "$CLANG" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$CLANG" rev-parse HEAD:clang-r383902b1)" = "$CLANG_TREE"
+          "$CLANG/clang-r383902b1/bin/clang" --version > "$ROOT/reports/R12_CLANG_VERSION.txt"
+          grep -F 'Android (6877366 based on r383902b1) clang version 11.0.2' "$ROOT/reports/R12_CLANG_VERSION.txt"
+          echo 'R12_ANDROID_CLANG_11_GENUINE=PASS'
+
+      - name: Compile weak and real WALT objects independently and FAIL if source errors remain
+        shell: bash
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r12"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          TRIAL="$ROOT/walt-trial"
+          OUT="$ROOT/build"
+          mkdir -p "$OUT"
+          cp "$ROOT/r11/reference/stock.config" "$OUT/.config"
+          set +e
+          timeout 180s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 olddefconfig > "$ROOT/reports/R12_CONFIG_BUILD.log" 2>&1
+          C_RC=$?
+          set -e
+          if [ "$C_RC" -ne 0 ] || ! grep -Fqx 'CONFIG_SCHED_WALT=y' "$OUT/.config"; then
+            echo '::error::R12_KCONFIG_BLOCKER'
+            printf '90\n' > "$ROOT/reports/R12_PREPARE_RC.txt"
+            printf '90\n' > "$ROOT/reports/R12_WEAK_RC.txt"
+            printf '90\n' > "$ROOT/reports/R12_REAL_RC.txt"
+            cp "$ROOT/reports/R12_CONFIG_BUILD.log" "$ROOT/reports/R12_PREPARE_BUILD.log"
+            cp "$ROOT/reports/R12_CONFIG_BUILD.log" "$ROOT/reports/R12_WEAK_BUILD.log"
+            cp "$ROOT/reports/R12_CONFIG_BUILD.log" "$ROOT/reports/R12_REAL_BUILD.log"
+          else
+            if grep -Fqx 'CONFIG_RTMM=y' "$OUT/.config"; then
+              echo 'CONFIG_RTMM=y; IMPLEMENTATION_NOT_PORTED' > "$ROOT/reports/R12_RTMM_STATUS.txt"
+            else
+              echo 'CONFIG_RTMM_NOT_AVAILABLE_IN_DONOR; STOCK_RTMM_REMAINS_UNPORTed' > "$ROOT/reports/R12_RTMM_STATUS.txt"
+            fi
+            set +e
+            timeout 360s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 prepare scripts > "$ROOT/reports/R12_PREPARE_BUILD.log" 2>&1
+            P_RC=$?
+            set -e
+            printf '%s\n' "$P_RC" > "$ROOT/reports/R12_PREPARE_RC.txt"
+            if [ "$P_RC" -eq 0 ]; then
+              set +e
+              timeout 420s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 kernel/sched/walt.o > "$ROOT/reports/R12_WEAK_BUILD.log" 2>&1
+              W_RC=$?
+              timeout 420s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 techpack/sched/walt.o > "$ROOT/reports/R12_REAL_BUILD.log" 2>&1
+              R_RC=$?
+              set -e
+              printf '%s\n' "$W_RC" > "$ROOT/reports/R12_WEAK_RC.txt"
+              printf '%s\n' "$R_RC" > "$ROOT/reports/R12_REAL_RC.txt"
+            else
+              printf '90\n' > "$ROOT/reports/R12_WEAK_RC.txt"
+              printf '90\n' > "$ROOT/reports/R12_REAL_RC.txt"
+              cp "$ROOT/reports/R12_PREPARE_BUILD.log" "$ROOT/reports/R12_WEAK_BUILD.log"
+              cp "$ROOT/reports/R12_PREPARE_BUILD.log" "$ROOT/reports/R12_REAL_BUILD.log"
+            fi
+          fi
+          python3 -B "$ROOT/r12/tools/r12_walt_headers.py" summary --reports "$ROOT/reports"
+          tail -n 35 "$ROOT/reports/R12_WEAK_BUILD.log"
+          tail -n 55 "$ROOT/reports/R12_REAL_BUILD.log"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          python3 -I - "$ROOT/reports/R12_WALT_OBJECT_BUILD_SUMMARY.json" <<'PY_R12_GATE'
+          from pathlib import Path
+          import json,sys
+          result=json.loads(Path(sys.argv[1]).read_text())
+          if result['flash_allowed'] is not False or result['oem_abi_verified'] is not False or result['linked_vmlinux_built'] is not False:
+              raise RuntimeError('R12_NOFLASH_GATE_BROKEN')
+          if not result['object_compilation_pass']:
+              print('::error::R12_WALT_COMPILER_BLOCKERS_PERSIST; examine uploaded logs')
+              raise SystemExit(1)
+          print('R12_WALT_OBJECTS_COMPILED_BUT_NO_ABI_OR_BOOT_PROOF; FLASH=NO')
+          PY_R12_GATE
+
+      - name: Always upload WALT source and full compiler diagnostics; NEVER kernels or boot images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R12-VERIFIED-WALT-HEADER-PROBE-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r12/reports/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
