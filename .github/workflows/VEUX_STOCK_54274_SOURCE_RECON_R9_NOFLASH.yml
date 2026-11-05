@@ -1,0 +1,114 @@
+# VEUX Stock kernel 5.4.274 – R9 QGKI/GKI ABI root-cause audit ONLY
+# READ-ONLY: No kernel compilation, modifications, boot.img or flash.
+name: VEUX STOCK 5.4.274 R9 ABI root-cause audit - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stock-54274-r9-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  abi_root_cause_r9:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      R9_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R9_MAIN.zip
+      R9_SHA256: f125b1ee35fb80704acc7bf69c145bdd825a943e039b8859b3c0534ecc6dbfa9
+    steps:
+      - name: Checkout exact main revision without retained credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: actionlint syntax and workflow semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r9-tools"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" .github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R9_NOFLASH.yml
+          echo 'R9_ACTIONLINT=PASS'
+
+      - name: Authenticate R9 immutable inputs and extract safe paths ONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$R9_SHA256" "$GITHUB_WORKSPACE/$R9_MAIN" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/veux-r9"
+          python3 -I - "$GITHUB_WORKSPACE/$R9_MAIN" "$RUNNER_TEMP/veux-r9/main" <<'PY_AUTH'
+          import hashlib, json, stat, sys
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZipFile
+          archive,dst=map(Path,sys.argv[1:])
+          if archive.is_symlink() or not archive.is_file() or dst.exists():
+              raise RuntimeError('R9_UNSAFE_ARCHIVE')
+          with ZipFile(archive) as z:
+              infos=z.infolist()
+              names=[i.filename for i in infos]
+              if len(names)!=len(set(names)) or z.testzip() is not None:
+                  raise RuntimeError('R9_DUPLICATE_OR_CORRUPT')
+              if sum(i.file_size for i in infos)>8_000_000:
+                  raise RuntimeError('R9_OVERSIZED')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m.get('schema')!='VEUX_STOCK_R9_ROOT_CAUSE_READONLY' or m.get('flash_allowed') is not False or m.get('kernel_build_requested') is not False or m.get('source_patch_allowed') is not False:
+                  raise RuntimeError('R9_NOFLASH_SCHEMA')
+              if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R9_UNEXPECTED_ZIP_PATHS')
+              dst.mkdir(parents=True)
+              for i in infos:
+                  rel=PurePosixPath(i.filename)
+                  if rel.is_absolute() or '..' in rel.parts or '\\' in i.filename or rel.as_posix()!=i.filename:
+                      raise RuntimeError('R9_ZIPSLIP')
+                  if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R9_UNSAFE_FILETYPE')
+                  b=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and hashlib.sha256(b).hexdigest()!=m['files'][i.filename]:
+                      raise RuntimeError('R9_BAD_CONTENT_SHA256')
+                  out=dst.joinpath(*rel.parts)
+                  out.parent.mkdir(parents=True,exist_ok=True)
+                  out.write_bytes(b)
+          print('R9_MAIN_AND_ALL_REFERENCE_HASHES=PASS')
+          PY_AUTH
+
+      - name: Run 18 R9 security and root-cause regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r9"
+          mkdir -p "$ROOT/reports"
+          python3 -B -m unittest discover -s "$ROOT/main/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R9_TESTS.log"
+          echo 'R9_18_REGRESSION_TESTS=PASS'
+
+      - name: Independently audit R6 R8 CRCs, QGKI loaded list, WALT config - NOFLASH
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r9"
+          python3 -B "$ROOT/main/tools/r9_abi_roots.py" --root "$ROOT/main" --out "$ROOT/reports"
+          python3 -I - "$ROOT/reports/R9_ABI_GESAMT.json" "$ROOT/reports/R9_NOFLASH_GATE.json" <<'PY_GATE'
+          import json,sys
+          from pathlib import Path
+          r=json.loads(Path(sys.argv[1]).read_text())
+          g=json.loads(Path(sys.argv[2]).read_text())
+          assert r['flash_allowed'] is False and r['source_patch_allowed'] is False
+          assert r['kernel_build_performed'] is False and r['loaded_module_cohort_verified'] is False
+          assert r['QGKI']['module_files_in_loader']==37
+          assert r['QGKI']['r8_matches']==1470 and r['QGKI']['fully_compatible_r8']==0
+          assert r['QGKI']['module_layout_only_files']==['q6_pdr_dlkm.ko']
+          assert r['common_export_crc_changed']==8638
+          assert r['config_stock_SCHED_WALT']=='y' and r['config_candidate_SCHED_WALT']=='(absent)'
+          assert g['flash_allowed'] is False and g['abi_green'] is False and g['boot_verified'] is False
+          print('R9_READONLY_ABI_EVIDENCE=PASS; QGKI_COMPATIBLE_MODULES=0; NOFLASH=YES')
+          PY_GATE
+
+      - name: Publish TEXT evidence only - no kernel artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R9-ABI-ROOT-CAUSE-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r9/reports/
+          if-no-files-found: warn
+          retention-days: 30
