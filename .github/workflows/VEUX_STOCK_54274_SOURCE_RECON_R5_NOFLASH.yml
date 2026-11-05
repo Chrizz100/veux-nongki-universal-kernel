@@ -1,0 +1,350 @@
+# VEUX Stock 5.4.274 R5: SHA-verified original stock core_ctl header in isolated compiler diagnostic; NOFLASH
+# Reuses the immutable, previously proven R1 source reference.
+name: VEUX STOCK 5.4.274 isolated genuine stock header probe R5 - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stock-54274-recon-r5-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  stock_source_abi_r5:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      R1_ARCHIVE: VEUX_STOCK_54274_SOURCE_RECON_R1_MAIN.zip
+      R1_SHA256: 04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789
+      R2_ARCHIVE: VEUX_STOCK_54274_SOURCE_RECON_R2_MAIN.zip
+      R2_SHA256: fdf72f74fc9f2ca219d80d726387c7e9c2ba917c74761331d4906ae9ee022f68
+      R4_ARCHIVE: VEUX_STOCK_54274_SOURCE_RECON_R4_MAIN.zip
+      R4_SHA256: fe29d83963f3ee3bca1f9de6229fd2e35ff22961180144a977efca0bf9bd54b6
+      R5_ARCHIVE: VEUX_STOCK_54274_SOURCE_RECON_R5_MAIN.zip
+      R5_SHA256: 5488dde35b7848aaa3c65213d6a558ca79b6432b223bf82f07d1dd035a682ebc
+      R5_HEADER_SHA256: bc73b24be7b7ffad9807d23f7eae5b16771c08aa37082493cd41f2b191ccd1d8
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+      CLANG_BRANCH: android11-qpr2-release
+      CLANG_TREE: 1c7dcc2e7095197f7a05dff22a875b6b02ed7117
+    steps:
+      - name: Checkout exact main revision read only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: actionlint syntax and GitHub workflow semantics - pinned tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-stock-r2-tools"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" ".github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R5_NOFLASH.yml"
+          echo 'R4_WORKFLOW_ACTIONLINT=PASS'
+
+      - name: Authenticate both MAIN ZIPs and safely extract exact paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R1_SHA256" "$GITHUB_WORKSPACE/$R1_ARCHIVE" | sha256sum --check --strict
+          printf '%s  %s\n' "$R2_SHA256" "$GITHUB_WORKSPACE/$R2_ARCHIVE" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R2_ARCHIVE" "$GITHUB_WORKSPACE/$R1_ARCHIVE" "$ROOT" <<'PY_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          r2,r1,root=map(Path,sys.argv[1:]); sha=lambda x:hashlib.sha256(x).hexdigest()
+          for path,folder,size_limit in ((r1,root/'r1',12_000_000),(r2,root/'r2',2_000_000)):
+              if path.is_symlink() or not path.is_file():raise RuntimeError('MAIN_ZIP_NOT_REGULAR')
+              with ZipFile(path) as z:
+                  infos=z.infolist();names=[i.filename for i in infos]
+                  if not names or len(names)!=len(set(names)) or z.testzip() is not None:
+                      raise RuntimeError('MAIN_DUPLICATE_OR_CORRUPT')
+                  if sum(i.file_size for i in infos)>size_limit:raise RuntimeError('MAIN_SIZE_LIMIT')
+                  manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+                  schema=('VEUX_STOCK_54274_REFERENCE_MAIN_R1' if folder.name=='r1'
+                          else 'VEUX_STOCK_54274_SOURCE_RECON_MAIN_R2')
+                  if manifest['schema']!=schema or manifest['flash_allowed'] is not False:
+                      raise RuntimeError('MANIFEST_SCHEMA_OR_FLASH_DRIFT')
+                  if manifest['donor_commit']!='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+                      raise RuntimeError('DONOR_COMMIT_DRIFT')
+                  if set(names)!=(set(manifest['files'])|{'MANIFEST_SHA256.json'}):
+                      raise RuntimeError('MAIN_PATH_DRIFT')
+                  folder.mkdir(parents=True,exist_ok=False)
+                  for i in infos:
+                      rel=PurePosixPath(i.filename)
+                      if rel.is_absolute() or '..' in rel.parts or str(rel)!=i.filename or '\\' in i.filename:
+                          raise RuntimeError('UNSAFE_PATH')
+                      if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                          raise RuntimeError('UNSAFE_FILE_TYPE')
+                      raw=z.read(i.filename)
+                      if i.filename!='MANIFEST_SHA256.json' and sha(raw)!=manifest['files'][i.filename]:
+                          raise RuntimeError('BAD_INNER_SHA:'+i.filename)
+                      target=folder.joinpath(*rel.parts)
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(raw)
+                  (root/'reports'/('R1_MAIN_VERIFIED.txt' if folder.name=='r1' else 'R2_MAIN_VERIFIED.txt')).write_text('PINNED_ARCHIVE_AND_CONTENT_HASH_PASS\n')
+          print('R1_AND_R2_MAIN_HASH_PATH_GUARD=PASS')
+          PY_AUTH
+
+      - name: Authenticate R4 MAIN source-probe helper, refuse unsafe archive paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          printf '%s  %s\n' "$R4_SHA256" "$GITHUB_WORKSPACE/$R4_ARCHIVE" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R4_ARCHIVE" "$ROOT/r4" <<'PY_R4_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,dst=map(Path,sys.argv[1:])
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          if archive.is_symlink() or not archive.is_file() or dst.exists():
+              raise RuntimeError('R4_ARCHIVE_UNSAFE_OR_STAGE_EXISTS')
+          with ZipFile(archive) as z:
+              infos=z.infolist();names=[x.filename for x in infos]
+              if not infos or len(infos)!=len(set(names)) or z.testzip() is not None:
+                  raise RuntimeError('R4_BAD_ZIP')
+              if sum(x.file_size for x in infos)>1_000_000:
+                  raise RuntimeError('R4_UNEXPECTED_UNPACKED_SIZE')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m['schema']!='VEUX_STOCK_54274_SOURCE_PROBE_MAIN_R4':
+                  raise RuntimeError('R4_WRONG_SCHEMA')
+              if m['donor_commit']!='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+                  raise RuntimeError('R4_DONOR_PIN_DRIFT')
+              if m['required_r1_zip_sha256']!='04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789' or m['required_r2_zip_sha256']!='fdf72f74fc9f2ca219d80d726387c7e9c2ba917c74761331d4906ae9ee022f68':
+                  raise RuntimeError('R4_REQUIRED_MAIN_DRIFT')
+              if m['flash_allowed'] is not False or m['oem_abi_verified'] is not False or m['production_source_patch_approved'] is not False:
+                  raise RuntimeError('R4_NOFLASH_GUARD_VIOLATION')
+              if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R4_ZIP_FILESET_DRIFT')
+              dst.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  rel=PurePosixPath(i.filename)
+                  if rel.is_absolute() or '..' in rel.parts or str(rel)!=i.filename or '\\' in i.filename:
+                      raise RuntimeError('R4_UNSAFE_PATH')
+                  if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R4_UNSAFE_TYPE')
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and sha(raw)!=m['files'][i.filename]:
+                      raise RuntimeError('R4_INTERNAL_SHA_DRIFT:'+i.filename)
+                  target=dst.joinpath(*rel.parts);target.parent.mkdir(parents=True,exist_ok=True)
+                  target.write_bytes(raw)
+          print('R4_MAIN_AUTHENTICATION=PASS')
+          PY_R4_AUTH
+
+
+      - name: Authenticate R5 additional source header tool and test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          printf '%s  %s\n' "$R5_SHA256" "$GITHUB_WORKSPACE/$R5_ARCHIVE" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R5_ARCHIVE" "$ROOT/r5" <<'PY_R5_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,dst=map(Path,sys.argv[1:]);sha=lambda b:hashlib.sha256(b).hexdigest()
+          if archive.is_symlink() or not archive.is_file() or dst.exists():
+              raise RuntimeError('R5_ZIP_UNSAFE')
+          with ZipFile(archive) as z:
+              infos=z.infolist();names=[i.filename for i in infos]
+              if not infos or len(infos)!=len(set(names)) or z.testzip() is not None:
+                  raise RuntimeError('R5_BAD_ZIP')
+              if sum(i.file_size for i in infos)>1_000_000:
+                  raise RuntimeError('R5_UNPACKED_SIZE_LIMIT')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m['schema']!='VEUX_STOCK_54274_SOURCE_PROBE_MAIN_R5' or m['donor_commit']!= 'b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+                  raise RuntimeError('R5_SCHEMA_OR_DONOR_DRIFT')
+              if (m['required_r1_zip_sha256']!='04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789' or
+                  m['required_r2_zip_sha256']!='fdf72f74fc9f2ca219d80d726387c7e9c2ba917c74761331d4906ae9ee022f68' or
+                  m['required_r4_zip_sha256']!='fe29d83963f3ee3bca1f9de6229fd2e35ff22961180144a977efca0bf9bd54b6'):
+                  raise RuntimeError('R5_PARENT_PIN_DRIFT')
+              if m['stock_header_sha256']!='bc73b24be7b7ffad9807d23f7eae5b16771c08aa37082493cd41f2b191ccd1d8' or m['stock_kheaders_tar_sha256']!='39be17eec6033eb154baaf71a77ce17db0d998043301b9e3dd5cf060b2cad279':
+                  raise RuntimeError('R5_STOCK_ORIGIN_DRIFT')
+              if (m['flash_allowed'] is not False or m['oem_abi_verified'] is not False or
+                  m['original_stock_source_recovered'] is not False):
+                  raise RuntimeError('R5_NOFLASH_GATE_DRIFT')
+              if set(names)!=(set(m['files'])|{'MANIFEST_SHA256.json'}):
+                  raise RuntimeError('R5_FILESET_DRIFT')
+              dst.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  rel=PurePosixPath(i.filename)
+                  if rel.is_absolute() or '..' in rel.parts or str(rel)!=i.filename or '\\' in i.filename:
+                      raise RuntimeError('R5_UNSAFE_PATH')
+                  if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R5_UNSAFE_FILETYPE')
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and sha(raw)!=m['files'][i.filename]:
+                      raise RuntimeError('R5_SHA_MISMATCH:'+i.filename)
+                  path=dst.joinpath(*rel.parts)
+                  path.parent.mkdir(parents=True,exist_ok=True)
+                  path.write_bytes(raw)
+          print('R5_AUTHENTICATION=PASS')
+          PY_R5_AUTH
+
+      - name: R5 original stock header importer and negative regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B -m unittest discover -s "$ROOT/r5/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R5_TESTS.log"
+          echo 'R5_HEADER_NEGATIVE_REGRESSION=PASS'
+
+      - name: R4 source-anchor and diagnostics regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B -m unittest discover -s "$ROOT/r4/tools" -p 'test_*.py' -v 2>&1 | \
+            tee "$ROOT/reports/R4_TESTS.log"
+          echo 'R4_REGRESSION_SUITE=PASS'
+
+      - name: Verify stock kernel config and all original embedded headers; R2 tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B "$ROOT/r1/tools/verify_reference.py" --main "$ROOT/r1" \
+            --out "$ROOT/reports/R1_STOCK_REFERENCE_VERIFIED.json"
+          python3 -B -m unittest discover -s "$ROOT/r1/tools" -p 'test_*.py' -v 2>&1 | \
+            tee "$ROOT/reports/R1_TESTS.log"
+          python3 -B -m unittest discover -s "$ROOT/r2/tools" -p 'test_*.py' -v 2>&1 | \
+            tee "$ROOT/reports/R2_TESTS.log"
+
+      - name: Checkout exact pinned donor source in isolated temporary folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          SRC="$ROOT/donor"
+          mkdir -p "$SRC"
+          git -C "$SRC" init -q
+          git -C "$SRC" remote add origin "$DONOR_URL"
+          git -C "$SRC" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 \
+            fetch --no-tags --filter=blob:none --depth=1 origin "$DONOR_SHA"
+          git -C "$SRC" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$DONOR_SHA"
+          test -z "$(git -C "$SRC" status --porcelain)"
+          git -C "$SRC" rev-parse HEAD > "$ROOT/reports/DONOR_COMMIT.txt"
+
+      - name: Fetch exact AOSP stock compiler tree (no replacement by GCC)
+        shell: bash
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          CLANG_GIT="$ROOT/aosp-clang"
+          git init -q "$CLANG_GIT"
+          git -C "$CLANG_GIT" remote add origin "$CLANG_URL"
+          git -C "$CLANG_GIT" sparse-checkout init --cone
+          git -C "$CLANG_GIT" sparse-checkout set clang-r383902b1
+          git -C "$CLANG_GIT" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=180 \
+            fetch --no-tags --depth=1 --filter=blob:none origin "refs/heads/$CLANG_BRANCH" \
+            2>&1 | tee "$ROOT/reports/AOSP_CLANG_FETCH.log"
+          git -C "$CLANG_GIT" checkout --detach -q FETCH_HEAD
+          TREE_ACTUAL="$(git -C "$CLANG_GIT" rev-parse HEAD:clang-r383902b1)"
+          test "$TREE_ACTUAL" = "$CLANG_TREE"
+          CLANG_DIR="$CLANG_GIT/clang-r383902b1/bin"
+          test -x "$CLANG_DIR/clang"
+          "$CLANG_DIR/clang" --version > "$ROOT/reports/CLANG_VERSION.txt"
+          grep -F 'Android (6877366 based on r383902b1) clang version 11.0.2' \
+            "$ROOT/reports/CLANG_VERSION.txt"
+          printf 'AOSP_CLANG_GIT_TREE=%s\n' "$TREE_ACTUAL" > "$ROOT/reports/AOSP_TOOLCHAIN_PROVENANCE.txt"
+          echo 'AOSP_STOCK_CLANG=PINNED_AND_VERIFIED'
+
+      - name: Resolve original stock configuration using exact Android Clang 11
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          BIN="$ROOT/aosp-clang/clang-r383902b1/bin"
+          export PATH="$BIN:$PATH"
+          OUT="$ROOT/stock-config-out"
+          mkdir -p "$OUT"
+          cp "$ROOT/r1/reference/stock.config" "$OUT/.config"
+          make -C "$ROOT/donor" O="$OUT" ARCH=arm64 \
+            CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 olddefconfig \
+            2>&1 | tee "$ROOT/reports/CLANG11_OLDDEFCONFIG.log"
+          cp "$OUT/.config" "$ROOT/reports/Donor_olddefconfig.config"
+          grep -F 'CONFIG_CC_IS_CLANG=y' "$OUT/.config"
+          grep -F 'CONFIG_CLANG_VERSION=110002' "$OUT/.config"
+
+      - name: Independently classify generated headers and actual source gaps
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B "$ROOT/r1/tools/compare_candidate.py" \
+            --main "$ROOT/r1" --source "$ROOT/donor" \
+            --out "$ROOT/reports" --resolved-config "$ROOT/stock-config-out/.config"
+          python3 -B "$ROOT/r2/tools/stock_source_r2.py" \
+            --r1-main "$ROOT/r1" --r1-reports "$ROOT/reports" \
+            --clang-version-file "$ROOT/reports/CLANG_VERSION.txt" \
+            --out "$ROOT/reports"
+          echo 'R2_STOCK_HEADER_AND_CONFIG_DIAGNOSTIC=PASS; OEM_ABI_GREEN=FALSE; FLASH=NO'
+
+      - name: Stage two exact R2 blocker changes in SEPARATE donor Git worktree - diagnosis only
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B "$ROOT/r4/tools/r4_donor_probe.py" prepare \
+            --donor "$ROOT/donor" --stage "$ROOT/r4-donor" --report "$ROOT/reports"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R4_STAGED_PATCHES=2; ORIGINAL_DONOR=UNCHANGED; FLASH=NO'
+
+
+      - name: Verify and copy exact stock core_ctl.h to isolated R4 donor worktree - R5 ONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          python3 -B "$ROOT/r5/tools/stock_r5_header.py" stage \
+            --r1 "$ROOT/r1" --donor "$ROOT/donor" \
+            --worktree "$ROOT/r4-donor" --reports "$ROOT/reports"
+          printf '%s  %s\n' "$R5_HEADER_SHA256" "$ROOT/r4-donor/include/linux/sched/core_ctl.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R5_ORIGINAL_STOCK_HEADER_STAGE=PASS; FLASH=NO'
+
+      - name: Compile pinned 5.4.268 donor with R4 fixes and one authentic R5 stock header - NOFLASH
+        shell: bash
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-stock-r2"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          STAGE="$ROOT/r4-donor"
+          OUT="$ROOT/r5-build"
+          mkdir -p "$OUT"
+          cp "$ROOT/r1/reference/stock.config" "$OUT/.config"
+          make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 olddefconfig \
+            > "$ROOT/reports/R5_OLDDEFCONFIG.log" 2>&1
+          cmp "$ROOT/stock-config-out/.config" "$OUT/.config"
+          set +e
+          timeout 1700s make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            -j2 Image dtbs > "$ROOT/reports/R5_STAGED_DONOR_54268_BUILD.log" 2>&1
+          RC=$?
+          set -e
+          printf '%s\n' "$RC" > "$ROOT/reports/R5_DONOR_BUILD_RETURN_CODE.txt"
+          python3 -B "$ROOT/r5/tools/stock_r5_header.py" summarize \
+            --log "$ROOT/reports/R5_STAGED_DONOR_54268_BUILD.log" \
+            --return-code "$ROOT/reports/R5_DONOR_BUILD_RETURN_CODE.txt" \
+            --output "$ROOT/reports/R5_DONOR_BUILD_SUMMARY.json"
+          tail -n 130 "$ROOT/reports/R5_STAGED_DONOR_54268_BUILD.log"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo "R5_DIAGNOSTIC_COMPILER_RETURN_CODE=$RC; OEM_ABI_GREEN=FALSE; FLASH=NO"
+
+      - name: Always publish R5 text diagnostics only - no binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R5-STOCK-HEADER-PROBE-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-stock-r2/reports/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
