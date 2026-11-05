@@ -1,4 +1,4 @@
-name: VEUX R62 - xxKSU SUSFS 2.3 NoMount 2.2
+name: VEUX R62-R3 - xxKSU SUSFS 2.3 native54 update
 'on':
   workflow_dispatch: {}
   push:
@@ -23,7 +23,7 @@ jobs:
       KBUILD_BUILD_USER: veux-builder
       KBUILD_BUILD_HOST: github-actions
       GIT_TERMINAL_PROMPT: '0'
-      MAIN_SHA256: dc44db1e53fd6362231a5b2aabc9e966d804d998e0d1a534d374f3ec84e4cb4e
+      MAIN_SHA256: 0b1fe2f5721aef530dd24f170e9c04f29668a04d9417b44fb658efa341e8c28b
     steps:
       - name: Checkout build package
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -84,6 +84,14 @@ jobs:
           clang --version | tee logs/compiler.txt
           make -C kernel O="$GITHUB_WORKSPACE/out" veux_defconfig 2>&1 | tee logs/configure.log
           make -C kernel O="$GITHUB_WORKSPACE/out" init/version.o 2>&1 | tee logs/version.log
+      - name: Compile and link the native 5.4 SUSFS integration
+        run: |
+          set -Eeuo pipefail
+          python3 -c 'import runpy; print("\n".join(runpy.run_path("payload/verify_native_link.py")["OBJECTS"]))' > logs/native-targets.txt
+          mapfile -t native_targets < logs/native-targets.txt
+          make -C kernel O="$GITHUB_WORKSPACE/out" -j2 "${native_targets[@]}" 2>&1 | tee logs/native-compile.log
+          python3 payload/verify_statfs_link.py "$GITHUB_WORKSPACE/out" logs/R62_STATFS_LINK.json --negative-test 2>&1 | tee logs/statfs-link.log
+          python3 payload/verify_native_link.py "$GITHUB_WORKSPACE/out" logs/R62_NATIVE_LINK.json --negative-test 2>&1 | tee logs/native-link.log
       - name: Compile ARM64 kernel and device trees
         run: |
           set -Eeuo pipefail
@@ -111,3 +119,4 @@ jobs:
             out/.config
           if-no-files-found: warn
           retention-days: 30
+          include-hidden-files: true
