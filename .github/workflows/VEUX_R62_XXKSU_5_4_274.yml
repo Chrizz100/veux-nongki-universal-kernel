@@ -1,4 +1,4 @@
-name: VEUX R62-R4 - xxKSU OEM ABI Boot-v3 AK3
+name: VEUX R62-R5 - xxKSU OEM Boot-v3 Diag10 fix
 'on':
   workflow_dispatch: {}
   push:
@@ -26,7 +26,7 @@ jobs:
       KBUILD_BUILD_USER: veux-builder
       KBUILD_BUILD_HOST: github-actions
       GIT_TERMINAL_PROMPT: '0'
-      MAIN_SHA256: 8088988988a6f0a7f696e63c0269e27dcd1a3a164ccbf843a4e82e3e644a560b
+      MAIN_SHA256: e0e3b639b1ea0f5c40b83bdd2ebac6d6f07e690ff0ad0016b742201ffe4d275f
     steps:
     - name: Checkout build package
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -79,7 +79,7 @@ jobs:
         mkdir -p logs
         clang --version | tee logs/compiler.txt
         make -C kernel O="$GITHUB_WORKSPACE/out" veux_defconfig 2>&1 | tee logs/configure.log
-        python3 payload/oem_gate.py config "$GITHUB_WORKSPACE/out" logs/R62_R4_CONFIG_PARITY.json
+        python3 payload/oem_gate.py config "$GITHUB_WORKSPACE/out" logs/R62_R5_CONFIG_PARITY.json
         make -C kernel O="$GITHUB_WORKSPACE/out" init/version.o 2>&1 | tee logs/version.log
     - name: Compile and link the native 5.4 SUSFS integration
       run: |
@@ -89,6 +89,11 @@ jobs:
         make -C kernel O="$GITHUB_WORKSPACE/out" -j2 "${native_targets[@]}" 2>&1 | tee logs/native-compile.log
         python3 payload/verify_statfs_link.py "$GITHUB_WORKSPACE/out" logs/R62_STATFS_LINK.json --negative-test 2>&1 | tee logs/statfs-link.log
         python3 payload/verify_native_link.py "$GITHUB_WORKSPACE/out" logs/R62_NATIVE_LINK.json --negative-test 2>&1 | tee logs/native-link.log
+    - name: Compile scheduler config and MSM performance with the existing repo fixes
+      run: |
+        set -Eeuo pipefail
+        make -C kernel O="$GITHUB_WORKSPACE/out" -j2 kernel/sched/ kernel/configs.o kernel/module.o drivers/soc/qcom/msm_performance.o 2>&1 | tee logs/scheduler-config-compile.log
+        python3 payload/verify_diag10.py "$GITHUB_WORKSPACE/kernel" "$GITHUB_WORKSPACE/out" logs/R62_R5_DIAG10.json 2>&1 | tee logs/diag10-check.log
     - name: Compile ARM64 kernel and device trees
       run: |
         set -Eeuo pipefail
@@ -148,7 +153,7 @@ jobs:
       if: always() && steps.full_build.conclusion == 'success'
       uses: actions/upload-artifact@v4
       with:
-        name: VEUX_R62_R4_OEM_BOOT_AK3_${{ github.run_id }}
+        name: VEUX_R62_R5_OEM_BOOT_AK3_${{ github.run_id }}
         path: dist/
         if-no-files-found: warn
         retention-days: 30
@@ -156,7 +161,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: VEUX_R62_R4_LOGS_${{ github.run_id }}
+        name: VEUX_R62_R5_LOGS_${{ github.run_id }}
         path: |-
           logs/
           out/.config
