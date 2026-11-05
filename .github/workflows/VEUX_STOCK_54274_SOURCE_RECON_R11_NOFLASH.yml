@@ -1,0 +1,211 @@
+# VEUX Stock 5.4.274 R11: experimental WALT OBJECT compile against stock task header.
+# No complete WALT port, no Image distribution, no OEM ABI, no boot.img, no AK3, NOFLASH.
+name: VEUX STOCK 5.4.274 R11 WALT component compiler - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-stock-r11-walt-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  walt_object_probe_r11:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      R11_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R11_MAIN.zip
+      R11_MAIN_SHA256: 06a6f468699d0785b0db8bcbb745b51d8e12d6b7c26c6b3a4999248e1e994513
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+      CLANG_BRANCH: android11-qpr2-release
+      CLANG_TREE: 1c7dcc2e7095197f7a05dff22a875b6b02ed7117
+    steps:
+      - name: Checkout workflow and R11 MAIN read-only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate R11 workflow via pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r11-actionlint"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" ".github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R11_NOFLASH.yml"
+          echo 'R11_ACTIONLINT=PASS'
+
+      - name: Verify R11 MAIN SHA and securely unpack pinned source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R11_MAIN_SHA256" "$GITHUB_WORKSPACE/$R11_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R11_MAIN" "$ROOT/main" <<'PY_R11_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          arc,dst=map(Path,sys.argv[1:]); sh=lambda b:hashlib.sha256(b).hexdigest()
+          if not arc.is_file() or arc.is_symlink() or dst.exists():
+              raise RuntimeError('R11_UNSAFE_ARCHIVE')
+          with ZipFile(arc) as z:
+              infos=z.infolist();names=[x.filename for x in infos]
+              if not infos or len(names)!=len(set(names)) or z.testzip() is not None:
+                  raise RuntimeError('R11_CORRUPT_OR_DUPLICATE_ARCHIVE')
+              if sum(i.file_size for i in infos)>3_000_000:
+                  raise RuntimeError('R11_ARCHIVE_TOO_LARGE')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m.get('schema')!='VEUX_R11_STOCK_TASK_WALT_OBJECT_PROBE_NOFLASH':
+                  raise RuntimeError('R11_MANIFEST_SCHEMA_DRIFT')
+              if m.get('flash_allowed') is not False or m.get('oem_abi_green') is not False or m.get('production_patch_approved') is not False:
+                  raise RuntimeError('R11_FLASH_OR_ABI_GUARD_BROKEN')
+              if m.get('donor_commit')!='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632' or m.get('pair_commit')!='01cb3a8824b7b4caf3e3540274e71abba5ade538':
+                  raise RuntimeError('R11_UPSTREAM_COMMIT_DRIFT')
+              if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R11_ARCHIVE_FILESET_DRIFT')
+              dst.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  rel=PurePosixPath(i.filename)
+                  if rel.is_absolute() or '..' in rel.parts or str(rel)!=i.filename or '\\' in i.filename:
+                      raise RuntimeError('R11_PATH_TRAVERSAL')
+                  if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R11_UNEXPECTED_ARCHIVE_KIND')
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and sh(raw)!=m['files'][i.filename]:
+                      raise RuntimeError('R11_SHA_MISMATCH:'+i.filename)
+                  p=dst.joinpath(*rel.parts);p.parent.mkdir(exist_ok=True,parents=True);p.write_bytes(raw)
+          print('R11_STOCK_WALT_SOURCE_AUTHENTICATION=PASS; NOFLASH=YES')
+          PY_R11_AUTH
+
+      - name: Verify original Stock WALT task ABI and run R11 tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          python3 -B -m unittest discover -s "$ROOT/main/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R11_TESTS.log"
+          python3 -B "$ROOT/main/tools/r11_walt_probe.py" verify --root "$ROOT/main" > "$ROOT/reports/R11_SOURCE_PREFLIGHT.json"
+          echo 'R11_21_UNIT_TESTS=PASS'
+
+      - name: Fetch exact donor commit in separate temporary worktree only
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          DONOR="$ROOT/donor"
+          git init -q "$DONOR"
+          git -C "$DONOR" remote add origin "$DONOR_URL"
+          git -C "$DONOR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$DONOR_SHA"
+          git -C "$DONOR" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$DONOR" rev-parse HEAD)" = "$DONOR_SHA"
+          test -z "$(git -C "$DONOR" status --porcelain)"
+          echo 'R11_DONOR_HEAD_AND_CLEAN_STATE=PINNED'
+
+      - name: Stage genuine stock sched.h and paired WALT source strictly in isolated Git worktree
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          python3 -B "$ROOT/main/tools/r11_walt_probe.py" stage --root "$ROOT/main" \
+            --donor "$ROOT/donor" --stage-dir "$ROOT/walt-trial" --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R11_EXPERIMENTAL_WALT_OVERLAY_STAGED_NOFLASH=PASS'
+
+      - name: Fetch exactly pinned Android Clang 11.0.2, no GCC fallback
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          CLANG_GIT="$ROOT/aosp-clang"
+          git init -q "$CLANG_GIT"
+          git -C "$CLANG_GIT" remote add origin "$CLANG_URL"
+          git -C "$CLANG_GIT" sparse-checkout init --cone
+          git -C "$CLANG_GIT" sparse-checkout set clang-r383902b1
+          git -C "$CLANG_GIT" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=180 fetch --no-tags --depth=1 --filter=blob:none origin "refs/heads/$CLANG_BRANCH" 2>&1 | tee "$ROOT/reports/R11_CLANG_FETCH.log"
+          git -C "$CLANG_GIT" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$CLANG_GIT" rev-parse HEAD:clang-r383902b1)" = "$CLANG_TREE"
+          "$CLANG_GIT/clang-r383902b1/bin/clang" --version > "$ROOT/reports/R11_CLANG_VERSION.txt"
+          grep -F 'Android (6877366 based on r383902b1) clang version 11.0.2' "$ROOT/reports/R11_CLANG_VERSION.txt"
+          echo 'R11_GENUINE_STOCK_TOOLCHAIN=PINNED'
+
+      - name: Compile TWO WALT objects and report actual blockers - mark GitHub red on compiler errors
+        shell: bash
+        timeout-minutes: 22
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r11"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          STAGE="$ROOT/walt-trial"
+          OUT="$ROOT/build"
+          mkdir -p "$OUT"
+          cp "$ROOT/main/reference/stock.config" "$OUT/.config"
+          set +e
+          timeout 180s make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 olddefconfig > "$ROOT/reports/R11_CONFIG_BUILD.log" 2>&1
+          CFG_RC=$?
+          set -e
+          if [ "$CFG_RC" -ne 0 ] || ! grep -Fqx 'CONFIG_SCHED_WALT=y' "$OUT/.config"; then
+            echo "::error::R11 Kconfig failed or SCHED_WALT not enabled (olddefconfig rc $CFG_RC)"
+            printf '90\n' > "$ROOT/reports/R11_PREPARE_RC.txt"
+            printf '90\n' > "$ROOT/reports/R11_WEAK_RC.txt"
+            printf '90\n' > "$ROOT/reports/R11_REAL_RC.txt"
+            cp "$ROOT/reports/R11_CONFIG_BUILD.log" "$ROOT/reports/R11_PREPARE_BUILD.log"
+            cp "$ROOT/reports/R11_CONFIG_BUILD.log" "$ROOT/reports/R11_WEAK_BUILD.log"
+            cp "$ROOT/reports/R11_CONFIG_BUILD.log" "$ROOT/reports/R11_REAL_BUILD.log"
+          else
+            if grep -Fqx 'CONFIG_RTMM=y' "$OUT/.config"; then
+              echo 'R11_RTMM_CONFIG_ENABLED=YES; SOURCE_IMPLEMENTATION_UNVERIFIED' | tee "$ROOT/reports/R11_RTMM_STATUS.txt"
+            else
+              echo 'R11_RTMM_CONFIG_ENABLED=NO; STOCK_RTMM_PORT_NOT_DONE' | tee "$ROOT/reports/R11_RTMM_STATUS.txt"
+            fi
+            set +e
+            timeout 360s make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 prepare scripts > "$ROOT/reports/R11_PREPARE_BUILD.log" 2>&1
+            P_RC=$?
+            set -e
+            printf '%s\n' "$P_RC" > "$ROOT/reports/R11_PREPARE_RC.txt"
+            if [ "$P_RC" -eq 0 ]; then
+              set +e
+              timeout 420s make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 kernel/sched/walt.o > "$ROOT/reports/R11_WEAK_BUILD.log" 2>&1
+              W_RC=$?
+              timeout 420s make -C "$STAGE" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 techpack/sched/walt.o > "$ROOT/reports/R11_REAL_BUILD.log" 2>&1
+              R_RC=$?
+              set -e
+              printf '%s\n' "$W_RC" > "$ROOT/reports/R11_WEAK_RC.txt"
+              printf '%s\n' "$R_RC" > "$ROOT/reports/R11_REAL_RC.txt"
+            else
+              printf '90\n' > "$ROOT/reports/R11_WEAK_RC.txt"
+              printf '90\n' > "$ROOT/reports/R11_REAL_RC.txt"
+              cp "$ROOT/reports/R11_PREPARE_BUILD.log" "$ROOT/reports/R11_WEAK_BUILD.log"
+              cp "$ROOT/reports/R11_PREPARE_BUILD.log" "$ROOT/reports/R11_REAL_BUILD.log"
+            fi
+          fi
+          python3 -B "$ROOT/main/tools/r11_walt_probe.py" summarize --root "$ROOT/main" --reports "$ROOT/reports"
+          tail -n 50 "$ROOT/reports/R11_WEAK_BUILD.log"
+          tail -n 50 "$ROOT/reports/R11_REAL_BUILD.log"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          python3 -I - "$ROOT/reports/R11_WALT_OBJECT_COMPILER_SUMMARY.json" <<'PY_GATE'
+          import json,sys
+          from pathlib import Path
+          x=json.loads(Path(sys.argv[1]).read_text())
+          if x['flash_allowed'] is not False or x['oem_abi_verified'] is not False or x['linked_vmlinux_built'] is not False:
+              raise RuntimeError('R11_NOFLASH_OR_ABI_GUARD_VIOLATION')
+          if not x['object_compilation_pass']:
+              print('::error::R11_WALT_OBJECT_COMPILER_BLOCKERS_FOUND; see uploaded logs and summary')
+              raise SystemExit(1)
+          print('R11_OBJECT_COMPILATION=PASS; FULL_WALT_AND_OEM_ABI=NOT_TESTED; FLASH=NO')
+          PY_GATE
+
+      - name: Always upload R11 compiler error reports and source provenance, NEVER binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R11-WALT-OBJECT-COMPILER-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r11/reports/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
