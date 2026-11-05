@@ -1,9 +1,12 @@
-name: VEUX R62-R3 - xxKSU SUSFS 2.3 native54 update
+name: VEUX R62-R4 - xxKSU OEM ABI Boot-v3 AK3
 'on':
   workflow_dispatch: {}
   push:
-    branches: [codex/veux-r62-xxksu]
-    paths: [VEUX_R62_XXKSU_MAIN.zip, .github/workflows/VEUX_R62_XXKSU_5_4_274.yml]
+    branches:
+    - codex/veux-r62-xxksu
+    paths:
+    - VEUX_R62_XXKSU_MAIN.zip
+    - .github/workflows/VEUX_R62_XXKSU_5_4_274.yml
 permissions:
   contents: read
 concurrency:
@@ -23,100 +26,140 @@ jobs:
       KBUILD_BUILD_USER: veux-builder
       KBUILD_BUILD_HOST: github-actions
       GIT_TERMINAL_PROMPT: '0'
-      MAIN_SHA256: 0b1fe2f5721aef530dd24f170e9c04f29668a04d9417b44fb658efa341e8c28b
+      MAIN_SHA256: 8088988988a6f0a7f696e63c0269e27dcd1a3a164ccbf843a4e82e3e644a560b
     steps:
-      - name: Checkout build package
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - name: Install compiler prerequisites
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bc bison flex build-essential libelf-dev libssl-dev python3 zip unzip
-      - name: Checkout immutable native VEUX source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: dereference23/kernel_xiaomi_sm6375
-          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
-          path: kernel
-          persist-credentials: false
-      - name: Checkout Clang 12.0.5
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b
-          ref: 54220fd601050b350b2af7adc913089ebf0e7aed
-          path: clang
-          persist-credentials: false
-      - name: Checkout AnyKernel3
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: osm0sis/AnyKernel3
-          ref: af770f7b16cf8f8eb7c68614b2a693b3b361c90c
-          path: ak3
-          persist-credentials: false
-      - name: Verify and extract MAIN
-        run: |
-          set -Eeuo pipefail
-          printf '%s  %s\n' "$MAIN_SHA256" VEUX_R62_XXKSU_MAIN.zip | sha256sum -c --strict
-          python3 - <<'PY'
-          from pathlib import Path,PurePosixPath
-          import zipfile,stat
-          with zipfile.ZipFile('VEUX_R62_XXKSU_MAIN.zip') as z:
-              infos=z.infolist()
-              assert z.testzip() is None and len(infos)==len(set(i.filename for i in infos))
-              assert sum(i.file_size for i in infos)<10_000_000
-              for i in infos:
-                  p=PurePosixPath(i.filename)
-                  assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
-                  assert stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG)
-                  target=Path('payload')/i.filename
-                  target.parent.mkdir(parents=True,exist_ok=True)
-                  target.write_bytes(z.read(i))
-          PY
-          python3 payload/prepare.py "$GITHUB_WORKSPACE/kernel"
-      - name: Configure static xxKSU and built-in SUSFS / NoMount
-        run: |
-          set -Eeuo pipefail
-          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          mkdir -p logs
-          clang --version | tee logs/compiler.txt
-          make -C kernel O="$GITHUB_WORKSPACE/out" veux_defconfig 2>&1 | tee logs/configure.log
-          make -C kernel O="$GITHUB_WORKSPACE/out" init/version.o 2>&1 | tee logs/version.log
-      - name: Compile and link the native 5.4 SUSFS integration
-        run: |
-          set -Eeuo pipefail
-          python3 -c 'import runpy; print("\n".join(runpy.run_path("payload/verify_native_link.py")["OBJECTS"]))' > logs/native-targets.txt
-          mapfile -t native_targets < logs/native-targets.txt
-          make -C kernel O="$GITHUB_WORKSPACE/out" -j2 "${native_targets[@]}" 2>&1 | tee logs/native-compile.log
-          python3 payload/verify_statfs_link.py "$GITHUB_WORKSPACE/out" logs/R62_STATFS_LINK.json --negative-test 2>&1 | tee logs/statfs-link.log
-          python3 payload/verify_native_link.py "$GITHUB_WORKSPACE/out" logs/R62_NATIVE_LINK.json --negative-test 2>&1 | tee logs/native-link.log
-      - name: Compile ARM64 kernel and device trees
-        run: |
-          set -Eeuo pipefail
-          make -C kernel O="$GITHUB_WORKSPACE/out" -j2 Image dtbs modules 2>&1 | tee logs/build.log
-      - name: Validate linked components and create candidate AK3
-        run: |
-          set -Eeuo pipefail
-          python3 payload/postcheck.py "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/ak3" "$GITHUB_WORKSPACE/dist" 2>&1 | tee logs/postcheck.log
-          cd dist
-          sha256sum Image build.config Module.symvers VEUX_R62_XXKSU_EXPERIMENTAL_NOFLASH_AK3.zip BUILD_RESULT.json README_NOFLASH.txt > SHA256SUMS.txt
-      - name: Upload compiled candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: VEUX_R62_XXKSU_5.4.274_${{ github.run_id }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: VEUX_R62_XXKSU_LOGS_${{ github.run_id }}
-          path: |
-            logs/
-            out/.config
-          if-no-files-found: warn
-          retention-days: 30
-          include-hidden-files: true
+    - name: Checkout build package
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install compiler prerequisites
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends bc bison flex build-essential libelf-dev libssl-dev python3 zip unzip
+    - name: Checkout immutable native VEUX source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: dereference23/kernel_xiaomi_sm6375
+        ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+        path: kernel
+        persist-credentials: false
+    - name: Checkout Clang 12.0.5
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b
+        ref: 54220fd601050b350b2af7adc913089ebf0e7aed
+        path: clang
+        persist-credentials: false
+    - name: Verify and extract MAIN
+      run: |
+        set -Eeuo pipefail
+        printf '%s  %s\n' "$MAIN_SHA256" VEUX_R62_XXKSU_MAIN.zip | sha256sum -c --strict
+        python3 - <<'PY'
+        from pathlib import Path,PurePosixPath
+        import zipfile,stat
+        with zipfile.ZipFile('VEUX_R62_XXKSU_MAIN.zip') as z:
+            infos=z.infolist()
+            assert z.testzip() is None and len(infos)==len(set(i.filename for i in infos))
+            assert sum(i.file_size for i in infos)<32_000_000
+            for i in infos:
+                p=PurePosixPath(i.filename)
+                assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
+                assert stat.S_IFMT(i.external_attr>>16) in (0,stat.S_IFREG)
+                target=Path('payload')/i.filename
+                target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_bytes(z.read(i))
+        PY
+        python3 payload/prepare.py "$GITHUB_WORKSPACE/kernel"
+    - name: Configure static xxKSU and built-in SUSFS / NoMount
+      run: |
+        set -Eeuo pipefail
+        echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+        mkdir -p logs
+        clang --version | tee logs/compiler.txt
+        make -C kernel O="$GITHUB_WORKSPACE/out" veux_defconfig 2>&1 | tee logs/configure.log
+        python3 payload/oem_gate.py config "$GITHUB_WORKSPACE/out" logs/R62_R4_CONFIG_PARITY.json
+        make -C kernel O="$GITHUB_WORKSPACE/out" init/version.o 2>&1 | tee logs/version.log
+    - name: Compile and link the native 5.4 SUSFS integration
+      run: |
+        set -Eeuo pipefail
+        python3 -c 'import runpy; print("\n".join(runpy.run_path("payload/verify_native_link.py")["OBJECTS"]))' > logs/native-targets.txt
+        mapfile -t native_targets < logs/native-targets.txt
+        make -C kernel O="$GITHUB_WORKSPACE/out" -j2 "${native_targets[@]}" 2>&1 | tee logs/native-compile.log
+        python3 payload/verify_statfs_link.py "$GITHUB_WORKSPACE/out" logs/R62_STATFS_LINK.json --negative-test 2>&1 | tee logs/statfs-link.log
+        python3 payload/verify_native_link.py "$GITHUB_WORKSPACE/out" logs/R62_NATIVE_LINK.json --negative-test 2>&1 | tee logs/native-link.log
+    - name: Compile ARM64 kernel and device trees
+      run: |
+        set -Eeuo pipefail
+        make -C kernel O="$GITHUB_WORKSPACE/out" -j2 Image dtbs modules 2>&1 | tee logs/build.log
+      id: full_build
+    - name: Validate the actual linked Image, configuration and DTB
+      run: |
+        set -Eeuo pipefail
+        python3 payload/postcheck.py "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/dist" 2>&1 | tee logs/postcheck.log
+    - name: Compare OEM imports and the 132 known loaded RMNET imports
+      id: oem
+      run: |
+        set -Eeuo pipefail
+        set +e
+        python3 payload/oem_gate.py abi "$GITHUB_WORKSPACE/out" "$GITHUB_WORKSPACE/dist" 2>&1 | tee logs/oem-abi.log
+        oem_rc=${PIPESTATUS[0]}
+        set -e
+        case "$oem_rc" in
+          0) echo 'known_abi_pass=true' >> "$GITHUB_OUTPUT" ;;
+          3) echo 'known_abi_pass=false' >> "$GITHUB_OUTPUT" ;;
+          *) exit "$oem_rc" ;;
+        esac
+    - name: Authenticate the existing repository boot-v3 reference
+      run: |
+        set -Eeuo pipefail
+        mkdir -p reference
+        curl --fail --location --silent --show-error --retry 3 --max-time 900 \
+          'https://github.com/Chrizz100/veux-nongki-universal-kernel/releases/download/v1.0.0-beta1/VEUX-5.4.274-ReSukiSU-35157-UAPI4-SUSFS-2.3.0.BOOT.img' \
+          --output reference/boot.img
+        printf '%s  %s\n' 3836c55cbf28e17d4e7156eaf6a9a1ca2b885a6fbbb621263e8ecb27115eed31 reference/boot.img | sha256sum -c --strict
+    - name: Repack boot FIRST and verify stock ramdisk AVB extraction and roundtrip
+      run: |
+        set -Eeuo pipefail
+        python3 payload/boot_check.py "$GITHUB_WORKSPACE/reference/boot.img" "$GITHUB_WORKSPACE/dist/Image" "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE/boot-check-work" 2>&1 | tee logs/boot-check.log
+    - name: Create paired boot-only AK3 SECOND after known-module ABI passes
+      if: steps.oem.outputs.known_abi_pass == 'true'
+      run: |
+        set -Eeuo pipefail
+        python3 payload/package_verified.py "$GITHUB_WORKSPACE/dist" 2>&1 | tee logs/package-verified.log
+    - name: Require known-module compatibility for device-test candidate
+      run: |
+        set -Eeuo pipefail
+        python3 - <<'PY_GATE'
+        from pathlib import Path
+        import json
+        p=Path('dist')
+        oem=json.loads((p/'OEM_ABI_CHECK.json').read_text())
+        boot=json.loads((p/'BOOT_STATIC_CHECK.json').read_text())
+        assert boot['status']=='STATIC_BOOT_PATH_PASS_DEVICE_UNTESTED'
+        assert oem['known_loaded_imports_all_match'] and oem['known_loaded_imports']==132, 'KNOWN_LOADED_MODULE_ABI_BLOCKED'
+        package=json.loads((p/'PACKAGE_RESULT.json').read_text())
+        assert package['device_test_candidate'] is True and package['device_boot_tested'] is False
+        assert package['full_release_approved'] is False
+        print('BUILD/OEM-RMNET/STATIC-BOOT/AK3=PASS; FULL_ACTIVE_OEM_AND_DEVICE_RUNTIME=NOT_TESTED')
+        PY_GATE
+    - name: Upload kernel boot and ABI review outputs
+      if: always() && steps.full_build.conclusion == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: VEUX_R62_R4_OEM_BOOT_AK3_${{ github.run_id }}
+        path: dist/
+        if-no-files-found: warn
+        retention-days: 30
+    - name: Upload build and boot diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: VEUX_R62_R4_LOGS_${{ github.run_id }}
+        path: |-
+          logs/
+          out/.config
+        if-no-files-found: warn
+        retention-days: 30
+        include-hidden-files: true
