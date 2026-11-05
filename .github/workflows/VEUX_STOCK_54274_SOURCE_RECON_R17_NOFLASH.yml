@@ -1,0 +1,592 @@
+# VEUX Stock 5.4.274 R17: source-anchored OEM pinned-state HRTIMER lifecycle compiler trial.
+# R16 confirmed the single missing HRTIMER_STATE_PINNED compiler blocker; R17 applies genuine Stock definitions and verified Qualcomm transitions ONLY in a disposable Git worktree.
+# Original Stock 5.4.274 header declarations + pinned upstream implementations in disposable donor worktree.
+# Compiles 9 WALT-family objects + watchdog/hrtimer/timer/sysctl provider objects; NOT a link/ABI/boot test.
+# This is a compiler diagnostic, NOT a complete scheduler backport, vmlinux, OEM ABI, boot, or flash.
+# Original Stock task_struct is fixed, original donor remains clean, NOFLASH and no binaries.
+name: VEUX STOCK 5.4.274 R17 genuine HRTIMER pinned-state lifecycle trial - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-stock-r17-hrtimer-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  walt_hrtimer_pinned_trial_r17:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      R17_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R17_MAIN.zip
+      R17_MAIN_SHA256: 511dc8744b4f6b06f837bba9a92e32cf2510eb383224d27bd342b44a4991e4a6
+      R16_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R16_MAIN.zip
+      R16_MAIN_SHA256: 18263bfbe35f1a216e6d621b58fe9c3d787f1279a705a2f6239c0eb068f4d59c
+      R15_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R15_MAIN.zip
+      R15_MAIN_SHA256: 2840878243c67d6a0724b1cc24a4f435d69ea83a1bee38f7ec2103bedfdfd331
+      R14_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R14_MAIN.zip
+      R14_MAIN_SHA256: 42de59e084ab7ef539dd78bfe489ee5a27b99afd00196ad63db7160623bfd3d0
+      R13_PARENT_SHA256: 71badc859c4c204edef6996fa572e558b26a646a616d1b7859d07651a6cafe19
+      PAIR_URL: https://github.com/shandongtlb/kernel_xiaomi_sm8350_M11.git
+      PAIR_SHA: 01cb3a8824b7b4caf3e3540274e71abba5ade538
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+      CLANG_BRANCH: android11-qpr2-release
+      CLANG_TREE: 1c7dcc2e7095197f7a05dff22a875b6b02ed7117
+    steps:
+      - name: Checkout read-only exact workflow revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate R17 workflow using pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r15-actionlint"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" .github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R17_NOFLASH.yml
+          echo 'R17_ACTIONLINT=PASS'
+
+      - name: R17 authenticate pinned-state MAIN, immutable R16 parent and run 28 new tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r17/main"
+          printf '%s  %s\n' "$R17_MAIN_SHA256" "$GITHUB_WORKSPACE/$R17_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R17_MAIN" "$ROOT" "$GITHUB_WORKSPACE/$R16_MAIN" <<'PY_R17_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,dest,parent=map(Path,sys.argv[1:])
+          if archive.is_symlink() or not archive.is_file() or dest.exists():
+              raise RuntimeError('R17_INVALID_ARCHIVE_INPUT')
+          with ZipFile(archive) as z:
+              entries=z.infolist(); names=[m.filename for m in entries]
+              if (not entries or len(entries)>20 or len(names)!=len(set(names)) or
+                  sum(m.file_size for m in entries)>1_000_000 or z.testzip()):
+                  raise RuntimeError('R17_UNSAFE_ZIP_OR_EXPANSION')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (manifest.get('schema')!='VEUX_R17_PINNED_HRTIMER_BACKPORT_NOFLASH' or
+                  manifest.get('r16_parent_sha256')!='18263bfbe35f1a216e6d621b58fe9c3d787f1279a705a2f6239c0eb068f4d59c' or
+                  any(manifest.get(k) is not False for k in
+                      ('flash_allowed','kernel_built','vmlinux_linked','oem_abi_verified','boot_verified','production_patch_approved'))):
+                  raise RuntimeError('R17_UNSAFE_MANIFEST')
+              if set(names)!=(set(manifest['files'])|{'MANIFEST_SHA256.json'}):
+                  raise RuntimeError('R17_FILESET')
+              dest.mkdir(parents=True)
+              for m in entries:
+                  rel=PurePosixPath(m.filename)
+                  if (m.is_dir() or rel.is_absolute() or '..' in rel.parts or
+                      str(rel)!=m.filename or '\\' in m.filename or
+                      stat.S_IFMT(m.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise RuntimeError('R17_UNSAFE_PATH')
+                  b=z.read(m.filename)
+                  if m.filename!='MANIFEST_SHA256.json' and hashlib.sha256(b).hexdigest()!=manifest['files'][m.filename]:
+                      raise RuntimeError('R17_CORRUPT_CONTENT:'+m.filename)
+                  f=dest.joinpath(*rel.parts);f.parent.mkdir(exist_ok=True,parents=True);f.write_bytes(b)
+          original=(dest/'reference/R16_MAIN_ORIGINAL.zip').read_bytes()
+          digest=hashlib.sha256(original).hexdigest()
+          if digest!='18263bfbe35f1a216e6d621b58fe9c3d787f1279a705a2f6239c0eb068f4d59c':raise RuntimeError('R17_IMMUTABLE_PARENT_HASH')
+          if parent.exists():
+              if parent.is_symlink() or hashlib.sha256(parent.read_bytes()).hexdigest()!=digest:
+                  raise RuntimeError('R17_EXISTING_R16_MISMATCH')
+          else:parent.write_bytes(original)
+          print('R17_IMMUTABLE_R16_PARENT_AND_ALL_MANIFEST_ENTRIES=PASS')
+          PY_R17_AUTH
+          mkdir -p "$RUNNER_TEMP/veux-r15/reports"
+          PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$ROOT/tools" -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/veux-r15/reports/R17_TESTS.log"
+          python3 -B "$ROOT/tools/r17_hrtimer_pin.py" verify --root "$ROOT"
+          echo 'R17_28_PINNED_STATE_REGRESSIONS=PASS'
+
+      - name: R16 authenticate diagnostic bundle and prove immutable R15 source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r16"
+          printf '%s  %s\n' "$R16_MAIN_SHA256" "$GITHUB_WORKSPACE/$R16_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R16_MAIN" "$ROOT" "$GITHUB_WORKSPACE/$R15_MAIN" <<'PY_R16_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,dest,parent=map(Path,sys.argv[1:])
+          if archive.is_symlink() or not archive.is_file() or dest.exists():
+              raise RuntimeError('R16_INVALID_INPUT')
+          with ZipFile(archive) as z:
+              entries=z.infolist();names=[i.filename for i in entries]
+              if (not entries or len(entries)>15 or len(names)!=len(set(names)) or
+                  z.testzip() or sum(i.file_size for i in entries)>750_000):
+                  raise RuntimeError('R16_UNSAFE_ARCHIVE')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (manifest.get('schema')!='VEUX_STOCK_R16_HRTIMER_DIAGNOSTIC_NOFLASH' or
+                  manifest.get('parent_r15_sha256')!='2840878243c67d6a0724b1cc24a4f435d69ea83a1bee38f7ec2103bedfdfd331' or
+                  any(manifest.get(k) is not False for k in
+                      ('flash_allowed','new_kernel_build','source_patch','boot_verified','abi_verified'))):
+                  raise RuntimeError('R16_MANIFEST_CONTRACT')
+              if set(names) != set(manifest['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R16_MANIFEST_FILESET')
+              dest.mkdir(parents=True)
+              for entry in entries:
+                  rel=PurePosixPath(entry.filename)
+                  if (entry.is_dir() or rel.is_absolute() or '..' in rel.parts or
+                      str(rel)!=entry.filename or '\\' in entry.filename or
+                      stat.S_IFMT(entry.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise RuntimeError('R16_ARCHIVE_TRAVERSAL')
+                  data=z.read(entry.filename)
+                  if entry.filename!='MANIFEST_SHA256.json' and hashlib.sha256(data).hexdigest()!=manifest['files'][entry.filename]:
+                      raise RuntimeError('R16_CONTENT_SHA:'+entry.filename)
+                  target=dest.joinpath(*rel.parts);target.parent.mkdir(parents=True,exist_ok=True)
+                  target.write_bytes(data)
+          original=(dest/'reference/R15_MAIN_ORIGINAL.zip').read_bytes()
+          digest=hashlib.sha256(original).hexdigest()
+          if digest!='2840878243c67d6a0724b1cc24a4f435d69ea83a1bee38f7ec2103bedfdfd331':
+              raise RuntimeError('R16_R15_ORIGINAL_DRIFT')
+          if parent.exists():
+              if parent.is_symlink() or hashlib.sha256(parent.read_bytes()).hexdigest()!=digest:
+                  raise RuntimeError('R16_R15_WORKSPACE_FILE_MISMATCH')
+          else:
+              parent.write_bytes(original)
+          print('R16_INNER_R15_SHA_IDENTICAL=PASS; NO_KERNEL_CHANGES=YES')
+          PY_R16_AUTH
+          mkdir -p "$RUNNER_TEMP/veux-r15/reports"
+          PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$ROOT/tools" -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/veux-r15/reports/R16_REGRESSION_TESTS.log"
+          echo 'R16_15_REGRESSION_TESTS=PASS'
+
+      - name: Authenticate R15 and immutable R14 parent from a single repository upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R15_MAIN_SHA256" "$GITHUB_WORKSPACE/$R15_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R15_MAIN" "$ROOT/r15" <<'PY_R15_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          arc,dst=map(Path,sys.argv[1:])
+          with ZipFile(arc) as z:
+              entries=z.infolist(); names=[x.filename for x in entries]
+              if not entries or len(names)!=len(set(names)) or z.testzip() or sum(x.file_size for x in entries)>5_000_000:
+                  raise RuntimeError('R15_BAD_ZIP_OR_UNSAFE_EXPANSION')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (manifest.get('schema')!='VEUX_R15_AUTHENTIC_WALT_RUNTIME_PROVIDERS_NOFLASH' or
+                  manifest.get('r14_sha256')!='42de59e084ab7ef539dd78bfe489ee5a27b99afd00196ad63db7160623bfd3d0' or
+                  manifest.get('flash_allowed') is not False or manifest.get('vmlinux_linked') is not False or
+                  manifest.get('production_patch_approved') is not False):
+                  raise RuntimeError('R15_MANIFEST_DRIFT')
+              if set(names)!=set(manifest['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R15_UNEXPECTED_CONTENT')
+              if dst.exists() or arc.is_symlink(): raise RuntimeError('R15_UNSAFE_DEST')
+              dst.mkdir(parents=True)
+              for ent in entries:
+                  rel=PurePosixPath(ent.filename)
+                  if (ent.is_dir() or rel.is_absolute() or '..' in rel.parts or str(rel)!=ent.filename or
+                      '\\' in ent.filename or stat.S_IFMT(ent.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise RuntimeError('R15_BAD_FILETYPE_OR_TRAVERSAL')
+                  b=z.read(ent.filename)
+                  if ent.filename!='MANIFEST_SHA256.json' and hashlib.sha256(b).hexdigest()!=manifest['files'][ent.filename]:
+                      raise RuntimeError('R15_FILE_HASH_MISMATCH:'+ent.filename)
+                  p=dst.joinpath(*rel.parts);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b)
+          print('R15_MAIN_SHA_AND_ALL_FIVE_REFERENCE_FILES=PASS')
+          PY_R15_AUTH
+          printf '%s  %s\n' "$R14_MAIN_SHA256" "$ROOT/r15/reference/R14_MAIN_ORIGINAL.zip" | sha256sum --check --strict
+          python3 -B "$ROOT/r15/tools/r15_walt_providers.py" verify --root "$ROOT/r15"
+          echo 'R15_AUTHENTICATED_UPSTREAM_SOURCE_INPUTS=PASS'
+
+      - name: Authenticate R14/R13/R12/R11 nested originals with path and hash gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R14_MAIN_SHA256" "$ROOT/r15/reference/R14_MAIN_ORIGINAL.zip" | sha256sum --check --strict
+          python3 -I - "$ROOT/r15/reference/R14_MAIN_ORIGINAL.zip" "$ROOT/r14" <<'PY_R14_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,dest=map(Path,sys.argv[1:])
+          if not archive.is_file() or archive.is_symlink() or dest.exists():
+              raise RuntimeError('R14_UNSAFE_PARENT_INPUT')
+          with ZipFile(archive) as z:
+              infos=z.infolist(); names=[x.filename for x in infos]
+              if not infos or len(names)!=len(set(names)) or z.testzip() or sum(x.file_size for x in infos)>4_000_000:
+                  raise RuntimeError('R14_CORRUPT_PARENT_ARCHIVE')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (m.get('schema')!='VEUX_R14_FULL_QUALCOMM_WALT_COMPONENT_COMPILER_NOFLASH' or
+                  m.get('flash_allowed') is not False or m.get('full_walt_linked') is not False or
+                  m.get('r13_sha256')!='71badc859c4c204edef6996fa572e558b26a646a616d1b7859d07651a6cafe19' or
+                  m.get('production_patch_approved') is not False):
+                  raise RuntimeError('R14_PARENT_MANIFEST_CONTRACT')
+              if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                  raise RuntimeError('R14_PARENT_FILESET_DRIFT')
+              dest.mkdir(parents=True)
+              for info in infos:
+                  rel=PurePosixPath(info.filename)
+                  if (info.is_dir() or rel.is_absolute() or '..' in rel.parts or str(rel)!=info.filename or
+                      '\\' in info.filename or stat.S_IFMT(info.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise RuntimeError('R14_ZIP_PATH_OR_MODE_UNSAFE')
+                  b=z.read(info.filename)
+                  if info.filename!='MANIFEST_SHA256.json' and hashlib.sha256(b).hexdigest()!=m['files'][info.filename]:
+                      raise RuntimeError('R14_CONTENT_SHA_DRIFT:'+info.filename)
+                  target=dest.joinpath(*rel.parts);target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b)
+          print('R14_MAIN_PINNED_PARENT_ARCHIVE=PASS')
+          PY_R14_AUTH
+          printf '%s  %s\n' "$R13_PARENT_SHA256" "$ROOT/r14/reference/R13_MAIN_ORIGINAL.zip" | sha256sum --check --strict
+          python3 -I - "$ROOT/r14/reference/R13_MAIN_ORIGINAL.zip" "$ROOT" <<'PY_R13_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,root=map(Path,sys.argv[1:])
+          specs=[(archive,root/'r13','VEUX_R13_VERIFIED_STOCK_SYSCTL_FUNCTION_PAIR_NOFLASH',4_000_000),
+                 (root/'r13/reference/R12_MAIN_ORIGINAL.zip',root/'r12','VEUX_R12_WALT_PINNED_INTERFACE_HEADER_PROBE_NOFLASH',4_000_000),
+                 (root/'r12/reference/R11_MAIN_ORIGINAL.zip',root/'r11','VEUX_R11_STOCK_TASK_WALT_OBJECT_PROBE_NOFLASH',4_000_000)]
+          digest=lambda b:hashlib.sha256(b).hexdigest()
+          for index,(arc,dst,schema,limit) in enumerate(specs):
+              if not arc.is_file() or arc.is_symlink() or dst.exists():
+                  raise RuntimeError('R13_UNSAFE_ARCHIVE_OR_STAGE:'+str(index))
+              if index==1 and digest(arc.read_bytes())!='71a2984347ce1302f9503e240b832b8fb07506961879dceec1790e3572bfe6ee':
+                  raise RuntimeError('R13_WRONG_R12_PARENT')
+              if index==2 and digest(arc.read_bytes())!='06a6f468699d0785b0db8bcbb745b51d8e12d6b7c26c6b3a4999248e1e994513':
+                  raise RuntimeError('R13_WRONG_R11_PARENT')
+              with ZipFile(arc) as z:
+                  infos=z.infolist();names=[x.filename for x in infos]
+                  if not infos or len(names)!=len(set(names)) or z.testzip() is not None or sum(x.file_size for x in infos)>limit:
+                      raise RuntimeError('R13_ZIP_CORRUPT_OR_OVERSIZED:'+str(index))
+                  m=json.loads(z.read('MANIFEST_SHA256.json'))
+                  if m.get('schema')!=schema or m.get('flash_allowed') is not False:
+                      raise RuntimeError('R13_NESTED_SCHEMA_OR_FLASH_DRIFT:'+str(index))
+                  if set(names)!=set(m['files'])|{'MANIFEST_SHA256.json'}:
+                      raise RuntimeError('R13_NESTED_FILESET_DRIFT:'+str(index))
+                  dst.mkdir(parents=True,exist_ok=False)
+                  for x in infos:
+                      rel=PurePosixPath(x.filename)
+                      if (rel.is_absolute() or '..' in rel.parts or str(rel)!=x.filename or '\\' in x.filename or
+                          x.is_dir() or stat.S_IFMT(x.external_attr>>16) not in (0,stat.S_IFREG)):
+                          raise RuntimeError('R13_ZIP_PATH_OR_TYPE_UNSAFE:'+x.filename)
+                      raw=z.read(x.filename)
+                      if x.filename!='MANIFEST_SHA256.json' and digest(raw)!=m['files'][x.filename]:
+                          raise RuntimeError('R13_PARENT_FILE_HASH_MISMATCH:'+x.filename)
+                      target=dst.joinpath(*rel.parts);target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw)
+          print('R13_R12_R11_NESTED_AUTHENTICATION=PASS')
+          PY_R13_AUTH
+          python3 -B "$ROOT/r13/tools/r13_sysctl_pair.py" verify --root "$ROOT/r13"
+          python3 -B "$ROOT/r12/tools/r12_walt_headers.py" verify --root "$ROOT/r12"
+          python3 -B "$ROOT/r11/tools/r11_walt_probe.py" verify --root "$ROOT/r11"
+          echo 'R14_VERIFIED_ALL_FOUR_NESTED_SOURCE_PACKAGES=PASS'
+
+      - name: R13 real source logic and inherited R12 R11 regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          python3 -B -m unittest discover -s "$ROOT/r13/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R13_TESTS.log"
+          python3 -B -m unittest discover -s "$ROOT/r12/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R12_TESTS.log"
+          python3 -B -m unittest discover -s "$ROOT/r11/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R11_TESTS.log"
+          echo 'R13_R12_R11_REGRESSION_TESTS=PASS'
+
+      - name: R14 verify exact seven WALT sources, nine-object makefile and run new tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          python3 -B "$ROOT/r14/tools/r14_walt_family.py" verify --root "$ROOT/r14" --r11 "$ROOT/r11" > "$ROOT/reports/R14_WALT_SOURCE_MAKEFILE_VERIFIED.json"
+          R14_R11_DIR="$ROOT/r11" python3 -B -m unittest discover -s "$ROOT/r14/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R14_TESTS.log"
+          echo 'R14_NINE_PINNED_QUALCOMM_WALT_OBJECTS_AND_24_TESTS=PASS'
+
+      - name: R15 verify original OEM runtime headers and run 24 new regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s "$ROOT/r15/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R15_TESTS.log"
+          python3 -B "$ROOT/r15/tools/r15_walt_providers.py" verify --root "$ROOT/r15"
+          echo 'R15_24_STOCK_SOURCE_PROVENANCE_TESTS=PASS'
+
+      - name: Fetch exact pinned 5.4.268 donor (production repository untouched)
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          git init -q "$ROOT/donor"
+          git -C "$ROOT/donor" remote add origin "$DONOR_URL"
+          git -C "$ROOT/donor" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$DONOR_SHA"
+          git -C "$ROOT/donor" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$ROOT/donor" rev-parse HEAD)" = "$DONOR_SHA"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+
+      - name: Stage original stock task_struct and known WALT source in isolated R11-style trial
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          python3 -B "$ROOT/r11/tools/r11_walt_probe.py" stage \
+            --root "$ROOT/r11" --donor "$ROOT/donor" \
+            --stage-dir "$ROOT/walt-trial" --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R12_ORIGINAL_STOCK_TASK_STRUCT_UNCHANGED=PASS'
+
+      - name: Fetch seven pinned WALT and sysctl source files with full Git provenance
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          PAIR="$ROOT/header-source"
+          git init -q "$PAIR"
+          git -C "$PAIR" remote add origin "$PAIR_URL"
+          git -C "$PAIR" sparse-checkout init --no-cone
+          git -C "$PAIR" sparse-checkout set --no-cone \
+            'include/linux/sched/stat.h' \
+            'include/linux/sched/cpufreq.h' \
+            'include/linux/sched/sysctl.h' \
+            'include/linux/arch_topology.h' \
+            'include/linux/topology.h' \
+            'include/linux/sysctl.h' \
+            'kernel/sysctl.c'
+          git -C "$PAIR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$PAIR_SHA"
+          git -C "$PAIR" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$PAIR" rev-parse HEAD)" = "$PAIR_SHA"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          echo 'R13_SEVEN_PINNED_WALT_AND_SYSCTL_SOURCE_FILES=FETCHED'
+
+      - name: Stage only five verified upstream headers, preserve stock and donor originals
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          python3 -B "$ROOT/r12/tools/r12_walt_headers.py" stage \
+            --root "$ROOT/r12" --donor "$ROOT/donor" \
+            --pair "$ROOT/header-source" --trial "$ROOT/walt-trial" --reports "$ROOT/reports"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R12_REAL_VENDOR_HEADERS_NOT_DUMMY_DECLARATIONS=STAGED'
+
+      - name: R13 stage only original OEM sysctl declaration and pinned Qualcomm function
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          python3 -B "$ROOT/r13/tools/r13_sysctl_pair.py" stage \
+            --root "$ROOT/r13" --donor "$ROOT/donor" \
+            --pair "$ROOT/header-source" --trial "$ROOT/walt-trial" --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R13_STOCK_SYSCTL_DECL_AND_REAL_QUALCOMM_PARSER=STAGED_NOFLASH'
+
+      - name: Fetch and pin exact stock Android Clang 11.0.2 toolchain
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          CLANG="$ROOT/aosp-clang"
+          git init -q "$CLANG"
+          git -C "$CLANG" remote add origin "$CLANG_URL"
+          git -C "$CLANG" sparse-checkout init --cone
+          git -C "$CLANG" sparse-checkout set clang-r383902b1
+          git -C "$CLANG" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=180 fetch --no-tags --depth=1 --filter=blob:none origin "refs/heads/$CLANG_BRANCH" 2>&1 | tee "$ROOT/reports/R12_CLANG_FETCH.log"
+          git -C "$CLANG" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$CLANG" rev-parse HEAD:clang-r383902b1)" = "$CLANG_TREE"
+          "$CLANG/clang-r383902b1/bin/clang" --version > "$ROOT/reports/R12_CLANG_VERSION.txt"
+          grep -F 'Android (6877366 based on r383902b1) clang version 11.0.2' "$ROOT/reports/R12_CLANG_VERSION.txt"
+          echo 'R12_ANDROID_CLANG_11_GENUINE=PASS'
+
+      - name: R13 compile weak WALT real WALT and real sysctl implementation as three objects
+        shell: bash
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          TRIAL="$ROOT/walt-trial"
+          OUT="$ROOT/build"
+          mkdir -p "$OUT"
+          cp "$ROOT/r11/reference/stock.config" "$OUT/.config"
+          set +e
+          timeout 180s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 olddefconfig > "$ROOT/reports/R13_CONFIG_BUILD.log" 2>&1
+          C_RC=$?
+          set -e
+          if [ "$C_RC" -ne 0 ] || ! grep -Fqx 'CONFIG_SCHED_WALT=y' "$OUT/.config"; then
+            echo '::error::R13_KCONFIG_BLOCKER'
+            for KIND in PREPARE WEAK REAL SYSCTL; do
+              printf '90\n' > "$ROOT/reports/R13_${KIND}_RC.txt"
+              cp "$ROOT/reports/R13_CONFIG_BUILD.log" "$ROOT/reports/R13_${KIND}_BUILD.log"
+            done
+          else
+            if grep -Fqx 'CONFIG_RTMM=y' "$OUT/.config"; then
+              echo 'CONFIG_RTMM=y; IMPLEMENTATION_NOT_PORTED' > "$ROOT/reports/R13_RTMM_STATUS.txt"
+            else
+              echo 'CONFIG_RTMM_NOT_IN_DONOR; ORIGINAL_STOCK_RTMM_STILL_UNPORTed' > "$ROOT/reports/R13_RTMM_STATUS.txt"
+            fi
+            set +e
+            timeout 360s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 prepare scripts > "$ROOT/reports/R13_PREPARE_BUILD.log" 2>&1
+            P_RC=$?
+            set -e
+            printf '%s\n' "$P_RC" > "$ROOT/reports/R13_PREPARE_RC.txt"
+            if [ "$P_RC" -eq 0 ]; then
+              for SPEC in WEAK:kernel/sched/walt.o REAL:techpack/sched/walt.o SYSCTL:kernel/sysctl.o; do
+                KIND="${SPEC%%:*}"
+                OBJ="${SPEC#*:}"
+                set +e
+                timeout 420s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 "$OBJ" > "$ROOT/reports/R13_${KIND}_BUILD.log" 2>&1
+                RC=$?
+                set -e
+                printf '%s\n' "$RC" > "$ROOT/reports/R13_${KIND}_RC.txt"
+              done
+            else
+              for KIND in WEAK REAL SYSCTL; do
+                printf '90\n' > "$ROOT/reports/R13_${KIND}_RC.txt"
+                cp "$ROOT/reports/R13_PREPARE_BUILD.log" "$ROOT/reports/R13_${KIND}_BUILD.log"
+              done
+            fi
+          fi
+          python3 -B "$ROOT/r13/tools/r13_sysctl_pair.py" summary --reports "$ROOT/reports"
+          tail -n 60 "$ROOT/reports/R13_REAL_BUILD.log"
+          tail -n 45 "$ROOT/reports/R13_SYSCTL_BUILD.log"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          python3 -I - "$ROOT/reports/R13_THREE_OBJECT_COMPILER_SUMMARY.json" <<'PY_R13_GATE'
+          from pathlib import Path
+          import json,sys
+          d=json.loads(Path(sys.argv[1]).read_text())
+          assert (d['flash_allowed'] is False and d['oem_abi_verified'] is False and
+                  d['vmlinux_linked'] is False and d['full_walt_ported'] is False)
+          if not d['three_object_compilation_pass']:
+              print('::error::R13_COMPILER_BLOCKER; see uploaded source logs')
+              raise SystemExit(1)
+          print('R13_THREE_OBJECTS_COMPILE=PASS; OEM_ABI_AND_BOOT=NOT_TESTED; FLASH=NO')
+          PY_R13_GATE
+
+      - name: R15 stage genuine stock runtime declarations and pinned Qualcomm implementations ONLY in experiment
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          PAIR="$ROOT/header-source"
+          # Non-cone sparse-checkout; retrieve the genuine pinned source implementations.
+          git -C "$PAIR" sparse-checkout add 'kernel/watchdog.c' 'kernel/time/hrtimer.c' 'kernel/time/timer.c'
+          test "$(git -C "$PAIR" rev-parse HEAD)" = "$PAIR_SHA"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          python3 -B "$ROOT/r15/tools/r15_walt_providers.py" stage \
+            --root "$ROOT/r15" --r13 "$ROOT/r13" \
+            --donor "$ROOT/donor" --pair "$PAIR" \
+            --trial "$ROOT/walt-trial" --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R15_REAL_PINNED_QUALCOMM_API_IMPLEMENTATIONS_STAGED_NOFLASH=PASS'
+
+      - name: R17 apply original Stock HRTIMER pinned-state plus upstream lifecycle ONLY in isolated trial
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          R17="$RUNNER_TEMP/veux-r17/main"
+          python3 -B "$R17/tools/r17_hrtimer_pin.py" stage \
+            --root "$R17" --trial "$ROOT/walt-trial" \
+            --pair "$ROOT/header-source" --donor "$ROOT/donor" \
+            --reports "$ROOT/reports"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$ROOT/walt-trial/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          echo 'R17_TRUE_STOCK_PINNED_HRTIMER_WITH_UPSTREAM_LIFECYCLE=STAGED'
+
+      - name: R15 compile WALT family and four genuine runtime-provider objects (mark red on any failure)
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          TRIAL="$ROOT/walt-trial"
+          OUT="$ROOT/build"
+          python3 -B "$ROOT/r14/tools/r14_walt_family.py" verify --root "$ROOT/r14" --r11 "$ROOT/r11" > "$ROOT/reports/R14_PINNED_QUELLFAMILIE.json"
+          printf '%s  %s\n' 'a9923e4444aaa3a58c08776268914b3e3ee5f0042676d4c86a48eaf88381b111' "$TRIAL/include/linux/sched.h" | sha256sum --check --strict
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          for SPEC in \
+            BOOST:techpack/sched/boost.o \
+            SCHED_AVG:techpack/sched/sched_avg.o \
+            QC_VAS:techpack/sched/qc_vas.o \
+            CORE_CTL:techpack/sched/core_ctl.o \
+            TRACE:techpack/sched/trace.o \
+            CPU_BOOST:techpack/sched/cpu-boost.o; do
+            KIND="${SPEC%%:*}"
+            OBJ="${SPEC#*:}"
+            set +e
+            timeout 480s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 "$OBJ" > "$ROOT/reports/R14_${KIND}_BUILD.log" 2>&1
+            RC=$?
+            set -e
+            printf '%s\n' "$RC" > "$ROOT/reports/R14_${KIND}_RC.txt"
+            echo "R14_${KIND}_COMPILER_RETURN_CODE=$RC"
+          done
+          python3 -B "$ROOT/r14/tools/r14_walt_family.py" summary --root "$ROOT/r14" --reports "$ROOT/reports" --build-dir "$OUT"
+          for SPEC in \
+            SYSCTL:kernel/sysctl.o \
+            WATCHDOG:kernel/watchdog.o \
+            HRTIMER:kernel/time/hrtimer.o \
+            TIMER:kernel/time/timer.o; do
+            KIND="${SPEC%%:*}"
+            OBJ="${SPEC#*:}"
+            set +e
+            timeout 480s make -C "$TRIAL" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 -j2 "$OBJ" > "$ROOT/reports/R15_${KIND}_BUILD.log" 2>&1
+            RC=$?
+            set -e
+            printf '%s\n' "$RC" > "$ROOT/reports/R15_${KIND}_RC.txt"
+            echo "R15_${KIND}_PROVIDER_COMPILER_RC=$RC"
+          done
+          python3 -B "$ROOT/r15/tools/r15_walt_providers.py" summary \
+            --reports "$ROOT/reports" --build-dir "$OUT"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          python3 -I - "$ROOT/reports/R15_TWELVE_OBJECTS_SUMMARY.json" <<'PY_R15_GATE'
+          import json,sys
+          from pathlib import Path
+          r=json.loads(Path(sys.argv[1]).read_text())
+          assert (r['schema']=='VEUX_R15_AUTHENTIC_WALT_RUNTIME_PROVIDERS_NOFLASH' and
+                  r['flash_allowed'] is False and r['vmlinux_linked'] is False and
+                  r['oem_abi_verified'] is False and r['stock_rtmm_ported'] is False)
+          if not r['twelve_object_compilation_pass']:
+              print('::error::R15_GENUINE_SOURCE_PROVIDER_COMPILER_BLOCKERS; inspect uploaded logs')
+              raise SystemExit(1)
+          print('R15_TWELVE_OBJECTS_COMPILED=PASS; OEM_ABI_LINK_AND_BOOT=NOT_TESTED; FLASH=NO')
+          PY_R15_GATE
+
+      - name: R17 publish exact twelve-unique-object results; verify no link/ABI/flash claims
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          TOOL="$RUNNER_TEMP/veux-r17/main/tools/r17_hrtimer_pin.py"
+          if [ ! -f "$TOOL" ]; then echo '::error::R17_TOOL_MISSING'; exit 1; fi
+          if [ ! -f "$ROOT/reports/R17_PINNED_HRTIMER_SOURCE_STAGE.json" ]; then
+            echo '::error::R17_SOURCE_STAGE_MISSING'; exit 1
+          fi
+          if [ ! -s "$ROOT/reports/R15_HRTIMER_BUILD.log" ]; then
+            echo '::error::R17_HRTIMER_LOG_MISSING'; exit 1
+          fi
+          echo '===== R17 REAL HRTIMER COMPILER LOG ====='
+          tail -n 100 "$ROOT/reports/R15_HRTIMER_BUILD.log"
+          python3 -B "$TOOL" summary --reports "$ROOT/reports" --build-dir "$ROOT/build"
+          python3 -I - "$ROOT/reports/R17_PINNED_HRTIMER_COMPILER_SUMMARY.json" <<'PY_R17_GATE'
+          import json,sys
+          from pathlib import Path
+          r=json.loads(Path(sys.argv[1]).read_text())
+          if any(r[k] is not False for k in ('flash_allowed','vmlinux_linked','boot_verified','oem_abi_verified','stock_rtmm_implemented')):
+              raise RuntimeError('R17_UNSAFE_SUCCESS_CLAIM')
+          assert r['r17_12_unique_object_files']==12
+          if not r['r17_all_component_compilers_pass']:
+              print('::error::R17_INDIVIDUAL_SOURCE_OBJECT_FAILURE: '+str(r['failures']))
+              raise SystemExit(1)
+          print('R17_12_UNIQUE_OBJECTS_COMPILED=PASS; VMLINUX_LINK_AND_OEM_ABI=NOT_TESTED; FLASH=NO')
+          PY_R17_GATE
+
+      - name: Always upload R17 complete original compiler logs - NOFLASH
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R17-PINNED-STATE-COMPILER-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r15/reports/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
