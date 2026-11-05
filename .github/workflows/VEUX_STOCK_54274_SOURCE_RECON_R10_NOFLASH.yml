@@ -1,0 +1,162 @@
+# VEUX Stock 5.4.274 R10: original-stock WALT scheduler source-family audit only.
+# READ-ONLY, no automatic port, no kernel build, no AK3, no boot.img, no CRC changes.
+name: VEUX STOCK 5.4.274 R10 pinned WALT source family - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-stock-r10-walt-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r10_walt_source_family:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      R10_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R10_MAIN.zip
+      R10_SHA256: 32cc786fd05fa3f84dbae3d6f6314f48dad535a6ca7be650e9a06cbf80576739
+      PAIR_REPO: https://github.com/shandongtlb/kernel_xiaomi_sm8350_M11.git
+      PAIR_COMMIT: 01cb3a8824b7b4caf3e3540274e71abba5ade538
+      DONOR_REPO: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      DONOR_COMMIT: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+    steps:
+      - name: Checkout workflow and R10 MAIN read-only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: actionlint validated GitHub Actions syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r10-tools"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" ".github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R10_NOFLASH.yml"
+          echo 'R10_ACTIONLINT=PASS'
+
+      - name: Authenticate immutable R10 original-stock inputs and refuse unsafe paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r10"
+          mkdir -p "$ROOT/reports"
+          printf '%s  %s\n' "$R10_SHA256" "$GITHUB_WORKSPACE/$R10_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R10_MAIN" "$ROOT/main" <<'PY_R10_AUTH'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          a,d=map(Path,sys.argv[1:]); sha=lambda x:hashlib.sha256(x).hexdigest()
+          if a.is_symlink() or not a.is_file() or d.exists():
+              raise RuntimeError('R10_UNSAFE_ARCHIVE')
+          with ZipFile(a) as z:
+              infos=z.infolist(); names=[i.filename for i in infos]
+              if not infos or len(names)!=len(set(names)) or z.testzip() is not None:
+                  raise RuntimeError('R10_DUPLICATE_OR_CORRUPT_ARCHIVE')
+              if sum(i.file_size for i in infos)>3_000_000:
+                  raise RuntimeError('R10_EXCESSIVE_INPUT_SIZE')
+              m=json.loads(z.read('MANIFEST_SHA256.json'))
+              if m.get('schema')!='VEUX_STOCK_WALT_R10_SOURCE_FAMILY_READONLY':
+                  raise RuntimeError('R10_MANIFEST_SCHEMA_DRIFT')
+              if m.get('flash_allowed') is not False or m.get('kernel_build_requested') is not False or m.get('source_patch_allowed') is not False:
+                  raise RuntimeError('R10_NOFLASH_CONTRACT')
+              if m.get('source_commit_pair')!='01cb3a8824b7b4caf3e3540274e71abba5ade538' or m.get('source_commit_donor')!='b2b7a3bbc36d120ee523ebc8d68e0f13a97df632':
+                  raise RuntimeError('R10_GIT_SOURCE_PIN_DRIFT')
+              if m.get('r1_sha256')!='04a8bc015abd2a8b9c5adf17b63f97f75e9cd06fb038480d695ff0263e758789':
+                  raise RuntimeError('R10_STOCK_R1_PIN_DRIFT')
+              if set(names) != (set(m['files'])|{'MANIFEST_SHA256.json'}):
+                  raise RuntimeError('R10_FILESET_DRIFT')
+              d.mkdir(parents=True,exist_ok=False)
+              for i in infos:
+                  p=PurePosixPath(i.filename)
+                  if p.is_absolute() or '..' in p.parts or str(p)!=i.filename or '\\' in i.filename:
+                      raise RuntimeError('R10_ARCHIVE_PATH_TRAVERSAL')
+                  if i.is_dir() or stat.S_IFMT(i.external_attr>>16) not in (0,stat.S_IFREG):
+                      raise RuntimeError('R10_UNSAFE_ZIP_FILETYPE')
+                  raw=z.read(i.filename)
+                  if i.filename!='MANIFEST_SHA256.json' and sha(raw)!=m['files'][i.filename]:
+                      raise RuntimeError('R10_ARCHIVE_CONTENT_SHA_DRIFT:'+i.filename)
+                  dst=d.joinpath(*p.parts);dst.parent.mkdir(parents=True,exist_ok=True);dst.write_bytes(raw)
+          print('R10_AUTHENTICATED_GENUINE_STOCK_WALT_HEADERS=PASS; FLASH=NO')
+          PY_R10_AUTH
+
+      - name: R10 original stock header and negative-test regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r10"
+          python3 -B -m unittest discover -s "$ROOT/main/tools" -p 'test_*.py' -v 2>&1 | tee "$ROOT/reports/R10_TESTS.log"
+          echo 'R10_22_REGRESSION_TESTS=PASS'
+
+      - name: Fetch exact pinned Linux 5.4.61 WALT source family (sparse, read-only)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r10"
+          PAIR="$ROOT/pair"
+          git init -q "$PAIR"
+          git -C "$PAIR" remote add origin "$PAIR_REPO"
+          git -C "$PAIR" sparse-checkout init --cone
+          git -C "$PAIR" sparse-checkout set techpack/sched kernel/sched include/linux init
+          git -C "$PAIR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$PAIR_COMMIT"
+          git -C "$PAIR" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$PAIR" rev-parse HEAD)" = "$PAIR_COMMIT"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          echo 'R10_PINNED_REAL_WALT_TECHPACK_SOURCE=FETCHED'
+
+      - name: Fetch exact pinned Linux 5.4.268 donor scheduler (sparse, read-only)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r10"
+          DONOR="$ROOT/donor"
+          git init -q "$DONOR"
+          git -C "$DONOR" remote add origin "$DONOR_REPO"
+          git -C "$DONOR" sparse-checkout init --cone
+          git -C "$DONOR" sparse-checkout set kernel/sched include/linux init
+          git -C "$DONOR" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120 fetch --no-tags --depth=1 --filter=blob:none origin "$DONOR_COMMIT"
+          git -C "$DONOR" checkout --detach -q FETCH_HEAD
+          test "$(git -C "$DONOR" rev-parse HEAD)" = "$DONOR_COMMIT"
+          test -z "$(git -C "$DONOR" status --porcelain)"
+          echo 'R10_PINNED_DONOR_SCHEDULER_SOURCE=FETCHED'
+
+      - name: R10 independently verify all WALT Git blobs and stock task ABI differences
+        shell: bash
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r10"
+          python3 -B "$ROOT/main/tools/r10_walt_source.py" --main "$ROOT/main" \
+            --pair "$ROOT/pair" --donor "$ROOT/donor" --out "$ROOT/reports"
+          python3 -I - "$ROOT/reports/R10_WALT_QUELLFAMILIE.json" "$ROOT/reports/R10_NOFLASH_GATE.json" <<'PY_R10_GATE'
+          import json,sys
+          from pathlib import Path
+          r=json.loads(Path(sys.argv[1]).read_text());g=json.loads(Path(sys.argv[2]).read_text())
+          assert r['stock_sched_walt_enabled'] is True and r['r6_donor_sched_walt_available'] is False
+          assert r['pair_has_real_walt_implementation'] is True
+          assert r['stock_walt_task_struct_matches_pair'] is False
+          assert r['stock_walt_low_latency']=='u8' and r['pair_walt_low_latency']=='bool'
+          assert r['stock_config_rtmm']=='y' and r['qgki_modules_in_loader']==37
+          assert r['verified_upstream_files']==24 and r['pair_techpack_files']==12
+          assert r['flash_allowed'] is False and r['source_patch_approved'] is False
+          assert r['kernel_build_performed'] is False and r['vendor_abi_verified'] is False
+          assert g['flash_allowed'] is False and g['build_approved'] is False
+          print('R10_WALT_SOURCE_GAP_PROVEN=PASS; STOCK_SCHED_LAYOUT_STILL_UNRESOLVED; FLASH=NO')
+          PY_R10_GATE
+          test -z "$(git -C "$ROOT/pair" status --porcelain)"
+          test -z "$(git -C "$ROOT/donor" status --porcelain)"
+          test -s "$ROOT/reports/R10_PINNED_WALT_SOURCES.tar.gz"
+          echo 'R10_VERIFIED_WALT_SOURCE_FAMILY_BUNDLE=READY_FOR_FUTURE_PORT_NOT_FLASH'
+
+      - name: Publish WALT source provenance and text diagnostics only (NOFLASH)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R10-WALT-SOURCE-FAMILY-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r10/reports/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
