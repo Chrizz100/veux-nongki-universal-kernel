@@ -1,0 +1,214 @@
+# VEUX / Poco X4 Pro 5G - STOCK 5.4.274 reconstruction R20, isolated source-coherency trial.
+# NOFLASH / NO ARTIFACT BINARY / NO STOCK OR OEM ABI CLAIMS.
+# This does not change any production kernel source, BakaSU, ReSukiSU, SUSFS or NoMount.
+# Immutable R19 foundations and R17 12-object checks are replayed before this candidate.
+# Only R20's disposable compiler worktree receives the Qualcomm compatibility trial.
+name: VEUX STOCK 5.4.274 R20 source-coherent scheduler MM trial + full link - NOFLASH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: veux-stock-54274-r20-source-trial-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  r20_source_coherent_trial:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      R20_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R20_MAIN.zip
+      R20_MAIN_SHA256: c4bfc42bdfdcb92dece7052dc0329a517f6a3eef9b52322c03051a7705f0b839
+      R19_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R19_MAIN.zip
+      R19_MAIN_SHA256: ac894f380411d0df694688cb108daed98d7bcf3330262c051af09705b7b7fdaa
+      R18_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R18_MAIN.zip
+      R18_MAIN_SHA256: 1831afc6cd9b9b9458dd7a2baf0558b0538100265699f6cfd0a25b3bb5099d69
+      R17_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R17_MAIN.zip
+      R17_MAIN_SHA256: 511dc8744b4f6b06f837bba9a92e32cf2510eb383224d27bd342b44a4991e4a6
+      R16_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R16_MAIN.zip
+      R16_MAIN_SHA256: 18263bfbe35f1a216e6d621b58fe9c3d787f1279a705a2f6239c0eb068f4d59c
+      R15_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R15_MAIN.zip
+      R15_MAIN_SHA256: 2840878243c67d6a0724b1cc24a4f435d69ea83a1bee38f7ec2103bedfdfd331
+      R14_MAIN: VEUX_STOCK_54274_SOURCE_RECON_R14_MAIN.zip
+      R14_MAIN_SHA256: 42de59e084ab7ef539dd78bfe489ee5a27b99afd00196ad63db7160623bfd3d0
+      R13_PARENT_SHA256: 71badc859c4c204edef6996fa572e558b26a646a616d1b7859d07651a6cafe19
+      PAIR_URL: https://github.com/shandongtlb/kernel_xiaomi_sm8350_M11.git
+      PAIR_SHA: 01cb3a8824b7b4caf3e3540274e71abba5ade538
+      DONOR_URL: https://github.com/dereference23/kernel_xiaomi_sm6375.git
+      DONOR_SHA: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+      CLANG_BRANCH: android11-qpr2-release
+      CLANG_TREE: 1c7dcc2e7095197f7a05dff22a875b6b02ed7117
+    steps:
+      - name: Checkout exact MAIN without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Authenticate pinned R20 archive, R19 immutable parent, actionlint and offline tests
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          REPORTS="$RUNNER_TEMP/veux-r20/reports"
+          ROOT="$RUNNER_TEMP/veux-r20/main"
+          mkdir -p "$REPORTS" "$ROOT"
+          printf '%s  %s\n' "$R20_MAIN_SHA256" "$GITHUB_WORKSPACE/$R20_MAIN" | sha256sum --check --strict
+          printf '%s  %s\n' "$R19_MAIN_SHA256" "$GITHUB_WORKSPACE/$R19_MAIN" | sha256sum --check --strict
+          python3 -I - "$GITHUB_WORKSPACE/$R20_MAIN" "$ROOT" <<'PY_R20_ARCHIVE'
+          import hashlib,json,stat,sys
+          from pathlib import Path,PurePosixPath
+          from zipfile import ZipFile
+          archive,target=map(Path,sys.argv[1:]);
+          if not archive.is_file() or archive.is_symlink() or any(target.iterdir()):
+              raise ValueError('R20_INVALID_ARCHIVE_OR_DEST')
+          with ZipFile(archive) as z:
+              entries=z.infolist(); names=[x.filename for x in entries]
+              if len(entries)<4 or len(entries)>25 or len(names)!=len(set(names)) or z.testzip() or sum(x.file_size for x in entries)>2_000_000:
+                  raise ValueError('R20_CORRUPT_OR_OVERSIZED_ARCHIVE')
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              if (manifest.get('schema')!='VEUX_R20_SOURCE_COHERENCE_EXPERIMENT_NOFLASH' or
+                  manifest.get('r19_parent_sha256')!='ac894f380411d0df694688cb108daed98d7bcf3330262c051af09705b7b7fdaa' or
+                  manifest.get('upstream_r19_git_blob')!='bd8d4b47ecfa6779279d5ebc6e3bd3203777fca5' or
+                  any(manifest.get(x) is not False for x in ('flash_allowed','boot_verified','oem_abi_verified','production_patch_approved','stock_kernel_reproduced'))):
+                  raise ValueError('R20_UNSAFE_OR_UNPINNED_MANIFEST')
+              if set(names) != set(manifest['files'])|{'MANIFEST_SHA256.json'}:
+                  raise ValueError('R20_UNEXPECTED_FILESET')
+              for entry in entries:
+                  name=entry.filename; rel=PurePosixPath(name)
+                  if (entry.is_dir() or rel.is_absolute() or '..' in rel.parts or
+                      str(rel)!=name or '\\' in name or stat.S_IFMT(entry.external_attr>>16) not in (0,stat.S_IFREG)):
+                      raise ValueError('R20_UNSAFE_ARCHIVE_MEMBER:'+name)
+                  data=z.read(name)
+                  if name!='MANIFEST_SHA256.json' and hashlib.sha256(data).hexdigest()!=manifest['files'][name]:
+                      raise ValueError('R20_FILE_HASH_MISMATCH:'+name)
+                  path=target.joinpath(*rel.parts);path.parent.mkdir(exist_ok=True,parents=True);path.write_bytes(data)
+          print('R20_MANIFEST_AND_PINNED_R19_PARENT=PASS; FLASH=NO')
+          PY_R20_ARCHIVE
+          python3 -B -m unittest discover -s "$ROOT/tools" -p 'test_r20_*.py' -v 2>&1 | tee "$REPORTS/R20_OFFLINE_TESTS.log"
+          export GOBIN="$RUNNER_TEMP/veux-r20-actionlint"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" .github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R20_COMPAT_NOFLASH.yml
+          echo 'R20_ACTIONLINT=PASS; ONLY CI STATIC PREFLIGHT; NOT A KERNEL BUILD'
+
+      - name: Replay the immutable R19 foundation and R17 twelve real object tests
+        shell: bash
+        timeout-minutes: 50
+        run: |
+          set -euo pipefail
+          python3 -B "$RUNNER_TEMP/veux-r20/main/tools/r20_replay.py" \
+            --phase foundations \
+            --workflow "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R19_NOFLASH.yml" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --reports "$RUNNER_TEMP/veux-r20/reports"
+          echo 'R20_R17_BASELINE_RECOMPILED_IN_R19_REPLAY=YES; NO FLASH'
+
+      - name: Stage R19 pinned whole-file inputs and R20 source-coherent trial only in disposable source tree
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          PAIR="$ROOT/header-source"
+          DONOR="$ROOT/donor"
+          TRIAL="$ROOT/walt-trial"
+          R19="$RUNNER_TEMP/veux-r19/main"
+          R20="$RUNNER_TEMP/veux-r20/main"
+          REPORTS19="$RUNNER_TEMP/veux-r18/reports"
+          REPORTS20="$RUNNER_TEMP/veux-r20/reports"
+          mkdir -p "$REPORTS19" "$REPORTS20"
+          python3 -B "$R19/tools/r19_qualcomm_surface.py" verify --root "$R19"
+          git -C "$PAIR" sparse-checkout add '/kernel/sched/core.c' '/kernel/sched/pelt.h' '/mm/vmscan.c'
+          test "$(git -C "$PAIR" rev-parse HEAD)" = "$PAIR_SHA"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          python3 -B "$R19/tools/r19_qualcomm_surface.py" stage --root "$R19" --donor "$DONOR" --pair "$PAIR" --trial "$TRIAL" --reports "$REPORTS19"
+          python3 -B "$R20/tools/r20_compat.py" stage \
+            --pair "$PAIR" --donor "$DONOR" --trial "$TRIAL" --reports "$REPORTS20"
+          test -z "$(git -C "$DONOR" status --porcelain)"
+          test -z "$(git -C "$PAIR" status --porcelain)"
+          echo 'R20_TRUE_UPSTREAM_BLOBS_IN_ISOLATED_TRIAL=STAGED; FLASH=NO'
+
+      - name: Compile four R20 genuine scheduler MM objects and fail closed on any error
+        shell: bash
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          python3 -B "$RUNNER_TEMP/veux-r20/main/tools/r20_compat.py" compile \
+            --phase targets --trial "$ROOT/walt-trial" --build "$ROOT/build" \
+            --reports "$RUNNER_TEMP/veux-r20/reports"
+
+      - name: Recompile all 12 R17 component and runtime objects against R20 headers
+        shell: bash
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r15"
+          export PATH="$ROOT/aosp-clang/clang-r383902b1/bin:$PATH"
+          python3 -B "$RUNNER_TEMP/veux-r20/main/tools/r20_compat.py" compile \
+            --phase r17-regression --trial "$ROOT/walt-trial" --build "$ROOT/build" \
+            --reports "$RUNNER_TEMP/veux-r20/reports"
+
+      - name: Attempt real full Image dtbs link and original R18 vendor ABI diagnostic only if 16 compiles passed
+        shell: bash
+        timeout-minutes: 65
+        run: |
+          set -euo pipefail
+          python3 -B "$RUNNER_TEMP/veux-r20/main/tools/r20_replay.py" \
+            --phase full \
+            --workflow "$GITHUB_WORKSPACE/.github/workflows/VEUX_STOCK_54274_SOURCE_RECON_R19_NOFLASH.yml" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --reports "$RUNNER_TEMP/veux-r20/reports"
+          echo 'R20_FULL_LINK_ABI_TRIAL_REACHED=YES; FLASH_AND_DEVICE_BOOT=NOT_VERIFIED'
+
+      - name: Always publish R20 gate status without any kernel Image, boot img, module or flashing ZIP
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORTS="$RUNNER_TEMP/veux-r20/reports"
+          mkdir -p "$REPORTS"
+          python3 -I - "$REPORTS" <<'PY_R20_SUMMARY'
+          import json,sys
+          from pathlib import Path
+          r=Path(sys.argv[1]); output={
+              'schema':'VEUX_R20_FAIL_CLOSED_GATE',
+              'stock_kernel_reproduced':False,'flash_allowed':False,
+              'boot_verified':False,'device_verified':False,
+              'oem_abi_verified':False,'production_patch_approved':False,
+              'compiler_4_of_4_verified':False,'r17_12_of_12_regression_verified':False,
+              'full_link_attempt_verified':False,'full_link_proven':False,
+          }
+          for key, name in [('compiler_4_of_4_verified','R20_TARGET_COMPILERS.json'),('r17_12_of_12_regression_verified','R20_R17_REGRESSION_COMPILERS.json')]:
+              p=r/name
+              if p.exists():
+                  try:output[key]=json.loads(p.read_text()).get('success') is True
+                  except (OSError,ValueError):pass
+          p=r/'R20_FULL_LINK_EXECUTION.json'
+          if p.exists():
+              try:output['full_link_attempt_verified']=len(json.loads(p.read_text()).get('steps',[]))==1
+              except (OSError,ValueError):pass
+          q=r.parent.parent/'veux-r18/reports/R18_FULL_LINK_AND_ABI.json'
+          if q.exists():
+              try:output['full_link_proven']=json.loads(q.read_text()).get('linked_image_and_vmlinux') is True
+              except (OSError,ValueError):pass
+          (r/'R20_GATE_STATUS_NOFLASH.json').write_text(json.dumps(output,indent=2,sort_keys=True)+'\n')
+          print('R20_GATES='+json.dumps(output,sort_keys=True))
+          PY_R20_SUMMARY
+          for f in "$RUNNER_TEMP/veux-r15/reports/R17_PINNED_HRTIMER_COMPILER_SUMMARY.json" "$RUNNER_TEMP/veux-r15/reports/R15_TWELVE_OBJECTS_SUMMARY.json"; do
+            if [ -s "$f" ]; then cp "$f" "$REPORTS/ORIGINAL_$(basename "$f")"; fi
+          done
+
+      - name: Upload only logs and JSON provenance NOFLASH
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-STOCK-54274-R20-SOURCE-AND-ABI-TRIAL-NOFLASH-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/veux-r20/reports/
+            ${{ runner.temp }}/veux-r18/reports/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
