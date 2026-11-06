@@ -1,0 +1,118 @@
+# ONLY read-only historical QGKI/GKI ABI comparison on frozen R61 full compiler result.
+# No kernel rebuild, no Module.symvers alteration, no imported CRC rewrite, no flash.
+name: VEUX R61 QGKI GKI OEM ABI R1 - NOFLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: veux-r61-qgki-gki-abi-r1-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  historical_cohort_reconciliation:
+    if: ${{ github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MAIN_ZIP: VEUX_R61_QGKI_GKI_ABI_R1_MAIN.zip
+      MAIN_SHA256: 47b5209194a695994c817c33b734f5fa83d4a2f9fc3a890b2711a32d0ff74880
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout exact main read-only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Authenticate ZIP and unpack only its expected regular SHA-locked members
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -s "$MAIN_ZIP"
+          test ! -L "$MAIN_ZIP"
+          printf '%s  %s\n' "$MAIN_SHA256" "$MAIN_ZIP" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/veux-r61-abi"
+          python3 -I - "$MAIN_ZIP" "$RUNNER_TEMP/veux-r61-abi" <<'PY_PINNED_ZIP'
+          import hashlib,json,stat,sys,zipfile
+          from pathlib import Path,PurePosixPath
+          src,dst=Path(sys.argv[1]),Path(sys.argv[2])
+          with zipfile.ZipFile(src) as z:
+              entries=z.infolist()
+              names=[a.filename for a in entries]
+              assert z.testzip() is None, 'ZIP_CRC_FAILED'
+              assert len(names)==len(set(names)), 'DUPLICATE_ZIP_MEMBERS'
+              assert 'MANIFEST_SHA256.json' in names, 'MISSING_MANIFEST'
+              manifest=json.loads(z.read('MANIFEST_SHA256.json'))
+              assert manifest['schema']=='VEUX_R61_QGKI_GKI_IMMUTABLE_EVIDENCE_V1'
+              assert manifest['parent_github_run']==42204174279
+              assert manifest['source_mutation'] is False and manifest['firmware_write'] is False
+              assert manifest['kernel_build'] is False and manifest['flash_allowed'] is False
+              assert manifest['original_input_count']==10
+              assert set(names)==set(manifest['files'])|{'MANIFEST_SHA256.json'}
+              for entry in entries:
+                  p=PurePosixPath(entry.filename)
+                  assert (not p.is_absolute() and '..' not in p.parts and str(p)==entry.filename and
+                          '\\' not in entry.filename and entry.file_size <= 3000000), 'BAD_MEMBER_PATH_OR_SIZE'
+                  assert stat.S_IFMT(entry.external_attr >> 16)==stat.S_IFREG, 'UNEXPECTED_MEMBER_TYPE'
+                  blob=z.read(entry.filename)
+                  if entry.filename!='MANIFEST_SHA256.json':
+                      assert hashlib.sha256(blob).hexdigest()==manifest['files'][entry.filename], 'FILE_SHA_INVALID'
+                  target=dst.joinpath(*p.parts)
+                  target.parent.mkdir(parents=True,exist_ok=True)
+                  assert not target.exists() and not target.is_symlink(), 'REUSED_OUTPUT'
+                  target.write_bytes(blob)
+          print('ORIGINAL_R28_R30_R38_R61_EVIDENCE_SHA256=PINNED; FLASH=NO')
+          PY_PINNED_ZIP
+      - name: Run 48 independent tests and reject mutated original evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r61-abi"
+          python3 -B -m py_compile "$ROOT/tools/abi_reconcile.py" "$ROOT/tools/test_abi_reconcile.py"
+          PYTHONPATH="$ROOT/tools" python3 -B -m unittest discover -s "$ROOT/tools" -p 'test_abi_*.py' -v
+          echo '48_GENUINE_SOURCE_PROVENANCE_AND_NEGATIVE_TESTS=PASS; NOFLASH'
+      - name: Actionlint self-check on checked-out workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOBIN="$RUNNER_TEMP/veux-r61-actionlint"
+          mkdir -p "$GOBIN"
+          GOTOOLCHAIN=local go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$GOBIN/actionlint" .github/workflows/VEUX_R61_QGKI_GKI_ABI_R1_NOFLASH.yml
+          echo 'R61_QGKI_GKI_R1_ACTIONLINT=PASS; NOFLASH'
+      - name: Reproduce per-module and per-symbol cohort results from original R28 R30 R38 and R61
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/veux-r61-abi"
+          python3 -B "$ROOT/tools/abi_reconcile.py" \
+            --inputs "$ROOT/inputs" --out "$RUNNER_TEMP/veux-r61-abi-reports"
+          cd "$RUNNER_TEMP/veux-r61-abi-reports"
+          sha256sum --check --strict SHA256SUMS.txt
+          python3 -I - <<'PY_NOFLASH_GATE'
+          from pathlib import Path
+          import json,csv
+          q=Path('R61_QGKI_GKI_RESULT.json');x=json.loads(q.read_text())
+          assert x['status']=='HISTORICAL_COHORTS_RECONCILED__R61_KERNEL_FROZEN__ABI_NOT_PROVEN__NOFLASH'
+          assert x['r61']['module_symvers_sha256']=='0b5f909c68ec375533e961ac106da49c71b25f4fc99e6d13d0d093a52a540ec2'
+          assert x['overall']['module_catalog_count']==218 and x['overall']['historical_imports']==14648
+          assert x['overall']['shared_name_conflicting_expected_crcs']==836
+          assert x['device_runtime']['actually_used_binary_cohort_proven'] is False
+          assert x['flash_allowed'] is False and x['no_source_mutation'] is True and x['no_crc_forge'] is True
+          assert len(list(csv.DictReader(open('R61_QGKI_GKI_SYMBOL_MATRIX.csv'))))==4501
+          assert len(list(csv.DictReader(open('R61_QGKI_GKI_PER_MODULE.csv'))))==218
+          assert len(list(csv.DictReader(open('R61_R30A_CONFIG_CANDIDATE.csv'))))==16
+          print('COHORT_REFERENCE_RECONCILED=YES; ACTIVE_OEM_COHORT=UNKNOWN; OEM_ABI=NO; FLASH=NO')
+          PY_NOFLASH_GATE
+          test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
+          echo 'GITHUB_MAIN_TREE_UNCHANGED=YES; NEVER_FLASH'
+      - name: Upload only immutable compatibility reports, never kernel binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX-R61-QGKI-GKI-ABI-R1-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-r61-abi-reports/
+          if-no-files-found: error
+          retention-days: 30
