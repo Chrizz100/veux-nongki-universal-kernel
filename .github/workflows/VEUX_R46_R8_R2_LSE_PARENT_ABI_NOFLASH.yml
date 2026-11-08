@@ -1514,21 +1514,27 @@ jobs:
         PY_R44_ALL_BLOCKS_LINT
         test -z "$(git -C project status --porcelain)"
         echo 'R44_LOCAL_REGRESSION_AND_FULL_WORKFLOW_LINT_PASS; NO_KERNEL_SOURCE_EDITED'
-    - name: Pin actionlint 1.7.12 and validate R6 YAML before replay
+    - name: Reuse SHA-pinned local actionlint 1.7.12 and validate both YAMLs before replay
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         workflow='project/.github/workflows/VEUX_OEM_WALT_ABI_R6_EXACT_P3_SOURCE_BRIDGE.yml'
         test -s "$workflow"
-        curl --fail --location --retry 3 --max-time 120 --silent --show-error \
-          'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz' \
-          -o "$RUNNER_TEMP/actionlint.tar.gz"
-        printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+        test -s "$R47_WORKFLOW"
+        # R44 preflight (previous step) already unpacks the local tool.
+        # No network download of actionlint: that URL caused HTTP 504 in run 42467245688.
+        archive="$GITHUB_WORKSPACE/project/VEUX_R39_R2_MEMORY_ABI_MAIN.zip"
+        printf '%s  %s\n' '745d80b8502a9beea513a2e7a58bb59272539b7508920d235ce2e79741bda528' "$archive" | sha256sum -c --strict -
+        test -x "$R44_DIR/actionlint"
+        printf '%s  %s\n' 'c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4' "$R44_DIR/actionlint" | sha256sum -c --strict -
         mkdir -p "$RUNNER_TEMP/veux-p11-actionlint"
-        tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/veux-p11-actionlint" actionlint
-        "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -oneline "$workflow"
-        echo 'R6_ACTIONLINT=PASS'
+        install -m 0755 "$R44_DIR/actionlint" "$RUNNER_TEMP/veux-p11-actionlint/actionlint"
+        tool="$RUNNER_TEMP/veux-p11-actionlint/actionlint"
+        "$tool" -version | grep -Fx '1.7.12'
+        "$tool" -color=false -shellcheck= -oneline "$workflow"
+        "$tool" -color=false -shellcheck= -oneline "$R47_WORKFLOW"
+        echo 'R6_AND_R46_R8_R2_ACTIONLINT_1_7_12_OFFLINE=PASS'
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
