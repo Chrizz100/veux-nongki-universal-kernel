@@ -1,9 +1,9 @@
 {
-  "ahead": 27,
+  "ahead": 32,
   "base": "04a9d713106191ba98be680bd7ad9547ab1de964",
   "build_verified": false,
   "changed": true,
-  "commit": "8a120081f2739bc0e4b1f6a389d8236f22944acc",
+  "commit": "8f78245e75d7b1ef1e91aaef1c185c03f9746a37",
   "compatibility_errors": [],
   "component": "susfs",
   "component_gate": true,
@@ -18,11 +18,13 @@
   "historical_base_is_ancestor": true,
   "missing_paths": [],
   "ref": "refs/heads/gki-android13-5.10",
-  "review_reasons": [],
-  "review_required": false,
+  "review_reasons": [
+    "SUSFS declared version changed: 2.3.0 -> 2.4.0"
+  ],
+  "review_required": true,
   "reviewed_interface": true,
   "schema": 1,
   "snapshot_kind": "unbuilt-upstream-candidate",
   "url": "https://gitlab.com/simonpunk/susfs4ksu.git",
-  "version": "2.3.0"
+  "version": "2.4.0"
 }
