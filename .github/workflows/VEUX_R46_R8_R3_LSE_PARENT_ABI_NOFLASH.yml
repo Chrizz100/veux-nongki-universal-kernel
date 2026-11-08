@@ -1,4 +1,4 @@
-name: VEUX R46-R6 based R46-R8-R3 rootless WALT LSE parent ABI rebuild - NO FLASH
+name: VEUX R46-R6 based R46-R8-R3-R4 rootless WALT LSE parent ABI rebuild - NO FLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -142,8 +142,8 @@ jobs:
       R45_WORKFLOW: ${{ github.workspace }}/project/.github/workflows/VEUX_R46_R2_WALT_SOURCE_PROVENANCE_FIX_NOFLASH.yml
       R46_OUT: ${{ github.workspace }}/veux-r45-stock-evidence/r46
       R47_BUILTIN_PACKAGE_NAME: VEUX_R46_R6_CONFIG_RELEASE_VENDOR_ABI_MAIN.zip
-      ABI_R8_PACKAGE_NAME: VEUX_R46_R8_R3_LSE_PARENT_ABI_MAIN.zip
-      ABI_R8_PACKAGE_SHA256: 0a370437f283f374be1afe8ae8522f4e28845452a93ddaabcb054d1ed1fd9399
+      ABI_R8_PACKAGE_NAME: VEUX_R46_R8_R4_LSE_ABI_MAIN.zip
+      ABI_R8_PACKAGE_SHA256: 2f2eb60dec6995022bdb93573d07d201096bd9e45a4b48eac64bc731bdaded27
       ABI_R8_TOOLS_DIR: ${{ github.workspace }}/veux-r46-r8-abi-tools
       R47_BUILTIN_PACKAGE_SHA256: 4cc25f95a59a89d72d226e5909e88aa80b35fbf596d8f287e2e89f0f281ad6e6
       R47_TOOLS_DIR: ${{ github.workspace }}/veux-r47-r13-builtin-tools
