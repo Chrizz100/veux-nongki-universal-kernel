@@ -1,0 +1,107 @@
+name: VEUX R46-R10 Xiaomi IOMMU coherent source port - NOFLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  source-port:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Read repository without credentials or mutation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: project
+          persist-credentials: false
+      - name: Verify R10 fixed package SHA and safely unpack
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '329292d065ee67d1ff68577c9505a106ec719fceb4eb69c3abcd0ffdbf1eb2bc  project/VEUX_R46_R10_IOMMU_COHERENT_PORT_MAIN.zip' | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/r10"
+          python3 -B - <<'PY_SAFE'
+          from pathlib import Path,PurePosixPath
+          import zipfile,hashlib,os
+          f=Path('project/VEUX_R46_R10_IOMMU_COHERENT_PORT_MAIN.zip')
+          dst=Path(os.environ['RUNNER_TEMP'])/'r10'
+          with zipfile.ZipFile(f) as z:
+              infos=z.infolist();names=[x.filename for x in infos]
+              assert len(names)==len(set(names)) and z.testzip() is None
+              assert len(infos)<40 and sum(i.file_size for i in infos)<5_000_000
+              for i in infos:
+                  p=PurePosixPath(i.filename)
+                  assert not p.is_absolute() and '..' not in p.parts and not i.filename.startswith('/')
+                  assert '\\' not in i.filename and not i.is_dir()
+                  assert i.external_attr >> 16 & 0o170000 != 0o120000
+                  t=dst/i.filename;t.parent.mkdir(parents=True,exist_ok=True);t.write_bytes(z.read(i))
+          for ln in (dst/'MANIFEST_SHA256.txt').read_text().splitlines():
+              expected,name=ln.split('  ',1)
+              assert hashlib.sha256((dst/name).read_bytes()).hexdigest()==expected,name
+          print('R10_MANIFEST_PATH_SHA256=PASS; NOFLASH')
+          PY_SAFE
+      - name: Run R10 negative tests before source import
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s "$RUNNER_TEMP/r10/Tests" -p 'test_port_iommu.py' -v
+          echo 'R10_OFFLINE_REGRESSION=PASS; NOFLASH'
+      - name: Fetch pinned dereference23 source (six files only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dereference23/kernel_xiaomi_sm6375
+          ref: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+          path: donor
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            include/linux/device.h
+            drivers/base/core.c
+            include/linux/msm_dma_iommu_mapping.h
+            drivers/iommu/msm_dma_iommu_mapping.c
+            include/linux/ion.h
+            drivers/staging/android/ion/heaps/msm_ion_dma_buf.c
+            techpack/display/msm/msm_smmu.c
+      - name: Fetch pinned Xiaomi OEM source (same six files)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: MiCode/Xiaomi_Kernel_OpenSource
+          ref: 61397e524093d1ccb94769b5460825e2eaf8871e
+          path: xiaomi
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            include/linux/device.h
+            drivers/base/core.c
+            include/linux/msm_dma_iommu_mapping.h
+            drivers/iommu/msm_dma_iommu_mapping.c
+            include/linux/ion.h
+            drivers/staging/android/ion/heaps/msm_ion_dma_buf.c
+            techpack/display/msm/msm_smmu.c
+      - name: Stage six-file source port with strict stock provenance (no build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$RUNNER_TEMP/r10/Tools/port_iommu.py" \
+            --donor donor --xiaomi xiaomi \
+            --stock-headers "$RUNNER_TEMP/r10/References/stock_headers" \
+            --out "$RUNNER_TEMP/r10_staged"
+          python3 -B - <<'PY_STATUS'
+          import os,json,pathlib
+          r=pathlib.Path(os.environ['RUNNER_TEMP'])/'r10_staged/SOURCE_PORT_RESULT.json'
+          x=json.loads(r.read_text())
+          assert x['changes']==6 and x['kernel_compiled'] is False
+          assert x['flash_allowed'] is False and x['vendor_abi_proven'] is False
+          assert x['stock_release_reference']=='5.4.274-qgki-g82179e362f33'
+          print('SIX_OEM_FILES_STAGED=PASS; ABI_NOT_PROVEN; FLASH=NO')
+          PY_STATUS
+          test -z "$(git -C project status --porcelain --untracked-files=all)"
+      - name: Upload source diffs and evidence ONLY, no kernel images
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: VEUX-R46-R10-IOMMU-SOURCE-PATCHES-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/r10_staged/
+          if-no-files-found: warn
+          retention-days: 30
