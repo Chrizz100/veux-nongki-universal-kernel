@@ -1,0 +1,83 @@
+name: VEUX R46-R14-R2 verify existing LTO-CFI build - NOFLASH
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: veux-r14-r2-existing-audit-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  audit-existing-r14:
+    name: Read-only proof of the existing R14 kernel and repaired OEM group
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      R14_R2_DIR: ${{ github.workspace }}/r14-r2-tools
+      R14_R2_ARCHIVE: ${{ github.workspace }}/original-r14-artifact.zip
+      R14_R2_OUTPUT: ${{ github.workspace }}/r14-r2-verified-result
+    steps:
+    - name: Checkout exact audit recipe read-only
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: project
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Authenticate corrected LTO CFI checker and all source regressions
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = 'Chrizz100/veux-nongki-universal-kernel'
+        printf '%s  %s\n' a8f0bd5f24382ef1ea7e2af6210457291f4a288828b222cae295d372a5dcc3dd project/VEUX_R46_R14_R2_LTO_CFI_AUDIT_MAIN.zip | sha256sum -c --strict -
+        python3 -B - <<'PY_R14_R2_UNPACK'
+        import os,pathlib,stat,zipfile
+        out=pathlib.Path(os.environ['R14_R2_DIR'])
+        assert not out.exists() and out.resolve().is_relative_to(pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve())
+        with zipfile.ZipFile('project/VEUX_R46_R14_R2_LTO_CFI_AUDIT_MAIN.zip') as z:
+            members=z.infolist()
+            assert len(members)<200 and sum(x.file_size for x in members)<64_000_000
+            assert z.testzip() is None and len(members)==len(set(x.filename for x in members))
+            for item in members:
+                p=pathlib.PurePosixPath(item.filename)
+                assert not p.is_absolute() and '..' not in p.parts and '\\' not in item.filename
+                assert not item.is_dir() and not stat.S_ISLNK(item.external_attr>>16)
+            z.extractall(out)
+            (out/'Tools/actionlint').chmod(0o755)
+        PY_R14_R2_UNPACK
+        python3 -B "$R14_R2_DIR/Tools/restore_oem.py" verify-package
+        printf '%s  %s\n' c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4 "$R14_R2_DIR/Tools/actionlint" | sha256sum -c --strict -
+        "$R14_R2_DIR/Tools/actionlint" -color=false -shellcheck= "project/.github/workflows/VEUX_R46_R14_R2_EXISTING_BUILD_AUDIT_NOFLASH.yml"
+        python3 -B -m unittest discover -s "$R14_R2_DIR/Tests" -v
+        python3 -B -m unittest discover -s "$R14_R2_DIR/runtime-r13/Tests" -v
+        python3 -B -m unittest discover -s "$R14_R2_DIR/runtime-r13/runtime-r12/Tests" -v
+        python3 -B -m unittest discover -s "$R14_R2_DIR/runtime-r13/runtime-r12/runtime-r11/Tests" -v
+    - name: Download exactly the original R14 artifact with read-only API access
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        python3 -B "$R14_R2_DIR/Tools/fetch_original_artifact.py" --output "$R14_R2_ARCHIVE"
+    - name: Verify existing ARM64 link initcall and all 1423 original imports without
+        compilation
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B "$R14_R2_DIR/Tools/audit_existing.py" --archive "$R14_R2_ARCHIVE" --output "$R14_R2_OUTPUT"
+    - name: Preserve corrected audit with unchanged original link products
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: VEUX-R46-R14-R2-VERIFIED-BUILD-NOFLASH-${{ github.run_id }}
+        path: ${{ env.R14_R2_OUTPUT }}/
+        include-hidden-files: true
+        if-no-files-found: warn
+        compression-level: 6
+        retention-days: 30
+    - name: Confirm repository unchanged
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
+        test -z "$(git -C project status --porcelain --untracked-files=all)"
