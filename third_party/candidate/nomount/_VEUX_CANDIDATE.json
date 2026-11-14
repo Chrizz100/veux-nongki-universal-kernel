@@ -1,9 +1,9 @@
 {
-  "ahead": 300,
+  "ahead": 415,
   "base": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
   "build_verified": false,
   "changed": true,
-  "commit": "bf1847f98fed382369c43bfd652cd93774b9b8e3",
+  "commit": "7914458ca71dfa3a8c162fa97fdb69332db7a690",
   "compatibility_errors": [],
   "component": "nomount",
   "component_gate": true,
@@ -20,13 +20,13 @@
   "missing_paths": [],
   "ref": "refs/heads/master",
   "review_reasons": [
-    "NoMount declared version changed: 20 -> 22"
+    "NoMount declared version changed: 20 -> 23"
   ],
   "review_required": true,
   "reviewed_interface": true,
   "schema": 1,
   "snapshot_kind": "unbuilt-upstream-candidate",
   "url": "https://github.com/maxsteeel/nomount.git",
-  "version": "22",
+  "version": "23",
   "version_kind": "base-version-dynamic-commit-count"
 }
