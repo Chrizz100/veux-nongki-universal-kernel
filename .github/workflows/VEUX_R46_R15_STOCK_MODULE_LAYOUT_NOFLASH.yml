@@ -1,10 +1,10 @@
-name: VEUX R24 RTMM Prozessspeicher Stock QGKI Boot AK3 - NOFLASH
+name: VEUX R25 TrustZone Procfs Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: veux-r24-rtmm-process-boot-ak3-${{ github.ref }}
+  group: veux-r25-tz-procfs-boot-ak3-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   p11-exact-source:
@@ -166,9 +166,10 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-r24-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-r25-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
+      R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1538,7 +1539,7 @@ jobs:
         mkdir -p "$RUNNER_TEMP/veux-p11-actionlint"
         install -m 0755 "$R44_DIR/actionlint" "$RUNNER_TEMP/veux-p11-actionlint/actionlint"
         "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -color=false -shellcheck= "$R47_WORKFLOW"
-    - name: Authenticate original engines R24 MAIN and run all repair and native C regressions
+    - name: Authenticate pinned engines and test all repairs plus TZ procfs DMA and error paths
       shell: bash
       run: "set -euo pipefail\npython3 -B - <<'PY_R16_PINNED_MAIN'\nimport base64,hashlib,os,pathlib,re,urllib.request\ncurrent=pathlib.Path('project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
         current_size=current.stat().st_size\nassert 0<current_size<=500_000, 'WORKFLOW_FILE_EXCEEDS_500000_BYTES'\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
@@ -1651,16 +1652,29 @@ jobs:
         \        assert not p.is_absolute() and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir()\
         \ and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R23_EXTENSION\npython3 -B \"$R23_DIR/Tools/r23_fingerprint.py\"\
         \ verify-package\nR23_WORKFLOW=\"$RUNNER_TEMP/r24-original-r23.yml\" python3 -B -m unittest discover -s \"$R23_DIR/Tests\"\
-        \ -v\npython3 -B - <<'PY_R24_MAIN'\nimport hashlib,os,pathlib,stat,zipfile\npackage=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_R24_MAIN.zip'\n\
-        assert package.is_file()and not package.is_symlink(), 'UPLOAD_VEUX_R24_MAIN_ZIP_TO_REPOSITORY_ROOT'\nassert package.stat().st_size==376868,\
-        \ 'R24_MAIN_SIZE_CHANGED'\nassert hashlib.sha256(package.read_bytes()).hexdigest()=='00daa01c47640b57564c0deb33c6cdaf045d54f8777cfbe0e5c7a778ff14bc96',\
-        \ 'R24_MAIN_SHA256_CHANGED'\nout=pathlib.Path(os.environ['R24_DIR']);assert not out.exists()\nwith zipfile.ZipFile(package)as\
-        \ z:\n    items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<4_000_000\n    assert len(items)==len(set(x.filename\
-        \ for x in items))and z.testzip()is None\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n     \
-        \   assert not p.is_absolute()and'..'not in p.parts and'\\\\'not in x.filename\n        assert not x.is_dir()and not\
-        \ stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R24_MAIN\npython3 -B \"$R24_DIR/Tools/r24_memory.py\"\
-        \ verify-package\nR24_WORKFLOW=\"$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml\"\
-        \ python3 -B -m unittest discover -s \"$R24_DIR/Tests\" -v\n"
+        \ -v\npython3 -B - <<'PY_R24_MAIN'\nimport hashlib,io,os,pathlib,stat,urllib.request,zipfile\nbase='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/3d79c8816272ccb6b61b77d201d2b12c58a8fdce/'\n\
+        def fetch(name,limit):\n    for attempt in range(3):\n        try:\n            with urllib.request.urlopen(base+name,timeout=45)as\
+        \ response:return response.read(limit+1)\n        except (OSError,TimeoutError):\n            if attempt==2:raise\n\
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)\nassert len(parent)==299567\n\
+        assert hashlib.sha256(parent).hexdigest()=='bac032db11b36612abfd77e33ddba3e0f8a70d133a78a74a7b9b5d0246f745e3'\noriginal=pathlib.Path(os.environ['RUNNER_TEMP'])/'r25-original-r24.yml'\n\
+        assert not original.exists();original.write_bytes(parent)\ndata=fetch('VEUX_R24_MAIN.zip',1_000_000)\nassert len(data)==376868\n\
+        assert hashlib.sha256(data).hexdigest()=='00daa01c47640b57564c0deb33c6cdaf045d54f8777cfbe0e5c7a778ff14bc96'\nout=pathlib.Path(os.environ['R24_DIR']);assert\
+        \ not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))as z:\n    items=z.infolist();assert len(items)<100 and\
+        \ sum(x.file_size for x in items)<4_000_000\n    assert z.testzip()is None and len(items)==len(set(x.filename for\
+        \ x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute()and'..'not\
+        \ in p.parts and'\\\\'not in x.filename\n        assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R24_MAIN\npython3 -B \"$R24_DIR/Tools/r24_memory.py\" verify-package\nR24_WORKFLOW=\"$RUNNER_TEMP/r25-original-r24.yml\"\
+        \ python3 -B -m unittest discover -s \"$R24_DIR/Tests\" -v\npython3 -B - <<'PY_R25_MAIN'\nimport hashlib,os,pathlib,stat,zipfile\n\
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_R25_MAIN.zip'\nassert package.is_file()and not\
+        \ package.is_symlink(), 'UPLOAD_VEUX_R25_MAIN_ZIP_TO_REPOSITORY_ROOT'\nassert package.stat().st_size==118183, 'R25_MAIN_SIZE_CHANGED'\n\
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='e5b793f550c302f85edd10598160e41024afee6ad288d589485ead926edfd5c4',\
+        \ 'R25_MAIN_SHA256_CHANGED'\nout=pathlib.Path(os.environ['R25_DIR']);assert not out.exists()\nwith zipfile.ZipFile(package)as\
+        \ z:\n    items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip()is\
+        \ None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
+        \        assert not p.is_absolute()and'..'not in p.parts and'\\\\'not in x.filename\n        assert not x.is_dir()and\
+        \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
+        \ verify-package\nR25_WORKFLOW=\"$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml\"\
+        \ python3 -B -m unittest discover -s \"$R25_DIR/Tests\" -v\n"
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4166,6 +4180,7 @@ jobs:
         python3 -B "$R19_RMNET_DIR/Tools/r19_rmnet_vendor_abi.py" check-source --source "$R9_SNAPSHOT"
         python3 -B "$R21_SCHED_DIR/Tools/r21_scheduler_release.py" check-source --source "$R9_SNAPSHOT"
         python3 -B "$R23_DIR/Tools/r23_fingerprint.py" check-source --source "$R9_SNAPSHOT"
+        python3 -B "$R25_DIR/Tools/r25_tzlog.py" check-source --source "$R9_SNAPSHOT"
     - name: R20 genuine WALT-ON ARM64 full Image DTBs and modules make with linked vmlinux
       shell: bash
       run: |
@@ -4619,11 +4634,12 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: R24 full RTMM process reclaim CFI ThinLTO build require all stock ABI and fingerprint gates
+    - name: R25 full stock procfs TrustZone logger memory fingerprint and complete OEM ABI build
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$R24_DIR/Tools/r24_memory.py" build \
+        python3 -B "$R25_DIR/Tools/r25_tzlog.py" build \
+          --r24-tool "$R24_DIR/Tools/r24_memory.py" \
           --r23-tool "$R23_DIR/Tools/r23_fingerprint.py" \
           --r21-tool "$R21_SCHED_DIR/Tools/r21_scheduler_release.py" \
           --r19-tool "$R19_RMNET_DIR/Tools/r19_rmnet_vendor_abi.py" \
@@ -4634,21 +4650,22 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: Build boot and AK3 only after fresh R24 memory fingerprint and complete OEM gates
+    - name: Construct boot and AK3 only after all fresh R25 TZ memory fingerprint and OEM gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$R24_DIR/Tools/r24_memory.py" package \
+        python3 -B "$R25_DIR/Tools/r25_tzlog.py" package \
+          --r24-tool "$R24_DIR/Tools/r24_memory.py" \
           --r23-tool "$R23_DIR/Tools/r23_fingerprint.py" \
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-r24-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-r25-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-R24-RTMM-PROCESS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-R25-TZ-PROCFS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: '${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
 
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -4867,35 +4884,55 @@ jobs:
 
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/base.o
 
-          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.base.o.cmd'
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.base.o.cmd
+
+          ${{ env.R16_REPAIR_OUTPUT }}/R25_RESULT.json
+
+          ${{ env.R25_DIR }}/
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/arch/arm64/boot/dts/vendor/qcom/holi.dtsi
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/tz_log.o
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/.tz_log.o.cmd
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Kconfig
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Makefile
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Kconfig
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Makefile
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/tz_log.c'
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report actual R24 memory and static container gates with Device Pass separate
+    - name: Report actual R25 TZ procfs and static package gates with Device Pass separate
       if: ${{ always() }}
       shell: bash
       run: |
         set -euo pipefail
         test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
         test -z "$(git -C project status --porcelain --untracked-files=all)"
-        python3 -B - <<'PY_R24_SUMMARY'
+        python3 -B - <<'PY_R25_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'R24_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'R24_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'R25_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'R25_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX R24 RTMM, Prozessspeicher, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX R25 TrustZone-Procfs, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('Verlinkte Speicher-Schnittstellen: `'+str(r.get('linked_memory_interfaces','nicht erreicht'))+'`\n\n')
+                f.write('TrustZone-Log-Schnittstellen: `'+str(r.get('linked_tz_log_interfaces','nicht erreicht'))+'`\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger R24-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger R25-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
-            f.write('Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('R24_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
-        PY_R24_SUMMARY
-    name: R6 control then R24 complete RTMM process reclaim OEM ABI and static boot AK3 gates
+            f.write('Stock Debugfs: aus. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
+        print('R25_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        PY_R25_SUMMARY
+    name: R6 control then R25 TZ procfs memory fingerprint full ABI and static boot AK3 gates
