@@ -1,10 +1,10 @@
-name: VEUX R25 TrustZone Procfs Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M25 Actual Embedded Config Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: veux-r25-tz-procfs-boot-ak3-${{ github.ref }}
+  group: veux-m25-real-config-boot-ak3-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   p11-exact-source:
@@ -170,6 +170,7 @@ jobs:
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
+      M25_DIR: ${{ github.workspace }}/veux-m25-config-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -178,6 +179,28 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
+    - name: Authenticate M25 correction and preserve exact original R25 tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -B - <<'PY_M25_AUTH'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M25_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M25_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==87835,'M25_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='e834dd8af1c389da54f08afaaa157434400a38220a5b1acca48a84a7636d59b0','M25_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M25_DIR']);assert not out.exists()
+        with zipfile.ZipFile(package)as z:
+            entries=z.infolist()
+            assert len(entries)<100 and sum(x.file_size for x in entries)<2000000
+            assert len(entries)==len(set(x.filename for x in entries))and z.testzip()is None
+            for x in entries:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M25_AUTH
+        python3 -B "$M25_DIR/Tools/m25_config.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -1541,140 +1564,158 @@ jobs:
         "$RUNNER_TEMP/veux-p11-actionlint/actionlint" -color=false -shellcheck= "$R47_WORKFLOW"
     - name: Authenticate pinned engines and test all repairs plus TZ procfs DMA and error paths
       shell: bash
-      run: "set -euo pipefail\npython3 -B - <<'PY_R16_PINNED_MAIN'\nimport base64,hashlib,os,pathlib,re,urllib.request\ncurrent=pathlib.Path('project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
-        current_size=current.stat().st_size\nassert 0<current_size<=500_000, 'WORKFLOW_FILE_EXCEEDS_500000_BYTES'\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
+      run: "set -euo pipefail\npython3 -B - <<'PY_R16_PINNED_MAIN'\nimport base64,hashlib,os,pathlib,re,urllib.request\n\
+        current=pathlib.Path('project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\ncurrent_size=current.stat().st_size\n\
+        assert 0<current_size<=500_000, 'WORKFLOW_FILE_EXCEEDS_500000_BYTES'\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
         \     '062f4b4de7704d07e226755b4930596128d25f06/'\n     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
-        request=urllib.request.Request(url,headers={'User-Agent':'VEUX-R16-R4-pinned-bootstrap'})\nfor attempt in range(3):\n\
-        \    try:\n        with urllib.request.urlopen(request,timeout=45) as response:\n            raw=response.read(600_001)\n\
-        \        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(raw)==541617, 'PINNED_SOURCE_WORKFLOW_LENGTH_CHANGED'\n\
-        assert hashlib.sha256(raw).hexdigest()=='f971071c60498da03df20c2d3e5d103b0c9b32467745d04fcfba07e233e691b9', 'PINNED_SOURCE_WORKFLOW_HASH_CHANGED'\n\
-        matches=re.findall(\"payload='''(.*?)'''\",raw.decode('utf-8'),re.S)\nassert len(matches)==1, 'PINNED_MAIN_PAYLOAD_NOT_UNIQUE'\n\
-        data=base64.b64decode(''.join(matches[0].split()),validate=True)\nassert len(data)==183122\nassert hashlib.sha256(data).hexdigest()=='02b5fead3eaab3a5d5c9e82f887c5690af80849d26e70779306ac5fc77bd5764'\n\
+        request=urllib.request.Request(url,headers={'User-Agent':'VEUX-R16-R4-pinned-bootstrap'})\nfor attempt in\
+        \ range(3):\n    try:\n        with urllib.request.urlopen(request,timeout=45) as response:\n          \
+        \  raw=response.read(600_001)\n        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\n\
+        assert len(raw)==541617, 'PINNED_SOURCE_WORKFLOW_LENGTH_CHANGED'\nassert hashlib.sha256(raw).hexdigest()=='f971071c60498da03df20c2d3e5d103b0c9b32467745d04fcfba07e233e691b9',\
+        \ 'PINNED_SOURCE_WORKFLOW_HASH_CHANGED'\nmatches=re.findall(\"payload='''(.*?)'''\",raw.decode('utf-8'),re.S)\n\
+        assert len(matches)==1, 'PINNED_MAIN_PAYLOAD_NOT_UNIQUE'\ndata=base64.b64decode(''.join(matches[0].split()),validate=True)\n\
+        assert len(data)==183122\nassert hashlib.sha256(data).hexdigest()=='02b5fead3eaab3a5d5c9e82f887c5690af80849d26e70779306ac5fc77bd5764'\n\
         p=pathlib.Path(os.environ['RUNNER_TEMP'])/'veux-r16-main.zip'\nwith p.open('xb') as f:f.write(data)\nprint('WORKFLOW_FILE_BYTES='+str(current_size)+';\
         \ LIMIT=500000; R3_MAIN_BYTE_IDENTICAL=YES')\nPY_R16_PINNED_MAIN\nprintf '%s  %s\\n' 02b5fead3eaab3a5d5c9e82f887c5690af80849d26e70779306ac5fc77bd5764\
         \ \"$RUNNER_TEMP/veux-r16-main.zip\" | sha256sum -c --strict -\npython3 -B - <<'PY_R16_UNPACK'\nimport os,pathlib,stat,zipfile\n\
         out=pathlib.Path(os.environ['R16_REPAIR_DIR'])\nassert not out.exists()\nwith zipfile.ZipFile(pathlib.Path(os.environ['RUNNER_TEMP'])/'veux-r16-main.zip')\
-        \ as z:\n    members=z.infolist()\n    assert len(members)<150 and sum(p.file_size for p in members)<2_000_000\n \
-        \   assert z.testzip() is None and len(members)==len(set(p.filename for p in members))\n    for item in members:\n\
-        \        p=pathlib.PurePosixPath(item.filename)\n        assert not p.is_absolute() and '..' not in p.parts and '\\\
-        \\' not in item.filename\n        assert not item.is_dir() and not stat.S_ISLNK(item.external_attr>>16)\n    z.extractall(out)\n\
-        PY_R16_UNPACK\npython3 -B \"$R16_REPAIR_DIR/Tools/bootstrap.py\"\npython3 -B \"$R16_REPAIR_DIR/Tools/restore_memory_network.py\"\
-        \ verify-package\nchmod +x \"$R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\"\nprintf '%s  %s\\n' c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4\
-        \ \"$R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\" | sha256sum -c --strict -\npython3 -B -m unittest discover -s \"\
-        $R16_REPAIR_DIR/Tests\" -v\npython3 -B -m unittest discover -s \"$R15_LAYOUT_DIR/Tests\" -v\npython3 -B -m unittest\
-        \ discover -s \"$R15_LAYOUT_DIR/runtime-r14/Tests\" -v\npython3 -B -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/Tests\"\
-        \ -v\npython3 -B -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/runtime-r12/Tests\" -v\npython3\
-        \ -B -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/runtime-r12/runtime-r11/Tests\" -v\n\"$R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\"\
-        \ -color=false -shellcheck= \"project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml\"\npython3 -B\
-        \ - <<'PY_R17_EXTENSION'\nimport base64,hashlib,os,pathlib,stat,zipfile,io\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
+        \ as z:\n    members=z.infolist()\n    assert len(members)<150 and sum(p.file_size for p in members)<2_000_000\n\
+        \    assert z.testzip() is None and len(members)==len(set(p.filename for p in members))\n    for item in\
+        \ members:\n        p=pathlib.PurePosixPath(item.filename)\n        assert not p.is_absolute() and '..'\
+        \ not in p.parts and '\\\\' not in item.filename\n        assert not item.is_dir() and not stat.S_ISLNK(item.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R16_UNPACK\npython3 -B \"$R16_REPAIR_DIR/Tools/bootstrap.py\"\npython3 -B \"\
+        $R16_REPAIR_DIR/Tools/restore_memory_network.py\" verify-package\nchmod +x \"$R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\"\
+        \nprintf '%s  %s\\n' c872d6db8c6bf83a8eaa704fc93999f027d55dffbc63b8a6abdccb47df5f4cd4 \"$R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\"\
+        \ | sha256sum -c --strict -\npython3 -B -m unittest discover -s \"$R16_REPAIR_DIR/Tests\" -v\npython3 -B\
+        \ -m unittest discover -s \"$R15_LAYOUT_DIR/Tests\" -v\npython3 -B -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/Tests\"\
+        \ -v\npython3 -B -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/Tests\" -v\npython3 -B\
+        \ -m unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/runtime-r12/Tests\" -v\npython3 -B -m\
+        \ unittest discover -s \"$R15_LAYOUT_DIR/runtime-r14/runtime-r13/runtime-r12/runtime-r11/Tests\" -v\n\"\
+        $R15_LAYOUT_DIR/runtime-r14/Tools/actionlint\" -color=false -shellcheck= \"project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml\"\
+        \npython3 -B - <<'PY_R17_EXTENSION'\nimport base64,hashlib,os,pathlib,stat,zipfile,io\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
         \     'f5c8d867865c268023c1883db824008b268a2575/'\n     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
         import urllib.request,re\nfor attempt in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45)\
-        \ as response:\n            parent=response.read(400_001)\n        break\n    except (OSError,TimeoutError):\n   \
-        \     if attempt==2:raise\nassert len(parent)==350595\nassert hashlib.sha256(parent).hexdigest()=='8ce535a5645640a0a931b06245c51db033bd9e04a84d3f99a828a567fbced134'\n\
+        \ as response:\n            parent=response.read(400_001)\n        break\n    except (OSError,TimeoutError):\n\
+        \        if attempt==2:raise\nassert len(parent)==350595\nassert hashlib.sha256(parent).hexdigest()=='8ce535a5645640a0a931b06245c51db033bd9e04a84d3f99a828a567fbced134'\n\
         text=parent.decode('utf-8')\nbody=text[text.index(\"<<'PY_R17_EXTENSION'\"):]\npayload=re.search(\"payload='''(.*?)'''\"\
-        ,body,re.S).group(1)\ndata=base64.b64decode(''.join(payload.split()),validate=True)\nassert len(data)==49693\nassert\
-        \ hashlib.sha256(data).hexdigest()=='62f5877252fa0f2b18ca5915dfddbe8a1c9ac6e862fd28261a03da6ad20c9c86'\nout=pathlib.Path(os.environ['R17_CACHE_DIR'])\n\
-        assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as z:\n    items=z.infolist()\n    assert len(items)<100\
-        \ and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip() is None and len(items)==len(set(x.filename\
-        \ for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute()\
-        \ and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        ,body,re.S).group(1)\ndata=base64.b64decode(''.join(payload.split()),validate=True)\nassert len(data)==49693\n\
+        assert hashlib.sha256(data).hexdigest()=='62f5877252fa0f2b18ca5915dfddbe8a1c9ac6e862fd28261a03da6ad20c9c86'\n\
+        out=pathlib.Path(os.environ['R17_CACHE_DIR'])\nassert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
         \    z.extractall(out)\nPY_R17_EXTENSION\npython3 -B \"$R17_CACHE_DIR/Tools/r17_cache_alignment.py\" verify-package\n\
-        R17_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\" python3 -B -m unittest discover -s \"$R17_CACHE_DIR/Tests\"\
-        \ -v\npython3 -B - <<'PY_R18_EXTENSION'\nimport base64,hashlib,os,pathlib,stat,zipfile,io\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
-        \     '226d37663d07cf8ef72f9b69b5f72bf5bb1ad218/'\n     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
-        import urllib.request,re\nfor attempt in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45)\
-        \ as response:\n            parent=response.read(400_001)\n        break\n    except (OSError,TimeoutError):\n   \
-        \     if attempt==2:raise\nassert len(parent)==367780\nassert hashlib.sha256(parent).hexdigest()=='27541eb8dc81563f25d1187e57f2cd149d17cabaeff0093c4ba0334e187059c4'\n\
+        R17_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\" python3 -B -m unittest discover -s \"\
+        $R17_CACHE_DIR/Tests\" -v\npython3 -B - <<'PY_R18_EXTENSION'\nimport base64,hashlib,os,pathlib,stat,zipfile,io\n\
+        url=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n     '226d37663d07cf8ef72f9b69b5f72bf5bb1ad218/'\n\
+        \     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\nimport urllib.request,re\nfor attempt\
+        \ in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45) as response:\n           \
+        \ parent=response.read(400_001)\n        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\n\
+        assert len(parent)==367780\nassert hashlib.sha256(parent).hexdigest()=='27541eb8dc81563f25d1187e57f2cd149d17cabaeff0093c4ba0334e187059c4'\n\
         text=parent.decode('utf-8')\nbody=text[text.index(\"<<'PY_R18_EXTENSION'\"):]\npayload=re.search(\"payload='''(.*?)'''\"\
-        ,body,re.S).group(1)\ndata=base64.b64decode(''.join(payload.split()),validate=True)\nassert len(data)==59735\nassert\
-        \ hashlib.sha256(data).hexdigest()=='1f987f9803a630d03d0898a007cee4fbaf31c830952869c4ff39687e58d0331b'\nout=pathlib.Path(os.environ['R18_IRQ_DIR'])\n\
-        assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as z:\n    items=z.infolist()\n    assert len(items)<100\
-        \ and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip() is None and len(items)==len(set(x.filename\
-        \ for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute()\
-        \ and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
-        \    z.extractall(out)\nPY_R18_EXTENSION\npython3 -B \"$R18_IRQ_DIR/Tools/r18_irq_affinity.py\" verify-package\nR18_R17_TOOL=\"\
-        $R17_CACHE_DIR/Tools/r17_cache_alignment.py\" R18_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\" python3\
-        \ -B -m unittest discover -s \"$R18_IRQ_DIR/Tests\" -v\npython3 -B - <<'PY_R19_EXTENSION'\nimport base64,hashlib,os,pathlib,stat,zipfile,io\n\
-        import urllib.request,re\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n     '69d8ac8854c745fef611769ec5384ecfc601faf5/'\n\
-        \     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\nfor attempt in range(3):\n    try:\n    \
-        \    with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(400_001)\n        break\n    except\
-        \ (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==373477\nassert hashlib.sha256(parent).hexdigest()=='4a9b26aff4a28c2ecd1d151e8b8428cd308e9d7dd9b6ec177743d21d8cfb9960'\n\
+        ,body,re.S).group(1)\ndata=base64.b64decode(''.join(payload.split()),validate=True)\nassert len(data)==59735\n\
+        assert hashlib.sha256(data).hexdigest()=='1f987f9803a630d03d0898a007cee4fbaf31c830952869c4ff39687e58d0331b'\n\
+        out=pathlib.Path(os.environ['R18_IRQ_DIR'])\nassert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R18_EXTENSION\npython3 -B \"$R18_IRQ_DIR/Tools/r18_irq_affinity.py\" verify-package\n\
+        R18_R17_TOOL=\"$R17_CACHE_DIR/Tools/r17_cache_alignment.py\" R18_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\"\
+        \ python3 -B -m unittest discover -s \"$R18_IRQ_DIR/Tests\" -v\npython3 -B - <<'PY_R19_EXTENSION'\nimport\
+        \ base64,hashlib,os,pathlib,stat,zipfile,io\nimport urllib.request,re\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
+        \     '69d8ac8854c745fef611769ec5384ecfc601faf5/'\n     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
+        for attempt in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(400_001)\n\
+        \        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==373477\n\
+        assert hashlib.sha256(parent).hexdigest()=='4a9b26aff4a28c2ecd1d151e8b8428cd308e9d7dd9b6ec177743d21d8cfb9960'\n\
         text=parent.decode('utf-8');body=text[text.index(\"<<'PY_R19_EXTENSION'\"):]\nmatches=re.findall(\"payload='''(.*?)'''\"\
         ,body,re.S);assert len(matches)==1\npayload=matches[0]\ndata=base64.b64decode(''.join(payload.split()),validate=True)\n\
         assert len(data)==61440\nassert hashlib.sha256(data).hexdigest()=='ebd2dbb72887f792539399b4db0f891fe9eb7d4ed2a86ab7d0441e5538561ab2'\n\
-        out=pathlib.Path(os.environ['R19_RMNET_DIR'])\nassert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as\
-        \ z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert\
-        \ z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
-        \        assert not p.is_absolute() and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir()\
-        \ and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R19_EXTENSION\npython3 -B \"$R19_RMNET_DIR/Tools/r19_rmnet_vendor_abi.py\"\
-        \ verify-package\nR19_R18_TOOL=\"$R18_IRQ_DIR/Tools/r18_irq_affinity.py\" R18_R17_TOOL=\"$R17_CACHE_DIR/Tools/r17_cache_alignment.py\"\
-        \ R18_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\" python3 -B -m unittest discover -s \"$R19_RMNET_DIR/Tests\"\
-        \ -v\npython3 -B - <<'PY_R21_EXTENSION'\nimport base64,hashlib,io,os,pathlib,stat,zipfile\nimport re,urllib.request\n\
-        url=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n     'cd2a0483f76bf8dab8fbcecc1f252110f6445602/'\n\
-        \     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\nfor attempt in range(3):\n    try:\n    \
-        \    with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(500_001)\n        break\n    except\
-        \ (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==448406\nassert hashlib.sha256(parent).hexdigest()=='df6345b494edede09b3046370d2db1f4a0209e574f41ebb8d11c1232c9e3e018'\n\
+        out=pathlib.Path(os.environ['R19_RMNET_DIR'])\nassert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R19_EXTENSION\npython3 -B \"$R19_RMNET_DIR/Tools/r19_rmnet_vendor_abi.py\" verify-package\n\
+        R19_R18_TOOL=\"$R18_IRQ_DIR/Tools/r18_irq_affinity.py\" R18_R17_TOOL=\"$R17_CACHE_DIR/Tools/r17_cache_alignment.py\"\
+        \ R18_BASE_TOOL=\"$R16_REPAIR_DIR/Tools/restore_memory_network.py\" python3 -B -m unittest discover -s \"\
+        $R19_RMNET_DIR/Tests\" -v\npython3 -B - <<'PY_R21_EXTENSION'\nimport base64,hashlib,io,os,pathlib,stat,zipfile\n\
+        import re,urllib.request\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
+        \     'cd2a0483f76bf8dab8fbcecc1f252110f6445602/'\n     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\n\
+        for attempt in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(500_001)\n\
+        \        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==448406\n\
+        assert hashlib.sha256(parent).hexdigest()=='df6345b494edede09b3046370d2db1f4a0209e574f41ebb8d11c1232c9e3e018'\n\
         original=pathlib.Path(os.environ['RUNNER_TEMP'])/'r23-original-r21.yml'\nassert not original.exists();original.write_bytes(parent)\n\
-        body=re.split(r\"\\n[ \t]*PY_R21_EXTENSION(?:\\n|$)\",parent.decode('utf-8').split(\"<<'PY_R21_EXTENSION'\",1)[1],maxsplit=1)[0]\n\
-        matches=re.findall(\"payload='''(.*?)'''\",body,re.S);assert len(matches)==1\npayload=matches[0]\ndata=base64.b64decode(''.join(payload.split()),validate=True)\n\
-        assert len(data)==107961\nassert hashlib.sha256(data).hexdigest()=='7989563a799eb93dc4b01e23d70836a29fe5f015674c70c2d4ec4435682a0656'\n\
-        out=pathlib.Path(os.environ['R21_SCHED_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as z:\n\
-        \    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip()\
-        \ is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
-        \        assert not p.is_absolute() and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir()\
-        \ and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R21_EXTENSION\npython3 -B \"$R21_SCHED_DIR/Tools/r21_scheduler_release.py\"\
-        \ verify-package\nR21_WORKFLOW=\"$RUNNER_TEMP/r23-original-r21.yml\" python3 -B -m unittest discover -s \"$R21_SCHED_DIR/Tests\"\
-        \ -v\npython3 -B - <<'PY_R21_PACKAGER'\nimport base64,hashlib,io,os,pathlib,re,stat,urllib.request,zipfile\nurl=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n\
-        \     '3aad621fc96d662321a965909c8a3216c19d2456/'\n     '.github/workflows/VEUX_R20_BOOT_AK3_KONZEPT_NOFLASH.yml')\n\
-        for attempt in range(3):\n    try:\n        with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(150_001)\n\
-        \        break\n    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==119891\nassert\
-        \ hashlib.sha256(parent).hexdigest()=='d50b8bb8798e6275ba8f022eb303d97f24f651e51e8bb542815eff43704b5610'\nmatches=re.findall(\"\
-        payload='''(.*?)'''\",parent.decode('utf-8'),re.S);assert len(matches)==1\ndata=base64.b64decode(''.join(matches[0].split()),validate=True)\n\
+        body=re.split(r\"\\n[ \t]*PY_R21_EXTENSION(?:\\n|$)\",parent.decode('utf-8').split(\"<<'PY_R21_EXTENSION'\"\
+        ,1)[1],maxsplit=1)[0]\nmatches=re.findall(\"payload='''(.*?)'''\",body,re.S);assert len(matches)==1\npayload=matches[0]\n\
+        data=base64.b64decode(''.join(payload.split()),validate=True)\nassert len(data)==107961\nassert hashlib.sha256(data).hexdigest()=='7989563a799eb93dc4b01e23d70836a29fe5f015674c70c2d4ec4435682a0656'\n\
+        out=pathlib.Path(os.environ['R21_SCHED_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R21_EXTENSION\npython3 -B \"$R21_SCHED_DIR/Tools/r21_scheduler_release.py\" verify-package\n\
+        R21_WORKFLOW=\"$RUNNER_TEMP/r23-original-r21.yml\" python3 -B -m unittest discover -s \"$R21_SCHED_DIR/Tests\"\
+        \ -v\npython3 -B - <<'PY_R21_PACKAGER'\nimport base64,hashlib,io,os,pathlib,re,stat,urllib.request,zipfile\n\
+        url=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n     '3aad621fc96d662321a965909c8a3216c19d2456/'\n\
+        \     '.github/workflows/VEUX_R20_BOOT_AK3_KONZEPT_NOFLASH.yml')\nfor attempt in range(3):\n    try:\n \
+        \       with urllib.request.urlopen(url,timeout=45) as response:parent=response.read(150_001)\n        break\n\
+        \    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==119891\nassert hashlib.sha256(parent).hexdigest()=='d50b8bb8798e6275ba8f022eb303d97f24f651e51e8bb542815eff43704b5610'\n\
+        matches=re.findall(\"payload='''(.*?)'''\",parent.decode('utf-8'),re.S);assert len(matches)==1\ndata=base64.b64decode(''.join(matches[0].split()),validate=True)\n\
         assert len(data)==76029\nassert hashlib.sha256(data).hexdigest()=='08dcab2a33cce61a532084311d803452800ed96d43aea70f71096cf606a10411'\n\
-        out=pathlib.Path(os.environ['R21_PACK_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as z:\n\
-        \    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip()\
-        \ is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
-        \        assert not p.is_absolute() and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir()\
-        \ and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R21_PACKAGER\npython3 -B \"$R21_PACK_DIR/Tools/boot_ak3_plan.py\"\
-        \ verify-package\npython3 -B - <<'PY_R23_EXTENSION'\nimport base64,hashlib,io,os,pathlib,stat,zipfile\nimport re,urllib.request\n\
+        out=pathlib.Path(os.environ['R21_PACK_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R21_PACKAGER\npython3 -B \"$R21_PACK_DIR/Tools/boot_ak3_plan.py\" verify-package\n\
+        python3 -B - <<'PY_R23_EXTENSION'\nimport base64,hashlib,io,os,pathlib,stat,zipfile\nimport re,urllib.request\n\
         url=('https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/'\n     'ae817fd7617fb0e611df604eec3813e0825ef2c7/'\n\
-        \     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\nfor attempt in range(3):\n    try:\n    \
-        \    with urllib.request.urlopen(url,timeout=45)as response:parent=response.read(500_001)\n        break\n    except\
-        \ (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==427158\nassert hashlib.sha256(parent).hexdigest()=='f2d65e10a881526c54131dfc4d6b44fcc3d5c87af47d1ea254b5515a356b62cd'\n\
+        \     '.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml')\nfor attempt in range(3):\n    try:\n\
+        \        with urllib.request.urlopen(url,timeout=45)as response:parent=response.read(500_001)\n        break\n\
+        \    except (OSError,TimeoutError):\n        if attempt==2:raise\nassert len(parent)==427158\nassert hashlib.sha256(parent).hexdigest()=='f2d65e10a881526c54131dfc4d6b44fcc3d5c87af47d1ea254b5515a356b62cd'\n\
         original=pathlib.Path(os.environ['RUNNER_TEMP'])/'r24-original-r23.yml'\nassert not original.exists();original.write_bytes(parent)\n\
         body=re.split(r\"\\n[ \\t]*PY_R23_EXTENSION(?:\\n|$)\",parent.decode().split(\"<<'PY_R23_EXTENSION'\",1)[1],maxsplit=1)[0]\n\
-        matches=re.findall(\"payload='''(.*?)'''\",body,re.S);assert len(matches)==1\npayload=re.sub(r\"\\\\\\n[ \t]*\", \"\
-        \", matches[0]).replace(r\"\\n\", \"\\n\")\ndata=base64.b64decode(''.join(payload.split()),validate=True)\nassert\
-        \ len(data)==92816\nassert hashlib.sha256(data).hexdigest()=='14a21f906d974b5faab44b4fd289a0a2e75ba78f83aa6dc06322bef63e9bda00'\n\
-        out=pathlib.Path(os.environ['R23_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data)) as z:\n  \
-        \  items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip()\
-        \ is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
-        \        assert not p.is_absolute() and '..' not in p.parts and '\\\\' not in x.filename\n        assert not x.is_dir()\
-        \ and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R23_EXTENSION\npython3 -B \"$R23_DIR/Tools/r23_fingerprint.py\"\
-        \ verify-package\nR23_WORKFLOW=\"$RUNNER_TEMP/r24-original-r23.yml\" python3 -B -m unittest discover -s \"$R23_DIR/Tests\"\
+        matches=re.findall(\"payload='''(.*?)'''\",body,re.S);assert len(matches)==1\npayload=re.sub(r\"\\\\\\n[\
+        \ \t]*\", \"\", matches[0]).replace(r\"\\n\", \"\\n\")\ndata=base64.b64decode(''.join(payload.split()),validate=True)\n\
+        assert len(data)==92816\nassert hashlib.sha256(data).hexdigest()=='14a21f906d974b5faab44b4fd289a0a2e75ba78f83aa6dc06322bef63e9bda00'\n\
+        out=pathlib.Path(os.environ['R23_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))\
+        \ as z:\n    items=z.infolist()\n    assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n\
+        \    assert z.testzip() is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n\
+        \        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute() and '..' not in p.parts\
+        \ and '\\\\' not in x.filename\n        assert not x.is_dir() and not stat.S_ISLNK(x.external_attr>>16)\n\
+        \    z.extractall(out)\nPY_R23_EXTENSION\npython3 -B \"$R23_DIR/Tools/r23_fingerprint.py\" verify-package\n\
+        R23_WORKFLOW=\"$RUNNER_TEMP/r24-original-r23.yml\" python3 -B -m unittest discover -s \"$R23_DIR/Tests\"\
         \ -v\npython3 -B - <<'PY_R24_MAIN'\nimport hashlib,io,os,pathlib,stat,urllib.request,zipfile\nbase='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/3d79c8816272ccb6b61b77d201d2b12c58a8fdce/'\n\
         def fetch(name,limit):\n    for attempt in range(3):\n        try:\n            with urllib.request.urlopen(base+name,timeout=45)as\
         \ response:return response.read(limit+1)\n        except (OSError,TimeoutError):\n            if attempt==2:raise\n\
         parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)\nassert len(parent)==299567\n\
-        assert hashlib.sha256(parent).hexdigest()=='bac032db11b36612abfd77e33ddba3e0f8a70d133a78a74a7b9b5d0246f745e3'\noriginal=pathlib.Path(os.environ['RUNNER_TEMP'])/'r25-original-r24.yml'\n\
-        assert not original.exists();original.write_bytes(parent)\ndata=fetch('VEUX_R24_MAIN.zip',1_000_000)\nassert len(data)==376868\n\
-        assert hashlib.sha256(data).hexdigest()=='00daa01c47640b57564c0deb33c6cdaf045d54f8777cfbe0e5c7a778ff14bc96'\nout=pathlib.Path(os.environ['R24_DIR']);assert\
-        \ not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))as z:\n    items=z.infolist();assert len(items)<100 and\
-        \ sum(x.file_size for x in items)<4_000_000\n    assert z.testzip()is None and len(items)==len(set(x.filename for\
-        \ x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n        assert not p.is_absolute()and'..'not\
-        \ in p.parts and'\\\\'not in x.filename\n        assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)\n\
-        \    z.extractall(out)\nPY_R24_MAIN\npython3 -B \"$R24_DIR/Tools/r24_memory.py\" verify-package\nR24_WORKFLOW=\"$RUNNER_TEMP/r25-original-r24.yml\"\
-        \ python3 -B -m unittest discover -s \"$R24_DIR/Tests\" -v\npython3 -B - <<'PY_R25_MAIN'\nimport hashlib,os,pathlib,stat,zipfile\n\
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_R25_MAIN.zip'\nassert package.is_file()and not\
-        \ package.is_symlink(), 'UPLOAD_VEUX_R25_MAIN_ZIP_TO_REPOSITORY_ROOT'\nassert package.stat().st_size==118183, 'R25_MAIN_SIZE_CHANGED'\n\
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='e5b793f550c302f85edd10598160e41024afee6ad288d589485ead926edfd5c4',\
+        assert hashlib.sha256(parent).hexdigest()=='bac032db11b36612abfd77e33ddba3e0f8a70d133a78a74a7b9b5d0246f745e3'\n\
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'r25-original-r24.yml'\nassert not original.exists();original.write_bytes(parent)\n\
+        data=fetch('VEUX_R24_MAIN.zip',1_000_000)\nassert len(data)==376868\nassert hashlib.sha256(data).hexdigest()=='00daa01c47640b57564c0deb33c6cdaf045d54f8777cfbe0e5c7a778ff14bc96'\n\
+        out=pathlib.Path(os.environ['R24_DIR']);assert not out.exists()\nwith zipfile.ZipFile(io.BytesIO(data))as\
+        \ z:\n    items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<4_000_000\n    assert\
+        \ z.testzip()is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
+        \        assert not p.is_absolute()and'..'not in p.parts and'\\\\'not in x.filename\n        assert not\
+        \ x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R24_MAIN\npython3 -B \"\
+        $R24_DIR/Tools/r24_memory.py\" verify-package\nR24_WORKFLOW=\"$RUNNER_TEMP/r25-original-r24.yml\" python3\
+        \ -B -m unittest discover -s \"$R24_DIR/Tests\" -v\npython3 -B - <<'PY_R25_MAIN'\nimport hashlib,os,pathlib,stat,zipfile\n\
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_R25_MAIN.zip'\nassert package.is_file()and\
+        \ not package.is_symlink(), 'UPLOAD_VEUX_R25_MAIN_ZIP_TO_REPOSITORY_ROOT'\nassert package.stat().st_size==118183,\
+        \ 'R25_MAIN_SIZE_CHANGED'\nassert hashlib.sha256(package.read_bytes()).hexdigest()=='e5b793f550c302f85edd10598160e41024afee6ad288d589485ead926edfd5c4',\
         \ 'R25_MAIN_SHA256_CHANGED'\nout=pathlib.Path(os.environ['R25_DIR']);assert not out.exists()\nwith zipfile.ZipFile(package)as\
-        \ z:\n    items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert z.testzip()is\
-        \ None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
-        \        assert not p.is_absolute()and'..'not in p.parts and'\\\\'not in x.filename\n        assert not x.is_dir()and\
-        \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
-        \ verify-package\nR25_WORKFLOW=\"$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml\"\
-        \ python3 -B -m unittest discover -s \"$R25_DIR/Tests\" -v\n"
+        \ z:\n    items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000\n    assert\
+        \ z.testzip()is None and len(items)==len(set(x.filename for x in items))\n    for x in items:\n        p=pathlib.PurePosixPath(x.filename)\n\
+        \        assert not p.is_absolute()and'..'not in p.parts and'\\\\'not in x.filename\n        assert not\
+        \ x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"\
+        $R25_DIR/Tools/r25_tzlog.py\" verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3\
+        \ -B -m unittest discover -s \"$R25_DIR/Tests\" -v\n"
+    - name: M25 regressions actual Make recipe embedded config corruption and exact Bash arguments
+      shell: bash
+      run: |
+        set -euo pipefail
+        M25_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M25_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4198,68 +4239,37 @@ jobs:
     - name: R20 audited full-build status and strict NO FLASH gate
       id: r20_status
       shell: bash
-      run: |
-        set -euo pipefail
-        python3 - <<'PY_R20_STATUS'
-        import json,os,pathlib
-        report=pathlib.Path(os.environ['R20_OUT'])/'R20_BUILD_RESULT.json'
-        j=json.loads(report.read_text())
-        if j.get('status') not in (
-            'R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH',
-            'R20_WALT_ON_FULL_BUILD_DIAGNOSTICS_RECORDED_NO_FLASH'):
-            raise SystemExit('R20_STATUS_NOT_RECOGNIZED')
-        if j.get('real_arm64_make_attempted') is not True or not j.get('make_targets'):
-            raise SystemExit('R20_NO_GENUINE_FULL_BUILD_ATTEMPT')
-        for x in ('vendor_abi_proven','flash_allowed','runtime_tested','brene_changed',
-                  'bakasusu_nomount_changed','vendor_crc_matched'):
-            if j.get(x) is not False:raise SystemExit('R20_UNSAFE_RELEASE_CLAIM:'+x)
-        if j['full_image_proven']:
-            if not (j['kernel_image_built'] and j['vmlinux_linked'] and
-                    j['source_read_only'] and j['image']['arm64_header_ok'] and
-                    j['vmlinux']['aarch64_elf_ok']):
-                raise SystemExit('R20_FALSE_FULL_BUILD_CLAIM')
-            if j['status']!='R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH':
-                raise SystemExit('R20_SUCCESS_STATUS_MISMATCH')
-        else:
-            if j['status']!='R20_WALT_ON_FULL_BUILD_DIAGNOSTICS_RECORDED_NO_FLASH':
-                raise SystemExit('R20_FALSE_DIAG_STATUS')
-            print('::warning::R20 genuine full kernel make did not complete; '
-                  'inspect R20_BUILD_RESULT.json and make_logs. Green workflow is diagnostic only.')
-        with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-            f.write('full_build='+str(j['full_image_proven']).lower()+'\n')
-        with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
-            f.write('## VEUX R20 – genuine WALT-ON full build (NO FLASH)\n')
-            f.write('- 15/15 real R19 ARM64 objects, 13/13 typed provider symbols checked\n')
-            f.write('- vmlinux linked: **'+str(j['vmlinux_linked'])+'**\n')
-            f.write('- ARM64 Image: **'+str(j['kernel_image_built'])+'**\n')
-            f.write('- DTB files: **'+str(len(j['dtb_files']))+'**\n')
-            f.write('- Kernel modules: **'+str(len(j['module_files']))+'**\n')
-            f.write('- **full_image_proven='+str(j['full_image_proven'])+'**\n')
-            f.write('- Vendor ABI, CRC compatibility, device test: **NOT APPROVED**\n')
-        print('R20_FINAL_DIAGNOSTIC_GATE=PASS; FULL_BUILD='+str(j['full_image_proven'])+'; FLASH=NO')
-        PY_R20_STATUS
+      run: "set -euo pipefail\npython3 - <<'PY_R20_STATUS'\nimport json,os,pathlib\nreport=pathlib.Path(os.environ['R20_OUT'])/'R20_BUILD_RESULT.json'\n\
+        j=json.loads(report.read_text())\nif j.get('status') not in (\n    'R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH',\n\
+        \    'R20_WALT_ON_FULL_BUILD_DIAGNOSTICS_RECORDED_NO_FLASH'):\n    raise SystemExit('R20_STATUS_NOT_RECOGNIZED')\n\
+        if j.get('real_arm64_make_attempted') is not True or not j.get('make_targets'):\n    raise SystemExit('R20_NO_GENUINE_FULL_BUILD_ATTEMPT')\n\
+        for x in ('vendor_abi_proven','flash_allowed','runtime_tested','brene_changed',\n          'bakasusu_nomount_changed','vendor_crc_matched'):\n\
+        \    if j.get(x) is not False:raise SystemExit('R20_UNSAFE_RELEASE_CLAIM:'+x)\nif j['full_image_proven']:\n\
+        \    if not (j['kernel_image_built'] and j['vmlinux_linked'] and\n            j['source_read_only'] and\
+        \ j['image']['arm64_header_ok'] and\n            j['vmlinux']['aarch64_elf_ok']):\n        raise SystemExit('R20_FALSE_FULL_BUILD_CLAIM')\n\
+        \    if j['status']!='R20_WALT_ON_VMLINUX_IMAGE_DTB_AND_MODULE_BUILD_PROVEN_NO_FLASH':\n        raise SystemExit('R20_SUCCESS_STATUS_MISMATCH')\n\
+        else:\n    if j['status']!='R20_WALT_ON_FULL_BUILD_DIAGNOSTICS_RECORDED_NO_FLASH':\n        raise SystemExit('R20_FALSE_DIAG_STATUS')\n\
+        \    print('::warning::R20 genuine full kernel make did not complete; '\n          'inspect R20_BUILD_RESULT.json\
+        \ and make_logs. Green workflow is diagnostic only.')\nwith open(os.environ['GITHUB_OUTPUT'],'a') as f:\n\
+        \    f.write('full_build='+str(j['full_image_proven']).lower()+'\\n')\nwith open(os.environ['GITHUB_STEP_SUMMARY'],'a')\
+        \ as f:\n    f.write('## VEUX R20 \u2013 genuine WALT-ON full build (NO FLASH)\\n')\n    f.write('- 15/15\
+        \ real R19 ARM64 objects, 13/13 typed provider symbols checked\\n')\n    f.write('- vmlinux linked: **'+str(j['vmlinux_linked'])+'**\\\
+        n')\n    f.write('- ARM64 Image: **'+str(j['kernel_image_built'])+'**\\n')\n    f.write('- DTB files: **'+str(len(j['dtb_files']))+'**\\\
+        n')\n    f.write('- Kernel modules: **'+str(len(j['module_files']))+'**\\n')\n    f.write('- **full_image_proven='+str(j['full_image_proven'])+'**\\\
+        n')\n    f.write('- Vendor ABI, CRC compatibility, device test: **NOT APPROVED**\\n')\nprint('R20_FINAL_DIAGNOSTIC_GATE=PASS;\
+        \ FULL_BUILD='+str(j['full_image_proven'])+'; FLASH=NO')\nPY_R20_STATUS\n"
     - name: R44 require genuine patched Image vmlinux DTB modules and exact reference targets
       shell: bash
-      run: |
-        set -euo pipefail
-        PYTHONPATH="$R44_DIR" python3 -B "$R44_DIR/r44_gpu_gate.py" verify-full \
-          --objout "$R13_OBJOUT" --out "$R44_OUT" --work "$R44_WORK" \
-          --r20-report "$R20_OUT" 2>&1 | tee "$R44_OUT/R44_FINAL_GATE.log"
-        python3 -B - <<'PY_R44_FINAL'
-        import json,os,pathlib
-        out=pathlib.Path(os.environ['R44_OUT'])
-        j=json.loads((out/'R44_FULL_BUILD_RESULT.json').read_text())
-        assert j['status']=='R44_PATCHED_FULL_ARM64_BUILD_SUCCESS_NO_FLASH'
-        assert j['r20_full_image_proven'] is True
-        assert j['vendor_abi_proven'] is False
-        assert j['boot_ready'] is False and j['flash_allowed'] is False
-        assert j['brene_modified'] is False and j['walt_modified'] is False
-        with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
-         f.write('## R44 – R43 GPU patch + full R20 WALT build\n')
-         f.write('**ARM64 Image/vmlinux/DTB/modules build proven; vendor ABI unproven.**\n')
-         f.write('Boot ready: **NO**; Flash allowed: **NO**.\n')
-        print('R44_STRICT_FULL_KERNEL_PASS; ABI_UNPROVEN; BOOT_READY=NO; FLASH_ALLOWED=NO')
-        PY_R44_FINAL
+      run: "set -euo pipefail\nPYTHONPATH=\"$R44_DIR\" python3 -B \"$R44_DIR/r44_gpu_gate.py\" verify-full \\\n\
+        \  --objout \"$R13_OBJOUT\" --out \"$R44_OUT\" --work \"$R44_WORK\" \\\n  --r20-report \"$R20_OUT\" 2>&1\
+        \ | tee \"$R44_OUT/R44_FINAL_GATE.log\"\npython3 -B - <<'PY_R44_FINAL'\nimport json,os,pathlib\nout=pathlib.Path(os.environ['R44_OUT'])\n\
+        j=json.loads((out/'R44_FULL_BUILD_RESULT.json').read_text())\nassert j['status']=='R44_PATCHED_FULL_ARM64_BUILD_SUCCESS_NO_FLASH'\n\
+        assert j['r20_full_image_proven'] is True\nassert j['vendor_abi_proven'] is False\nassert j['boot_ready']\
+        \ is False and j['flash_allowed'] is False\nassert j['brene_modified'] is False and j['walt_modified'] is\
+        \ False\nwith open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:\n f.write('## R44 \u2013 R43 GPU patch +\
+        \ full R20 WALT build\\n')\n f.write('**ARM64 Image/vmlinux/DTB/modules build proven; vendor ABI unproven.**\\\
+        n')\n f.write('Boot ready: **NO**; Flash allowed: **NO**.\\n')\nprint('R44_STRICT_FULL_KERNEL_PASS; ABI_UNPROVEN;\
+        \ BOOT_READY=NO; FLASH_ALLOWED=NO')\nPY_R44_FINAL\n"
     - name: R45 audit rootfree built kernel against authentic Stock without patching source
       if: ${{ steps.r20_status.outputs.full_build == 'true' }}
       shell: bash
@@ -4298,11 +4308,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R6-WALT-EXACT-P3-P10-SOURCE-NO-BUILD-${{ github.run_id }}
-        path: '${{ runner.temp }}/VEUX_274_P3_OUTPUT/P3_RESULT.json
-
+        path: |-
+          ${{ runner.temp }}/VEUX_274_P3_OUTPUT/P3_RESULT.json
           ${{ runner.temp }}/VEUX_274_P11_PREP/P11_PREP_REPORT.json
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/'
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R7 R2 diagnostic blockers and R6 provenance
@@ -4310,9 +4319,9 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R7-R2-WALT-INTERFACE-DIAGNOSTIC-${{ github.run_id }}
-        path: '${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+        path: |-
+          ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R8 exact source-only interface bridge and evidence
@@ -4320,11 +4329,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R8-WALT-OEM-INTERFACE-SOURCE-NO-BUILD-${{ github.run_id }}
-        path: '${{ github.workspace }}/veux-oem-walt-r8-source-only/
-
+        path: |-
+          ${{ github.workspace }}/veux-oem-walt-r8-source-only/
           ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/R7_WALT_INTERFACE_AUDIT.json
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R10 real Clang logs even if the compiler errors
@@ -4532,21 +4540,14 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R20-UNVERIFIED-LINK-OUTPUT-NO-FLASH-${{ github.run_id }}
-        path: '${{ env.R13_OBJOUT }}/vmlinux
-
+        path: |
+          ${{ env.R13_OBJOUT }}/vmlinux
           ${{ env.R13_OBJOUT }}/arch/arm64/boot/Image
-
           ${{ env.R13_OBJOUT }}/arch/arm64/boot/dts/**/*.dtb
-
           ${{ env.R13_OBJOUT }}/**/*.ko
-
           ${{ env.R13_OBJOUT }}/Module.symvers
-
           ${{ env.R13_OBJOUT }}/System.map
-
           ${{ env.R13_OBJOUT }}/.config
-
-          '
         if-no-files-found: error
         retention-days: 30
     - name: R45 preserve source config and kernel evidence on failures
@@ -4634,11 +4635,12 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: R25 full stock procfs TrustZone logger memory fingerprint and complete OEM ABI build
+    - name: M25 full R25 build plus actual config Image vmlinux and complete export identity
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$R25_DIR/Tools/r25_tzlog.py" build \
+        python3 -B "$M25_DIR/Tools/m25_config.py" build \
+          --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
           --r24-tool "$R24_DIR/Tools/r24_memory.py" \
           --r23-tool "$R23_DIR/Tools/r23_fingerprint.py" \
           --r21-tool "$R21_SCHED_DIR/Tools/r21_scheduler_release.py" \
@@ -4650,11 +4652,12 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: Construct boot and AK3 only after all fresh R25 TZ memory fingerprint and OEM gates
+    - name: M25 package only after R25 and M25 gates then compare both packaged kernels
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$R25_DIR/Tools/r25_tzlog.py" package \
+        python3 -B "$M25_DIR/Tools/m25_config.py" package \
+          --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
           --r24-tool "$R24_DIR/Tools/r24_memory.py" \
           --r23-tool "$R23_DIR/Tools/r23_fingerprint.py" \
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
@@ -4665,274 +4668,156 @@ jobs:
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-R25-TZ-PROCFS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
-        path: '${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
-
+        name: VEUX-M25-REAL-CONFIG-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        path: |
+          ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/R19_RESULT.json
-
           ${{ env.R19_RMNET_DIR }}/References/PROFILE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet/core/rmnet_descriptor.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet/core/rmnet_descriptor.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet-ext/offload/rmnet_offload_main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/datarmnet/core/rmnet_descriptor.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/datarmnet/core/.rmnet_descriptor.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/core.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/*.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.core.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/arch/arm64/include/asm/cache.h
-
           ${{ env.R17_CACHE_DIR }}/References/PROFILE.json
-
           ${{ env.R18_IRQ_DIR }}/References/PROFILE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/irqchip/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/irq/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/pinctrl/qcom/pinctrl-msm.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/*.log
-
           ${{ env.R16_REPAIR_OUTPUT }}/QGKI_*.csv
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/Module.symvers
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/.config
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/System.map
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/vmlinux
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/arch/arm64/boot/Image
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/generated/autoconf.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/kheaders_data.tar.xz
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/**/*.ko
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/Documentation/ABI/testing/sysfs-class-net
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/Documentation/admin-guide/sysctl/vm.rst
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/gfp.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mmzone.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/netdevice.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/vm_event_item.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/init/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/init/main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sysctl.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/filemap.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/internal.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/page_alloc.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmscan.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmstat.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/net/core/dev.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/net/core/net-sysfs.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/.rmnet_ipa.o.cmd
-
           ${{ env.R16_REPAIR_DIR }}/References/PROVENANCE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/R21_RESULT.json
-
           ${{ env.R21_SCHED_DIR }}/References/PROFILE.json
-
           ${{ env.R21_SCHED_DIR }}/References/SOURCE_PINS.json
-
           ${{ env.R21_PACKAGE_OUTPUT }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/sched/topology.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/fair.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/topology.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/walt/walt.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/core.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/fair.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/topology.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.fair.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.topology.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/config/kernel.release
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/generated/utsrelease.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/R23_RESULT.json
-
           ${{ env.R23_DIR }}/References/
-
           ${{ env.R23_DIR }}/Reports/
-
           ${{ env.R23_DIR }}/Tools/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/System.map
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/fpc/fpc1020_platform_tee.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/fpc/.fpc1020_platform_tee.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/goodix/gf_spi.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/goodix/.gf_spi.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/silead/silead_fp.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/silead/.silead_fp.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/fingerprint/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/R24_RESULT.json
-
           ${{ env.R24_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/scripts/config
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm_main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm_reclaim.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/base.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/internal.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/task_mmu.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/rmap.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/rtmm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/rmap.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmscan.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/rtmm_main.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/.rtmm_main.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/rtmm_reclaim.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/.rtmm_reclaim.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/rmap.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/.rmap.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/vmscan.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/.vmscan.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/task_mmu.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.task_mmu.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/base.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.base.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/R25_RESULT.json
-
           ${{ env.R25_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/arch/arm64/boot/dts/vendor/qcom/holi.dtsi
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/tz_log.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/.tz_log.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Makefile
-
-          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/tz_log.c'
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/tz_log.c
+          ${{ env.M25_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M25_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M25_PACKAGE_RESULT.json
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/Makefile
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/config_data.gz
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/.config_data.gz.cmd
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/configs.o
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/.configs.o.cmd
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report actual R25 TZ procfs and static package gates with Device Pass separate
+    - name: Report actual M25 configuration and package results separately from Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
         set -euo pipefail
-        test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
-        test -z "$(git -C project status --porcelain --untracked-files=all)"
-        python3 -B - <<'PY_R25_SUMMARY'
+        python3 -B - <<'PY_M25_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'R25_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'R25_PACKAGE_RESULT.json'
-        with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX R25 TrustZone-Procfs, Stock-QGKI, Boot.img und AK3\n\n')
-            if build.exists():
-                r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
-                f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
-                f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('TrustZone-Log-Schnittstellen: `'+str(r.get('linked_tz_log_interfaces','nicht erreicht'))+'`\n\n')
-                f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger R25-Neubau nicht erreicht.\n\n')
-            if pack.exists():
-                r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
-            else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
-            f.write('Stock Debugfs: aus. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('R25_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
-        PY_R25_SUMMARY
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M25_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M25_PACKAGE_RESULT.json'
+        rows=['## M25 actual embedded configuration audit','']
+        for label,path in [('Kernel build and config',build),('Boot and AK3',pack)]:
+            if path.is_file():
+                result=json.loads(path.read_text());rows.append(label+': '+result['status'])
+            else:rows.append(label+': NOT_PROVEN')
+        rows+=['','Previous R25 gates remain mandatory. Device Pass is not proven. FLASH=NO.']
+        with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:f.write('\n'.join(rows)+'\n')
+        print('\n'.join(rows))
+        PY_M25_SUMMARY
     name: R6 control then R25 TZ procfs memory fingerprint full ABI and static boot AK3 gates
