@@ -1,4 +1,4 @@
-name: VEUX M31 BQ Write Errors Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M32 BQ Startup Resources Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,7 +166,7 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m31-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m32-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
@@ -177,6 +177,7 @@ jobs:
       M29_DIR: ${{ github.workspace }}/veux-m29-bq-probe-tools
       M30_DIR: ${{ github.workspace }}/veux-m30-bq-read-tools
       M31_DIR: ${{ github.workspace }}/veux-m31-bq-write-tools
+      M32_DIR: ${{ github.workspace }}/veux-m32-bq-startup-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -185,7 +186,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and bounded M31 BQ write-error repair
+    - name: Authenticate immutable parents and bounded M32 BQ startup repair
       shell: bash
       run: |
         set -euo pipefail
@@ -357,13 +358,41 @@ jobs:
             z.extractall(out)
         PY_M31_PARENT
         python3 -B "$M30_DIR/Tools/m30_bq_read_errors.py" verify-package
-        python3 -B - <<'PY_M31_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M31_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M31_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==270900,'M31_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='dfc8e9d8e96ffbd9c9366c887e32f47f903214c2c45bbec8cbdf8edd7277f9e3','M31_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M32_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/d70fedcfdca36e95c388e2210994513895b18fd4/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==321162
+        assert hashlib.sha256(parent).hexdigest()=='d947351c876648e21b63cb39079d96f5183a15912b740a1913b77f668eeda779'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m32-original-m31.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M31_MAIN.zip',1_000_000)
+        assert len(data)==270900
+        assert hashlib.sha256(data).hexdigest()=='dfc8e9d8e96ffbd9c9366c887e32f47f903214c2c45bbec8cbdf8edd7277f9e3'
         out=pathlib.Path(os.environ['M31_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M32_PARENT
+        python3 -B "$M31_DIR/Tools/m31_bq_write_errors.py" verify-package
+        python3 -B - <<'PY_M32_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M32_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M32_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==349808,'M32_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='14f5c7755fce998f4104e9e35f4107a7a1b0c68c5a6b77d960c3f34c199dbd95','M32_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M32_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -372,8 +401,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M31_MAIN
-        python3 -B "$M31_DIR/Tools/m31_bq_write_errors.py" verify-package
+        PY_M32_MAIN
+        python3 -B "$M32_DIR/Tools/m32_bq_startup.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -1871,7 +1900,7 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: All inherited regressions plus M31 genuine write GPIO and OTG faults
+    - name: All inherited regressions plus M32 probe DT ownership and early IIO faults
       shell: bash
       run: |
         set -euo pipefail
@@ -1883,7 +1912,8 @@ jobs:
         M28_WORKFLOW="$RUNNER_TEMP/m29-original-m28-r2.yml" python3 -B -m unittest discover -s "$M28_DIR/Tests" -v
         M29_WORKFLOW="$RUNNER_TEMP/m30-original-m29-r2.yml" python3 -B -m unittest discover -s "$M29_DIR/Tests" -v
         M30_WORKFLOW="$RUNNER_TEMP/m31-original-m30.yml" python3 -B -m unittest discover -s "$M30_DIR/Tests" -v
-        M31_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M31_DIR/Tests" -v
+        M31_WORKFLOW="$RUNNER_TEMP/m32-original-m31.yml" python3 -B -m unittest discover -s "$M31_DIR/Tests" -v
+        M32_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M32_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -1976,6 +2006,7 @@ jobs:
         python3 -B "$M29_DIR/Tools/m29_bq_probe.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m29-r2-donor-proof.json"
         python3 -B "$M30_DIR/Tools/m30_bq_read_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m30-donor-proof.json"
         python3 -B "$M31_DIR/Tools/m31_bq_write_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m31-donor-proof.json"
+        python3 -B "$M32_DIR/Tools/m32_bq_startup.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m32-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4846,11 +4877,11 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M31 full kernel BQ write errors preserved read probe and complete ABI gates
+    - name: M32 full kernel BQ startup error branches preserved callbacks and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M31_DIR/Tools/m31_bq_write_errors.py" build \
+        python3 -B "$M32_DIR/Tools/m32_bq_startup.py" build \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -4867,11 +4898,11 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M31 pair only after all actual source build ABI config and static boot gates
+    - name: M32 pair only after all actual source build ABI config and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M31_DIR/Tools/m31_bq_write_errors.py" package \
+        python3 -B "$M32_DIR/Tools/m32_bq_startup.py" package \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -4882,12 +4913,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m31-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m32-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M31-BQ-WRITE-ERRORS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M32-BQ-STARTUP-RESOURCES-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5063,11 +5094,16 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/M31_RESULT.json
           ${{ env.R21_PACKAGE_OUTPUT }}/M31_PACKAGE_RESULT.json
           ${{ github.workspace }}/m31-donor-proof.json
+
+          ${{ env.M32_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M32_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M32_PACKAGE_RESULT.json
+          ${{ github.workspace }}/m32-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report M31 actual write-error build static boot pair and separate pending Device Pass
+    - name: Report M32 actual startup build static boot pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
@@ -5076,21 +5112,21 @@ jobs:
         test -z "$(git -C project status --porcelain --untracked-files=all)"
         python3 -B - <<'PY_M28_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M31_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M31_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M32_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M32_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M31 BQ-I2C-Schreib- und Lesefehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M32 BQ-Startressourcen und I2C-Fehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('BQ-Schreibfehler-Quellen kompiliert und verlinkt: '+str(r.get('bq_write_error_paths_compiled_and_linked',False))+'\n\n')
+                f.write('BQ-Startfehler-Quellen kompiliert und verlinkt: '+str(r.get('bq_startup_resource_paths_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M31-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M32-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M31_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M32_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
-    name: M31 BQ write errors preserved read probe complete ABI and static boot AK3
+    name: M32 BQ startup resource ownership early IIO complete ABI and static boot AK3
