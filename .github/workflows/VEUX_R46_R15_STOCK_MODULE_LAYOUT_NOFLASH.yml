@@ -1,4 +1,4 @@
-name: VEUX M29 BQ Probe Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M29 R2 BQ Probe Git Source Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -183,7 +183,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and exact M29 BQ probe safety repair
+    - name: Authenticate immutable parents and M29 R2 independently pinned donor Git blobs
       shell: bash
       run: |
         set -euo pipefail
@@ -301,10 +301,10 @@ jobs:
         python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" verify-package
         python3 -B - <<'PY_M29_MAIN'
         import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M29_MAIN.zip'
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M29_R2_MAIN.zip'
         assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M28_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==110778,'M29_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='8ce00800ae6d460c3ec2b9ac7055905c8ae4d7ee0d121d048279a2149c3603d5','M29_MAIN_SHA_CHANGED'
+        assert package.stat().st_size==116433,'M29_R2_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='022fb042b0d1ba19f64f755a7e525341b903c05d61650e513fa6ef1dd949b74e','M29_R2_MAIN_SHA_CHANGED'
         out=pathlib.Path(os.environ['M29_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
@@ -1813,7 +1813,7 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: M25 M26 M27 M28 R2 M29 strict regressions including allocation and IIO probe failures
+    - name: M25 M26 M27 M28 R2 M29 R2 strict regressions including the exact header-byte failure
       shell: bash
       run: |
         set -euo pipefail
@@ -1904,7 +1904,7 @@ jobs:
         fetch-depth: 0
         path: kernel
         persist-credentials: false
-    - name: Verify exact config RPM ADC WT and BQ source preimages before heavy replay
+    - name: Verify actual pinned donor Git commit index and all source preimages before replay
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
       run: |
@@ -1913,7 +1913,7 @@ jobs:
         python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" check-source --source "$GITHUB_WORKSPACE/kernel"
         python3 -B "$M27_DIR/Tools/m27_sc8551.py" check-source --source "$GITHUB_WORKSPACE/kernel"
         python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" check-source --source "$GITHUB_WORKSPACE/kernel"
-        python3 -B "$M29_DIR/Tools/m29_bq_probe.py" check-source --source "$GITHUB_WORKSPACE/kernel"
+        python3 -B "$M29_DIR/Tools/m29_bq_probe.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m29-r2-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4784,7 +4784,7 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M29 full kernel BQ probe WT ADC RPM config CFI callbacks and all ABI gates
+    - name: M29 R2 full kernel BQ probe inherited config CFI callbacks and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
@@ -4805,7 +4805,7 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M29 pair only after all BQ inherited build ABI config and static boot gates
+    - name: M29 R2 pair only after donor source build ABI config and static boot gates
       shell: bash
       run: |
         set -euo pipefail
@@ -4825,7 +4825,7 @@ jobs:
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M29-BQ-PROBE-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M29-R2-BQ-PROBE-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -4990,11 +4990,12 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/bq2589x_charger.c
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/bq2589x_iio.h
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/bq2589x_reg.h
+          ${{ github.workspace }}/m29-r2-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report actual M29 BQ build static pair and separate pending Device Pass
+    - name: Report actual M29 R2 build static pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
@@ -5006,18 +5007,18 @@ jobs:
         build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M29_RESULT.json'
         pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M29_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M29 BQ-Startfehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M29 R2 BQ-Startfehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
                 f.write('BQ-Probe-Quellen kompiliert und verlinkt: '+str(r.get('bq_probe_source_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M29-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M29-R2-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M29_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M29_R2_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
     name: R6 control then M27 SC8551 ADC M26 RPM actual config complete ABI and static boot AK3
