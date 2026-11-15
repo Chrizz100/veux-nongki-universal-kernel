@@ -1,10 +1,10 @@
-name: VEUX M26 RPM Sleep Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M27 SC8551 ADC Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: veux-m26-rpm-sleep-${{ github.ref }}
+  group: veux-m27-sc8551-adc-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   p11-exact-source:
@@ -166,12 +166,13 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m26-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m27-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
       M25_DIR: ${{ github.workspace }}/veux-m25-r2-config-tools
       M26_DIR: ${{ github.workspace }}/veux-m26-rpm-tools
+      M27_DIR: ${{ github.workspace }}/veux-m27-sc8551-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -180,7 +181,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable M25-R2 parent and M26 exact historical RPM repair
+    - name: Authenticate immutable M26 M25-R2 parents and exact historical M27 SC8551 ADC repair
       shell: bash
       run: |
         set -euo pipefail
@@ -213,13 +214,24 @@ jobs:
         PY_M26_PARENT
         python3 -B "$M25_DIR/Tools/m25_config.py" verify-package
         python3 -B - <<'PY_M26_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M26_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M26_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==85484,'M26_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='822abce50317d78526c07d08c6746ae0e08c8f009b20595fd607cc712dabced6','M26_MAIN_SHA_CHANGED'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/92eaefd81c181ea2a95b77b7022abd5bdbacc3d0/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==307842
+        assert hashlib.sha256(parent).hexdigest()=='f8d47a67c76d580ffdb1544a7f006cf0683809203bf951f73d140b8643d89ec9'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m27-original-m26.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M26_MAIN.zip',1_000_000)
+        assert len(data)==85484
+        assert hashlib.sha256(data).hexdigest()=='822abce50317d78526c07d08c6746ae0e08c8f009b20595fd607cc712dabced6'
         out=pathlib.Path(os.environ['M26_DIR']);assert not out.exists()
-        with zipfile.ZipFile(package)as z:
+        with zipfile.ZipFile(io.BytesIO(data))as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
             for x in items:
@@ -229,6 +241,23 @@ jobs:
             z.extractall(out)
         PY_M26_MAIN
         python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" verify-package
+        python3 -B - <<'PY_M27_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M27_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M27_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==152520,'M27_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='d5f88ce030e53a597be8d62b01e8b507a3b08ee89c88faf59011dabd53b7bd21','M27_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M27_DIR']);assert not out.exists()
+        with zipfile.ZipFile(package)as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M27_MAIN
+        python3 -B "$M27_DIR/Tools/m27_sc8551.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -1726,12 +1755,13 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: M25-R2 and M26 regressions actual sources C transport failure retry and exact command arguments
+    - name: M25 M26 M27 regressions RPM retry ADC IIO errors UBSan and exact command arguments
       shell: bash
       run: |
         set -euo pipefail
         M25_WORKFLOW="$RUNNER_TEMP/m26-original-m25-r2.yml" python3 -B -m unittest discover -s "$M25_DIR/Tests" -v
-        M26_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M26_DIR/Tests" -v
+        M26_WORKFLOW="$RUNNER_TEMP/m27-original-m26.yml" python3 -B -m unittest discover -s "$M26_DIR/Tests" -v
+        M27_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M27_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -1812,13 +1842,14 @@ jobs:
         fetch-depth: 0
         path: kernel
         persist-credentials: false
-    - name: Verify exact M25 Makefile and M26 RPM caller source immediately after pinned checkout
+    - name: Verify exact Makefile RPM ADC driver and headers immediately after pinned checkout
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
         python3 -B "$M25_DIR/Tools/m25_config.py" check-source --source "$GITHUB_WORKSPACE/kernel"
         python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" check-source --source "$GITHUB_WORKSPACE/kernel"
+        python3 -B "$M27_DIR/Tools/m27_sc8551.py" check-source --source "$GITHUB_WORKSPACE/kernel"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4698,11 +4729,12 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M26 full M25-R2 build plus real RPM failure path CFI linked caller and complete ABI
+    - name: M27 full M26 RPM build plus exact SC8551 ADC source CFI interfaces and complete ABI
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" build \
+        python3 -B "$M27_DIR/Tools/m27_sc8551.py" build \
+          --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
           --m25-tool "$M25_DIR/Tools/m25_config.py" \
           --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
           --r24-tool "$R24_DIR/Tools/r24_memory.py" \
@@ -4716,11 +4748,12 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M26 package only after all RPM actual config export and static boot gates
+    - name: M27 package only after all ADC RPM actual config export and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" package \
+        python3 -B "$M27_DIR/Tools/m27_sc8551.py" package \
+          --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
           --m25-tool "$M25_DIR/Tools/m25_config.py" \
           --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
           --r24-tool "$R24_DIR/Tools/r24_memory.py" \
@@ -4728,12 +4761,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m26-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m27-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M26-RPM-SLEEP-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M27-SC8551-ADC-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: '${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
 
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5005,35 +5038,49 @@ jobs:
 
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/soc/qcom/system_pm_rpm.o
 
-          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/soc/qcom/.system_pm_rpm.o.cmd'
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/soc/qcom/.system_pm_rpm.o.cmd
+
+          ${{ env.R16_REPAIR_OUTPUT }}/M27_RESULT.json
+
+          ${{ env.M27_DIR }}/
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/sc8551_charger.o
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/.sc8551_charger.o.cmd
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/sc8551_charger.c
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/sc8551_reg.h
+
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/dt-bindings/iio/qti_power_supply_iio.h'
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report actual M26 RPM build and static pair gates with Device Pass separate
+    - name: Report actual M27 ADC RPM build and static pair gates with Device Pass separate
       if: ${{ always() }}
       shell: bash
       run: |
         set -euo pipefail
         test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
         test -z "$(git -C project status --porcelain --untracked-files=all)"
-        python3 -B - <<'PY_M26_SUMMARY'
+        python3 -B - <<'PY_M27_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M26_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M26_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M27_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M27_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M26 RPM-Schlafauftraege, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M27 SC8551-Messfehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('RPM-Fehlerpfad kompiliert und verlinkt: '+str(r.get('rpm_sleep_failure_path_compiled_and_linked',False))+'\n\n')
+                f.write('SC8551-Quellen kompiliert und verlinkt: '+str(r.get('sc8551_adc_source_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M26-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M27-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
-            f.write('Kein Geraete-Suspendtest. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M26_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
-        PY_M26_SUMMARY
-    name: R6 control then M26 RPM sleep failure preservation actual config complete ABI and static boot AK3
+            f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
+        print('M27_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        PY_M27_SUMMARY
+    name: R6 control then M27 SC8551 ADC M26 RPM actual config complete ABI and static boot AK3
