@@ -1,4 +1,4 @@
-name: VEUX M27 SC8551 ADC Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M28 WT Reporting Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,13 +166,14 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m27-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m28-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
       M25_DIR: ${{ github.workspace }}/veux-m25-r2-config-tools
       M26_DIR: ${{ github.workspace }}/veux-m26-rpm-tools
       M27_DIR: ${{ github.workspace }}/veux-m27-sc8551-tools
+      M28_DIR: ${{ github.workspace }}/veux-m28-wt-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -181,7 +182,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable M26 M25-R2 parents and exact historical M27 SC8551 ADC repair
+    - name: Authenticate immutable parents and exact historical M28 WT reporting repair
       shell: bash
       run: |
         set -euo pipefail
@@ -241,13 +242,41 @@ jobs:
             z.extractall(out)
         PY_M26_MAIN
         python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" verify-package
-        python3 -B - <<'PY_M27_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M27_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M27_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==152520,'M27_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='d5f88ce030e53a597be8d62b01e8b507a3b08ee89c88faf59011dabd53b7bd21','M27_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M28_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/2cc223f97e52f9e8a77e0ebebabf5a01c9e83454/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==310597
+        assert hashlib.sha256(parent).hexdigest()=='b396cb3ffdfea1fa409e32b1b3b96c7be1d088e7eb632919a07b3ab4f32d6fd4'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m28-original-m27.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M27_MAIN.zip',1_000_000)
+        assert len(data)==152520
+        assert hashlib.sha256(data).hexdigest()=='d5f88ce030e53a597be8d62b01e8b507a3b08ee89c88faf59011dabd53b7bd21'
         out=pathlib.Path(os.environ['M27_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M28_PARENT
+        python3 -B "$M27_DIR/Tools/m27_sc8551.py" verify-package
+        python3 -B - <<'PY_M28_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M28_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M28_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==139201,'M28_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='1df85a618704f86ab3c49f1dee48f13bf3208ba25ca20398184c9e95e57ea195','M28_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M28_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -256,8 +285,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M27_MAIN
-        python3 -B "$M27_DIR/Tools/m27_sc8551.py" verify-package
+        PY_M28_MAIN
+        python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -1755,13 +1784,14 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: M25 M26 M27 regressions RPM retry ADC IIO errors UBSan and exact command arguments
+    - name: M25 M26 M27 M28 regressions RPM ADC WT native UBSan and exact command arguments
       shell: bash
       run: |
         set -euo pipefail
         M25_WORKFLOW="$RUNNER_TEMP/m26-original-m25-r2.yml" python3 -B -m unittest discover -s "$M25_DIR/Tests" -v
         M26_WORKFLOW="$RUNNER_TEMP/m27-original-m26.yml" python3 -B -m unittest discover -s "$M26_DIR/Tests" -v
-        M27_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M27_DIR/Tests" -v
+        M27_WORKFLOW="$RUNNER_TEMP/m28-original-m27.yml" python3 -B -m unittest discover -s "$M27_DIR/Tests" -v
+        M28_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M28_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -1842,7 +1872,7 @@ jobs:
         fetch-depth: 0
         path: kernel
         persist-credentials: false
-    - name: Verify exact Makefile RPM ADC driver and headers immediately after pinned checkout
+    - name: Verify exact Makefile RPM ADC WT reporting driver and dependency contexts
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
       run: |
@@ -1850,6 +1880,7 @@ jobs:
         python3 -B "$M25_DIR/Tools/m25_config.py" check-source --source "$GITHUB_WORKSPACE/kernel"
         python3 -B "$M26_DIR/Tools/m26_rpm_sleep.py" check-source --source "$GITHUB_WORKSPACE/kernel"
         python3 -B "$M27_DIR/Tools/m27_sc8551.py" check-source --source "$GITHUB_WORKSPACE/kernel"
+        python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" check-source --source "$GITHUB_WORKSPACE/kernel"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4393,11 +4424,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R6-WALT-EXACT-P3-P10-SOURCE-NO-BUILD-${{ github.run_id }}
-        path: '${{ runner.temp }}/VEUX_274_P3_OUTPUT/P3_RESULT.json
-
+        path: |-
+          ${{ runner.temp }}/VEUX_274_P3_OUTPUT/P3_RESULT.json
           ${{ runner.temp }}/VEUX_274_P11_PREP/P11_PREP_REPORT.json
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/'
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R7 R2 diagnostic blockers and R6 provenance
@@ -4405,9 +4435,9 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R7-R2-WALT-INTERFACE-DIAGNOSTIC-${{ github.run_id }}
-        path: '${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+        path: |-
+          ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R8 exact source-only interface bridge and evidence
@@ -4415,11 +4445,10 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R8-WALT-OEM-INTERFACE-SOURCE-NO-BUILD-${{ github.run_id }}
-        path: '${{ github.workspace }}/veux-oem-walt-r8-source-only/
-
+        path: |-
+          ${{ github.workspace }}/veux-oem-walt-r8-source-only/
           ${{ github.workspace }}/veux-oem-walt-r7-precompile-audit/R7_WALT_INTERFACE_AUDIT.json
-
-          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json'
+          ${{ github.workspace }}/veux-oem-walt-r6-source-only/R6_SOURCE_GATE.json
         if-no-files-found: warn
         retention-days: 14
     - name: Upload R10 real Clang logs even if the compiler errors
@@ -4627,21 +4656,14 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: VEUX-R20-UNVERIFIED-LINK-OUTPUT-NO-FLASH-${{ github.run_id }}
-        path: '${{ env.R13_OBJOUT }}/vmlinux
-
+        path: |
+          ${{ env.R13_OBJOUT }}/vmlinux
           ${{ env.R13_OBJOUT }}/arch/arm64/boot/Image
-
           ${{ env.R13_OBJOUT }}/arch/arm64/boot/dts/**/*.dtb
-
           ${{ env.R13_OBJOUT }}/**/*.ko
-
           ${{ env.R13_OBJOUT }}/Module.symvers
-
           ${{ env.R13_OBJOUT }}/System.map
-
           ${{ env.R13_OBJOUT }}/.config
-
-          '
         if-no-files-found: error
         retention-days: 30
     - name: R45 preserve source config and kernel evidence on failures
@@ -4729,11 +4751,12 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M27 full M26 RPM build plus exact SC8551 ADC source CFI interfaces and complete ABI
+    - name: M28 full kernel WT reporting ADC RPM config CFI callbacks and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M27_DIR/Tools/m27_sc8551.py" build \
+        python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" build \
+          --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
           --m25-tool "$M25_DIR/Tools/m25_config.py" \
           --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
@@ -4748,11 +4771,12 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M27 package only after all ADC RPM actual config export and static boot gates
+    - name: M28 pair only after all reporting ADC RPM ABI and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M27_DIR/Tools/m27_sc8551.py" package \
+        python3 -B "$M28_DIR/Tools/m28_wt_reporting.py" package \
+          --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
           --m25-tool "$M25_DIR/Tools/m25_config.py" \
           --r25-tool "$R25_DIR/Tools/r25_tzlog.py" \
@@ -4761,326 +4785,195 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m27-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m28-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M27-SC8551-ADC-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
-        path: '${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
-
+        name: VEUX-M28-WT-REPORTING-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        path: |
+          ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/R19_RESULT.json
-
           ${{ env.R19_RMNET_DIR }}/References/PROFILE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet/core/rmnet_descriptor.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet/core/rmnet_descriptor.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/datarmnet-ext/offload/rmnet_offload_main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/datarmnet/core/rmnet_descriptor.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/datarmnet/core/.rmnet_descriptor.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/core.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/*.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.core.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/arch/arm64/include/asm/cache.h
-
           ${{ env.R17_CACHE_DIR }}/References/PROFILE.json
-
           ${{ env.R18_IRQ_DIR }}/References/PROFILE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/irqchip/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/irq/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/pinctrl/qcom/pinctrl-msm.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/*.log
-
           ${{ env.R16_REPAIR_OUTPUT }}/QGKI_*.csv
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/Module.symvers
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/.config
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/System.map
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/vmlinux
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/arch/arm64/boot/Image
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/generated/autoconf.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/kheaders_data.tar.xz
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/**/*.ko
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/Documentation/ABI/testing/sysfs-class-net
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/Documentation/admin-guide/sysctl/vm.rst
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/gfp.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mmzone.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/netdevice.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/vm_event_item.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/init/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/init/main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sysctl.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/filemap.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/internal.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/page_alloc.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmscan.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmstat.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/net/core/dev.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/net/core/net-sysfs.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/.rmnet_ipa.o.cmd
-
           ${{ env.R16_REPAIR_DIR }}/References/PROVENANCE.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/R21_RESULT.json
-
           ${{ env.R21_SCHED_DIR }}/References/PROFILE.json
-
           ${{ env.R21_SCHED_DIR }}/References/SOURCE_PINS.json
-
           ${{ env.R21_PACKAGE_OUTPUT }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/sched/topology.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/fair.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/topology.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/sched/walt/walt.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/core.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/fair.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/topology.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.fair.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/sched/.topology.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/config/kernel.release
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/include/generated/utsrelease.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/R23_RESULT.json
-
           ${{ env.R23_DIR }}/References/
-
           ${{ env.R23_DIR }}/Reports/
-
           ${{ env.R23_DIR }}/Tools/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/System.map
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/fpc/fpc1020_platform_tee.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/fpc/.fpc1020_platform_tee.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/goodix/gf_spi.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/goodix/.gf_spi.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/silead/silead_fp.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/input/fingerprint/silead/.silead_fp.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/fingerprint/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/input/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/R24_RESULT.json
-
           ${{ env.R24_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/scripts/config
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm_main.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/staging/rtmm/rtmm_reclaim.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/base.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/internal.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/fs/proc/task_mmu.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/mm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/rmap.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/rtmm.h
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/rmap.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/mm/vmscan.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/rtmm_main.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/.rtmm_main.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/rtmm_reclaim.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/staging/rtmm/.rtmm_reclaim.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/rmap.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/.rmap.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/vmscan.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/mm/.vmscan.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/task_mmu.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.task_mmu.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/base.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/fs/proc/.base.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/R25_RESULT.json
-
           ${{ env.R25_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/arch/arm64/boot/dts/vendor/qcom/holi.dtsi
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/tz_log.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/firmware/qcom/.tz_log.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Kconfig
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/firmware/qcom/tz_log.c
-
           ${{ env.M25_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/M25_RESULT.json
-
           ${{ env.R21_PACKAGE_OUTPUT }}/M25_PACKAGE_RESULT.json
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/kernel/Makefile
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/config_data.gz
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/.config_data.gz.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/configs.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/kernel/.configs.o.cmd
 
-
           ${{ env.R16_REPAIR_OUTPUT }}/M26_RESULT.json
-
           ${{ env.M26_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/rpmsg/rpm-smd.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/rpmsg/rpm-smd.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/rpmsg/.rpm-smd.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/soc/qcom/system_pm_rpm.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/soc/qcom/system_pm_rpm.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/soc/qcom/.system_pm_rpm.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/M27_RESULT.json
-
           ${{ env.M27_DIR }}/
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/sc8551_charger.o
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/.sc8551_charger.o.cmd
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/sc8551_charger.c
-
           ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/sc8551_reg.h
-
-          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/dt-bindings/iio/qti_power_supply_iio.h'
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/dt-bindings/iio/qti_power_supply_iio.h
+          ${{ env.M28_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M28_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M28_PACKAGE_RESULT.json
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/wt_chg.o
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-out/drivers/power/supply/qcom/.wt_chg.o.cmd
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/power_supply_sysfs.c
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/wt_chg.c
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/drivers/power/supply/qcom/wt_chg_iio.h
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/power_supply.h
+          ${{ env.R16_REPAIR_OUTPUT }}/candidate-source/include/linux/qti_power_supply.h
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report actual M27 ADC RPM build and static pair gates with Device Pass separate
+    - name: Report actual M28 WT build static pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
         set -euo pipefail
         test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
         test -z "$(git -C project status --porcelain --untracked-files=all)"
-        python3 -B - <<'PY_M27_SUMMARY'
+        python3 -B - <<'PY_M28_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M27_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M27_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M28_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M28_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M27 SC8551-Messfehler, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M28 WT-Spannung und USB-Typ, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('SC8551-Quellen kompiliert und verlinkt: '+str(r.get('sc8551_adc_source_compiled_and_linked',False))+'\n\n')
+                f.write('WT-Reporting-Quellen kompiliert und verlinkt: '+str(r.get('wt_reporting_source_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M27-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M28-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M27_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
-        PY_M27_SUMMARY
+        print('M28_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        PY_M28_SUMMARY
     name: R6 control then M27 SC8551 ADC M26 RPM actual config complete ABI and static boot AK3
