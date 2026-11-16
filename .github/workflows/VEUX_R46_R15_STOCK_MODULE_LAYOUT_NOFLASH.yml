@@ -1,4 +1,4 @@
-name: VEUX M36 BQ Monitor Errors Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M37 BQ VINDPM HIZ Errors Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,7 +166,7 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m36-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m37-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
@@ -182,6 +182,7 @@ jobs:
       M34_DIR: ${{ github.workspace }}/veux-m34-bq-init-tools
       M35_DIR: ${{ github.workspace }}/veux-m35-bq-adapter-tools
       M36_DIR: ${{ github.workspace }}/veux-m36-bq-monitor-tools
+      M37_DIR: ${{ github.workspace }}/veux-m37-bq-vindpm-hiz-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -190,7 +191,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and bounded M36 BQ monitor-error repair
+    - name: Authenticate immutable parents and bounded M37 BQ VINDPM HIZ repair
       shell: bash
       run: |
         set -euo pipefail
@@ -502,13 +503,41 @@ jobs:
             z.extractall(out)
         PY_M36_PARENT
         python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" verify-package
-        python3 -B - <<'PY_M36_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M36_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M36_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==688129,'M36_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='308f042b21ff0d984cedd1058dee0d976218db3e52451a0fe6012373acc9a1ef','M36_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M37_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/ce347a1bf4cda96832ee205d21ac788034779349/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==332970
+        assert hashlib.sha256(parent).hexdigest()=='061936a8126466eb70e0e7e8c82935c646927f6b43ea004f122fcba8e63fb04d'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m37-original-m36.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M36_MAIN.zip',1_000_000)
+        assert len(data)==688129
+        assert hashlib.sha256(data).hexdigest()=='308f042b21ff0d984cedd1058dee0d976218db3e52451a0fe6012373acc9a1ef'
         out=pathlib.Path(os.environ['M36_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M37_PARENT
+        python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" verify-package
+        python3 -B - <<'PY_M37_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M37_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M37_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==288196,'M37_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='e85dc8bdb3fad782eca5a7fe0441bda78bc7150f8e587c0a4636d1f5f23d5bf1','M37_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M37_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -517,8 +546,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M36_MAIN
-        python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" verify-package
+        PY_M37_MAIN
+        python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -2016,7 +2045,7 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: All inherited regressions plus M36 genuine measurement validity retry and independent thermal faults
+    - name: All inherited regressions plus M37 first errors independent restores and thermal cutoff
       shell: bash
       run: |
         set -euo pipefail
@@ -2033,7 +2062,8 @@ jobs:
         M33_WORKFLOW="$RUNNER_TEMP/m34-original-m33.yml" python3 -B -m unittest discover -s "$M33_DIR/Tests" -v
         M34_WORKFLOW="$RUNNER_TEMP/m35-original-m34.yml" python3 -B -m unittest discover -s "$M34_DIR/Tests" -v
         M35_WORKFLOW="$RUNNER_TEMP/m36-original-m35.yml" python3 -B -m unittest discover -s "$M35_DIR/Tests" -v
-        M36_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M36_DIR/Tests" -v
+        M36_WORKFLOW="$RUNNER_TEMP/m37-original-m36.yml" python3 -B -m unittest discover -s "$M36_DIR/Tests" -v
+        M37_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M37_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -2131,6 +2161,7 @@ jobs:
         python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m34-donor-proof.json"
         python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m35-donor-proof.json"
         python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m36-donor-proof.json"
+        python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m37-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -5001,11 +5032,11 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M36 full kernel linked monitor adapter init IRQ shutdown config and complete ABI gates
+    - name: M37 full kernel linked VINDPM HIZ monitor adapter IRQ shutdown config complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" build \
+        python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" build \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -5022,11 +5053,11 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M36 pair only after all actual source build ABI config and static boot gates
+    - name: M37 pair only after all actual source build ABI config and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" package \
+        python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" package \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -5037,12 +5068,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m36-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m37-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M36-BQ-MONITOR-ERRORS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M37-BQ-VINDPM-HIZ-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5243,11 +5274,16 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/M36_RESULT.json
           ${{ env.R21_PACKAGE_OUTPUT }}/M36_PACKAGE_RESULT.json
           ${{ github.workspace }}/m36-donor-proof.json
+
+          ${{ env.M37_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M37_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M37_PACKAGE_RESULT.json
+          ${{ github.workspace }}/m37-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report M36 actual monitor-error build static boot pair and separate pending Device Pass
+    - name: Report M37 actual VINDPM HIZ build static boot pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
@@ -5256,21 +5292,21 @@ jobs:
         test -z "$(git -C project status --porcelain --untracked-files=all)"
         python3 -B - <<'PY_M28_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M36_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M36_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M37_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M37_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M36 BQ-Monitor: gueltige Messwerte, Wiederholung und unabhaengige Temperaturpruefung, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M37 BQ-VINDPM/HIZ: Fehler und unabhaengige Wiederherstellung, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('BQ-Monitor-Fehlerquellen kompiliert und verlinkt: '+str(r.get('bq_monitor_error_paths_compiled_and_linked',False))+'\n\n')
+                f.write('BQ-VINDPM-/HIZ-Fehlerquellen kompiliert und verlinkt: '+str(r.get('bq_vindpm_hiz_error_paths_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M36-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M37-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M36_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M37_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
-    name: M36 BQ monitor errors preserved init shutdown complete ABI and static boot AK3
+    name: M37 BQ VINDPM HIZ restoration preserved monitor shutdown complete ABI and static boot AK3
