@@ -1,4 +1,4 @@
-name: VEUX M38 BQ Bundled Repair Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M39 BQ Provider Binding Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,7 +166,7 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m38-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m39-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
@@ -184,6 +184,7 @@ jobs:
       M36_DIR: ${{ github.workspace }}/veux-m36-bq-monitor-tools
       M37_DIR: ${{ github.workspace }}/veux-m37-bq-vindpm-hiz-tools
       M38_DIR: ${{ github.workspace }}/veux-m38-bq-bundled-tools
+      M39_DIR: ${{ github.workspace }}/veux-m39-bq-provider-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -192,7 +193,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and bounded M38 BQ bundled repair
+    - name: Authenticate immutable parents and bounded M39 BQ provider binding repair
       shell: bash
       run: |
         set -euo pipefail
@@ -560,13 +561,41 @@ jobs:
             z.extractall(out)
         PY_M38_PARENT
         python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" verify-package
-        python3 -B - <<'PY_M38_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M38_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M38_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==332173,'M38_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='79ee26f5f97919edd2473459bc9d72fa469f30a668a9df86fae8568fc5bee79c','M38_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M39_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/0a7cf011c6817aef9c729daa5d669199ec0a0626/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==337600
+        assert hashlib.sha256(parent).hexdigest()=='25413b2a9c92b7b28fc3be5efc00633af1b6f010b0e76bf48da3c79360c1da6e'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m39-original-m38.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M38_MAIN.zip',1_000_000)
+        assert len(data)==332173
+        assert hashlib.sha256(data).hexdigest()=='79ee26f5f97919edd2473459bc9d72fa469f30a668a9df86fae8568fc5bee79c'
         out=pathlib.Path(os.environ['M38_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M39_PARENT
+        python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" verify-package
+        python3 -B - <<'PY_M39_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M39_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M39_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==347041,'M39_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='91f34a26c62f1d02ddea912cf0f099984de148b915a9a08d1b78a9443841630d','M39_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M39_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -575,8 +604,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M38_MAIN
-        python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" verify-package
+        PY_M39_MAIN
+        python3 -B "$M39_DIR/Tools/m39_bq_providers.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -2074,7 +2103,7 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: All inherited regressions plus M38 real concurrent register and charger detection failures
+    - name: All inherited regressions plus M39 real provider reference races and IIO argument contracts
       shell: bash
       run: |
         set -euo pipefail
@@ -2093,7 +2122,8 @@ jobs:
         M35_WORKFLOW="$RUNNER_TEMP/m36-original-m35.yml" python3 -B -m unittest discover -s "$M35_DIR/Tests" -v
         M36_WORKFLOW="$RUNNER_TEMP/m37-original-m36.yml" python3 -B -m unittest discover -s "$M36_DIR/Tests" -v
         M37_WORKFLOW="$RUNNER_TEMP/m38-original-m37.yml" python3 -B -m unittest discover -s "$M37_DIR/Tests" -v
-        M38_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M38_DIR/Tests" -v
+        M38_WORKFLOW="$RUNNER_TEMP/m39-original-m38.yml" python3 -B -m unittest discover -s "$M38_DIR/Tests" -v
+        M39_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M39_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -2193,6 +2223,7 @@ jobs:
         python3 -B "$M36_DIR/Tools/m36_bq_monitor_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m36-donor-proof.json"
         python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m37-donor-proof.json"
         python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m38-donor-proof.json"
+        python3 -B "$M39_DIR/Tools/m39_bq_providers.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m39-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -5063,11 +5094,11 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M38 full kernel atomic register detection IRQ remove lifecycle config and complete ABI gates
+    - name: M39 full kernel linked provider IIO atomic register lifecycle config and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" build \
+        python3 -B "$M39_DIR/Tools/m39_bq_providers.py" build \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -5084,11 +5115,11 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M38 pair only after all actual source build ABI config and static boot gates
+    - name: M39 pair only after all actual source build ABI config and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" package \
+        python3 -B "$M39_DIR/Tools/m39_bq_providers.py" package \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -5099,12 +5130,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m38-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m39-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M38-BQ-BUNDLED-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M39-BQ-PROVIDERS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5315,11 +5346,16 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/M38_RESULT.json
           ${{ env.R21_PACKAGE_OUTPUT }}/M38_PACKAGE_RESULT.json
           ${{ github.workspace }}/m38-donor-proof.json
+
+          ${{ env.M39_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M39_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M39_PACKAGE_RESULT.json
+          ${{ github.workspace }}/m39-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report M38 actual bundled build static boot pair and separate pending Device Pass
+    - name: Report M39 actual provider build static boot pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
@@ -5328,21 +5364,21 @@ jobs:
         test -z "$(git -C project status --porcelain --untracked-files=all)"
         python3 -B - <<'PY_M28_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M38_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M38_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M39_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M39_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M38 BQ-Sammelreparatur: atomare Register, Erkennung, IRQ und Lebensdauer, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M39 BQ-Providerbindung und IIO-Laengenguard, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('BQ-Sammelreparatur-Quellen kompiliert und verlinkt: '+str(r.get('bq_bundled_paths_compiled_and_linked',False))+'\n\n')
+                f.write('BQ-Provider-/IIO-Quellen kompiliert und verlinkt: '+str(r.get('bq_provider_paths_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M38-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M39-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M38_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M39_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
-    name: M38 BQ atomic registers detection IRQ lifecycle preserved ABI config and static boot AK3
+    name: M39 BQ late provider ownership IIO input preserved atomic registers ABI and static boot AK3
