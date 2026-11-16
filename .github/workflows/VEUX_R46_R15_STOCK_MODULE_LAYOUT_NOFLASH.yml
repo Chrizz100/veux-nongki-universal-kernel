@@ -1,4 +1,4 @@
-name: VEUX M34 BQ Init Errors Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M35 BQ Adapter Errors Stock QGKI Boot AK3 - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,7 +166,7 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m34-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m35-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
@@ -180,6 +180,7 @@ jobs:
       M32_DIR: ${{ github.workspace }}/veux-m32-bq-startup-tools
       M33_DIR: ${{ github.workspace }}/veux-m33-bq-shutdown-tools
       M34_DIR: ${{ github.workspace }}/veux-m34-bq-init-tools
+      M35_DIR: ${{ github.workspace }}/veux-m35-bq-adapter-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -188,7 +189,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and bounded M34 BQ init-error repair
+    - name: Authenticate immutable parents and bounded M35 BQ adapter-error repair
       shell: bash
       run: |
         set -euo pipefail
@@ -444,13 +445,41 @@ jobs:
             z.extractall(out)
         PY_M34_PARENT
         python3 -B "$M33_DIR/Tools/m33_bq_shutdown.py" verify-package
-        python3 -B - <<'PY_M34_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M34_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M34_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==513117,'M34_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='1985434b3366e98936e9b8735516bd73ed73528cfee38d669f4efea9f81656e9','M34_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M35_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/00cda1a6db647a02babba6935fcc982324a3ca0d/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        parent=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(parent)==328215
+        assert hashlib.sha256(parent).hexdigest()=='fb1e8f5ec07a4844ba5680a039d9fae7673b5cf04d5b7dff7ba49b82f88dce52'
+        original=pathlib.Path(os.environ['RUNNER_TEMP'])/'m35-original-m34.yml'
+        assert not original.exists();original.write_bytes(parent)
+        data=fetch('VEUX_M34_MAIN.zip',1_000_000)
+        assert len(data)==513117
+        assert hashlib.sha256(data).hexdigest()=='1985434b3366e98936e9b8735516bd73ed73528cfee38d669f4efea9f81656e9'
         out=pathlib.Path(os.environ['M34_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
+                assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M35_PARENT
+        python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" verify-package
+        python3 -B - <<'PY_M35_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M35_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M35_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==595127,'M35_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='b26ac6ea18355d6ec3719b8aa38f7cc0dfd098cafd82cd40f6afdde1931631b0','M35_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M35_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -459,8 +488,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M34_MAIN
-        python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" verify-package
+        PY_M35_MAIN
+        python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -1958,7 +1987,7 @@ jobs:
         \ not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"$R25_DIR/Tools/r25_tzlog.py\"\
         \ verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3 -B -m unittest discover -s \"$R25_DIR/Tests\"\
         \ -v\n"
-    - name: All inherited regressions plus M34 genuine init and IRQ recovery bus faults
+    - name: All inherited regressions plus M35 genuine adapter configuration and unplug faults
       shell: bash
       run: |
         set -euo pipefail
@@ -1973,7 +2002,8 @@ jobs:
         M31_WORKFLOW="$RUNNER_TEMP/m32-original-m31.yml" python3 -B -m unittest discover -s "$M31_DIR/Tests" -v
         M32_WORKFLOW="$RUNNER_TEMP/m33-original-m32.yml" python3 -B -m unittest discover -s "$M32_DIR/Tests" -v
         M33_WORKFLOW="$RUNNER_TEMP/m34-original-m33.yml" python3 -B -m unittest discover -s "$M33_DIR/Tests" -v
-        M34_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M34_DIR/Tests" -v
+        M34_WORKFLOW="$RUNNER_TEMP/m35-original-m34.yml" python3 -B -m unittest discover -s "$M34_DIR/Tests" -v
+        M35_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M35_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -2069,6 +2099,7 @@ jobs:
         python3 -B "$M32_DIR/Tools/m32_bq_startup.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m32-donor-proof.json"
         python3 -B "$M33_DIR/Tools/m33_bq_shutdown.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m33-donor-proof.json"
         python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m34-donor-proof.json"
+        python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m35-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -4939,11 +4970,11 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M34 full kernel linked init error branches IRQ shutdown config and complete ABI gates
+    - name: M35 full kernel linked adapter init IRQ shutdown config and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" build \
+        python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" build \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -4960,11 +4991,11 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M34 pair only after all actual source build ABI config and static boot gates
+    - name: M35 pair only after all actual source build ABI config and static boot gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M34_DIR/Tools/m34_bq_init_errors.py" package \
+        python3 -B "$M35_DIR/Tools/m35_bq_adapter_errors.py" package \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
           --m26-tool "$M26_DIR/Tools/m26_rpm_sleep.py" \
@@ -4975,12 +5006,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m34-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m35-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M34-BQ-INIT-ERRORS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M35-BQ-ADAPTER-ERRORS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5171,11 +5202,16 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/M34_RESULT.json
           ${{ env.R21_PACKAGE_OUTPUT }}/M34_PACKAGE_RESULT.json
           ${{ github.workspace }}/m34-donor-proof.json
+
+          ${{ env.M35_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M35_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M35_PACKAGE_RESULT.json
+          ${{ github.workspace }}/m35-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report M34 actual init-error build static boot pair and separate pending Device Pass
+    - name: Report M35 actual adapter-error build static boot pair and separate pending Device Pass
       if: ${{ always() }}
       shell: bash
       run: |
@@ -5184,21 +5220,21 @@ jobs:
         test -z "$(git -C project status --porcelain --untracked-files=all)"
         python3 -B - <<'PY_M28_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M34_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M34_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M35_RESULT.json'
+        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M35_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M34 BQ-Initialisierungsfehler und IRQ-Wiederherstellung, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M35 BQ-Adapterfehler mit erhaltener Monitorplanung, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
                 f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('BQ-Init-/IRQ-Fehlerquellen kompiliert und verlinkt: '+str(r.get('bq_init_error_paths_compiled_and_linked',False))+'\n\n')
+                f.write('BQ-Adapter-Fehlerquellen kompiliert und verlinkt: '+str(r.get('bq_adapter_error_paths_compiled_and_linked',False))+'\n\n')
                 f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M34-Neubau nicht erreicht.\n\n')
+            else:f.write('Vollstaendiger M35-Neubau nicht erreicht.\n\n')
             if pack.exists():
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M34_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M35_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
-    name: M34 BQ init write errors IRQ recovery preserved shutdown complete ABI and static boot AK3
+    name: M35 BQ adapter errors preserved init shutdown complete ABI and static boot AK3
