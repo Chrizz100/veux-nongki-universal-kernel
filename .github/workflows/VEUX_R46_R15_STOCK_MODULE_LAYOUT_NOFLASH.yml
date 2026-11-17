@@ -1,4 +1,4 @@
-name: VEUX M40 BQ Provider Binding Stock QGKI Boot AK3 - NOFLASH
+name: VEUX M40-R2 Source Preflight and BQ Numeric Inputs - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -194,7 +194,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate immutable parents and bounded M40 negative numeric IIO repair
+    - name: Authenticate immutable parents and M40-R2 MAIN with preflight-stage regression
       shell: bash
       run: |
         set -euo pipefail
@@ -620,10 +620,10 @@ jobs:
         python3 -B "$M39_DIR/Tools/m39_bq_providers.py" verify-package
         python3 -B - <<'PY_M40_MAIN'
         import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M40_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M40_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==358456,'M40_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='90747ebc650010171ca0e9c8e5ffd289c1e6b494199b2b3961e784e8583c5c7d','M40_MAIN_SHA_CHANGED'
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M40_R2_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M40_R2_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==370405,'M40_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='964df313dc0057dadb708f578fa47d300f8194a55c5096a11aefc19c2f166615','M40_MAIN_SHA_CHANGED'
         out=pathlib.Path(os.environ['M40_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
@@ -2267,7 +2267,7 @@ jobs:
         python3 -B "$M37_DIR/Tools/m37_bq_vindpm_hiz.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m37-donor-proof.json"
         python3 -B "$M38_DIR/Tools/m38_bq_bundled.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m38-donor-proof.json"
         python3 -B "$M39_DIR/Tools/m39_bq_providers.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m39-donor-proof.json"
-        python3 -B "$M40_DIR/Tools/m40_bq_numeric_inputs.py" check-git-source --source "$R9_SNAPSHOT" | tee "$GITHUB_WORKSPACE/m40-donor-proof.json"
+        python3 -B "$M40_DIR/Tools/m40_bq_numeric_inputs.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m40-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -5180,7 +5180,7 @@ jobs:
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M40-BQ-NUMERIC-INPUTS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M40-R2-BQ-NUMERIC-INPUTS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5416,7 +5416,7 @@ jobs:
         build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M40_RESULT.json'
         pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M40_PACKAGE_RESULT.json'
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M40 BQ-Zahlenkanal-Abweisung sowie Providerbindung und IIO-Laengenguard, RPM, Stock-QGKI, Boot.img und AK3\n\n')
+            f.write('### VEUX M40-R2 BQ-Zahlenkanal-Abweisung sowie Providerbindung und IIO-Laengenguard, RPM, Stock-QGKI, Boot.img und AK3\n\n')
             if build.exists():
                 r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
                 f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
@@ -5429,6 +5429,6 @@ jobs:
                 r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
             else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
             f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M40_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        print('M40_R2_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
         PY_M28_SUMMARY
     name: M39 BQ late provider ownership IIO input preserved atomic registers ABI and static boot AK3
