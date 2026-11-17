@@ -1,4 +1,4 @@
-name: VEUX M41 BQ Minimum Input and WT Error Propagation - NOFLASH
+name: VEUX M42 Charge Intent across VINDPM - NOFLASH
 'on':
   workflow_dispatch: {}
 permissions:
@@ -166,7 +166,7 @@ jobs:
       R15_LAYOUT_OUTPUT: ${{ github.workspace }}/r46-r15-layout-result
       R21_SCHED_DIR: ${{ github.workspace }}/r46-r21-scheduler-tools
       R21_PACK_DIR: ${{ github.workspace }}/r46-r21-packaging-tools
-      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m41-boot-ak3
+      R21_PACKAGE_OUTPUT: ${{ github.workspace }}/r46-m42-boot-ak3
       R23_DIR: ${{ github.workspace }}/r46-r23-fingerprint-tools
       R24_DIR: ${{ github.workspace }}/r46-r24-memory-tools
       R25_DIR: ${{ github.workspace }}/r46-r25-tzlog-tools
@@ -187,6 +187,7 @@ jobs:
       M39_DIR: ${{ github.workspace }}/veux-m39-bq-provider-tools
       M40_DIR: ${{ github.workspace }}/veux-m40-bq-numeric-tools
       M41_DIR: ${{ github.workspace }}/veux-m41-wt-current-tools
+      M42_DIR: ${{ github.workspace }}/veux-m42-charge-order-tools
     steps:
     - name: Checkout exact repo source read-only
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -195,7 +196,7 @@ jobs:
         path: project
         fetch-depth: 1
         persist-credentials: false
-    - name: Authenticate fixed M40-R2 parent and M41 charger input contract repair
+    - name: Authenticate immutable M41 parent and exact M42 charge ordering MAIN
       shell: bash
       run: |
         set -euo pipefail
@@ -647,13 +648,37 @@ jobs:
             z.extractall(out)
         PY_M41_PARENT
         python3 -B "$M40_DIR/Tools/m40_bq_numeric_inputs.py" verify-package
-        python3 -B - <<'PY_M41_MAIN'
-        import hashlib,os,pathlib,stat,zipfile
-        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M41_MAIN.zip'
-        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M41_MAIN_ZIP_TO_REPO_ROOT'
-        assert package.stat().st_size==183538,'M41_MAIN_SIZE_CHANGED'
-        assert hashlib.sha256(package.read_bytes()).hexdigest()=='1cb8c57d39dcec7725b7f768f1639a788f11fa6b4c9ed814088d659400ddfbe5','M41_MAIN_SHA_CHANGED'
+        python3 -B - <<'PY_M42_PARENT'
+        import hashlib,io,os,pathlib,stat,urllib.request,zipfile
+        base='https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/1953655b9f47825d1f821f93b398750ca99e7e43/'
+        def fetch(name,limit):
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(base+name,timeout=45)as response:return response.read(limit+1)
+                except (OSError,TimeoutError):
+                    if attempt==2:raise
+        data=fetch('.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml',500_000)
+        assert len(data)==345005 and hashlib.sha256(data).hexdigest()=='69d553a5fb5f9c671aef02325dfa8ae932d96b9f258301a91107c894727893f3'
+        p=pathlib.Path(os.environ['RUNNER_TEMP'])/'m42-original-m41.yml';assert not p.exists();p.write_bytes(data)
+        data=fetch('VEUX_M41_MAIN.zip',1_000_000)
+        assert len(data)==183538 and hashlib.sha256(data).hexdigest()=='1cb8c57d39dcec7725b7f768f1639a788f11fa6b4c9ed814088d659400ddfbe5'
         out=pathlib.Path(os.environ['M41_DIR']);assert not out.exists()
+        with zipfile.ZipFile(io.BytesIO(data))as z:
+            items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
+            assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
+            for x in items:
+                p=pathlib.PurePosixPath(x.filename)
+                assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename and not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
+            z.extractall(out)
+        PY_M42_PARENT
+        python3 -B "$M41_DIR/Tools/m41_wt_current.py" verify-package
+        python3 -B - <<'PY_M42_MAIN'
+        import hashlib,os,pathlib,stat,zipfile
+        package=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'project/VEUX_M42_MAIN.zip'
+        assert package.is_file()and not package.is_symlink(),'UPLOAD_VEUX_M42_MAIN_ZIP_TO_REPO_ROOT'
+        assert package.stat().st_size==117146,'M42_MAIN_SIZE_CHANGED'
+        assert hashlib.sha256(package.read_bytes()).hexdigest()=='2124d437abc25659131aced7e5343a3eb2f589eb5847bc3edd2fc6a507930307','M42_MAIN_SHA_CHANGED'
+        out=pathlib.Path(os.environ['M42_DIR']);assert not out.exists()
         with zipfile.ZipFile(package)as z:
             items=z.infolist();assert len(items)<100 and sum(x.file_size for x in items)<2_000_000
             assert z.testzip()is None and len(items)==len(set(x.filename for x in items))
@@ -662,8 +687,8 @@ jobs:
                 assert not p.is_absolute()and'..'not in p.parts and'\\'not in x.filename
                 assert not x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)
             z.extractall(out)
-        PY_M41_MAIN
-        python3 -B "$M41_DIR/Tools/m41_wt_current.py" verify-package
+        PY_M42_MAIN
+        python3 -B "$M42_DIR/Tools/m42_charge_order.py" verify-package
     - name: Require exact unchanged P11 R4, R6, and R7 root ZIPs
       id: package
       shell: bash
@@ -2174,7 +2199,7 @@ jobs:
         \ x.is_dir()and not stat.S_ISLNK(x.external_attr>>16)\n    z.extractall(out)\nPY_R25_MAIN\npython3 -B \"\
         $R25_DIR/Tools/r25_tzlog.py\" verify-package\nR25_WORKFLOW=\"$M25_DIR/References/R25_workflow.yml\" python3\
         \ -B -m unittest discover -s \"$R25_DIR/Tests\" -v\n"
-    - name: All inherited regressions and M41 real BQ minimum current, WT return and cache contracts
+    - name: All immutable earlier regressions and M42 actual charging request races and faults
       shell: bash
       run: |
         set -euo pipefail
@@ -2196,7 +2221,8 @@ jobs:
         M38_WORKFLOW="$RUNNER_TEMP/m39-original-m38.yml" python3 -B -m unittest discover -s "$M38_DIR/Tests" -v
         M39_WORKFLOW="$RUNNER_TEMP/m40-original-m39.yml" python3 -B -m unittest discover -s "$M39_DIR/Tests" -v
         M40_WORKFLOW="$RUNNER_TEMP/m41-original-m40-r2.yml" python3 -B -m unittest discover -s "$M40_DIR/Tests" -v
-        M41_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M41_DIR/Tests" -v
+        M41_WORKFLOW="$RUNNER_TEMP/m42-original-m41.yml" python3 -B -m unittest discover -s "$M41_DIR/Tests" -v
+        M42_WORKFLOW="$GITHUB_WORKSPACE/project/.github/workflows/VEUX_R46_R15_STOCK_MODULE_LAYOUT_NOFLASH.yml" python3 -B -m unittest discover -s "$M42_DIR/Tests" -v
     - name: Unpack and SHA-authenticate source-only dependencies
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -2299,6 +2325,7 @@ jobs:
         python3 -B "$M39_DIR/Tools/m39_bq_providers.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m39-donor-proof.json"
         python3 -B "$M40_DIR/Tools/m40_bq_numeric_inputs.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m40-donor-proof.json"
         python3 -B "$M41_DIR/Tools/m41_wt_current.py" check-git-source --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m41-donor-proof.json"
+        python3 -B "$M42_DIR/Tools/m42_charge_order.py" check-git-source --m41-tool "$M41_DIR/Tools/m41_wt_current.py" --source "$GITHUB_WORKSPACE/kernel" | tee "$GITHUB_WORKSPACE/m42-donor-proof.json"
     - name: Install YAML parser for exact P2 reconstruction
       if: ${{ steps.package.outputs.present == 'true' }}
       shell: bash
@@ -5169,11 +5196,12 @@ jobs:
         path: ${{ env.R47_REPORT_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: M41 complete source, CFI, two new branches and all config/ABI gates
+    - name: M42 full kernel CFI charging order config and complete ABI gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M41_DIR/Tools/m41_wt_current.py" build \
+        python3 -B "$M42_DIR/Tools/m42_charge_order.py" build \
+          --m41-tool "$M41_DIR/Tools/m41_wt_current.py" \
           --m40-tool "$M40_DIR/Tools/m40_bq_numeric_inputs.py" \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
@@ -5191,11 +5219,12 @@ jobs:
           --r6-report "$R47_REPORT_DIR/R47_RESULT.json" \
           --r6-tool "$R47_TOOLS_DIR/Tools/veux_r47_r13_on_r46.py" \
           --project "$GITHUB_WORKSPACE/project" --output "$R16_REPAIR_OUTPUT"
-    - name: M41 boot.img and AK3 only after all fresh M41 proof gates
+    - name: M42 fresh static boot.img and AK3 pair after all M42 gates
       shell: bash
       run: |
         set -euo pipefail
-        python3 -B "$M41_DIR/Tools/m41_wt_current.py" package \
+        python3 -B "$M42_DIR/Tools/m42_charge_order.py" package \
+          --m41-tool "$M41_DIR/Tools/m41_wt_current.py" \
           --m40-tool "$M40_DIR/Tools/m40_bq_numeric_inputs.py" \
           --m28-tool "$M28_DIR/Tools/m28_wt_reporting.py" \
           --m27-tool "$M27_DIR/Tools/m27_sc8551.py" \
@@ -5207,12 +5236,12 @@ jobs:
           --r21-package-tool "$R21_SCHED_DIR/Tools/r21_package.py" \
           --build "$R16_REPAIR_OUTPUT" \
           --packager-tool "$R21_PACK_DIR/Tools/boot_ak3_plan.py" \
-          --work "$GITHUB_WORKSPACE/r46-m41-pack-work" --output "$R21_PACKAGE_OUTPUT"
+          --work "$GITHUB_WORKSPACE/r46-m42-pack-work" --output "$R21_PACKAGE_OUTPUT"
     - name: Preserve genuine full build evidence and only validated NOFLASH boot AK3 pair
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: VEUX-M41-CHARGER-CONTRACTS-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
+        name: VEUX-M42-CHARGE-ORDER-STOCK-QGKI-BOOT-AK3-NOFLASH-${{ github.run_id }}
         path: |
           ${{ env.R16_REPAIR_OUTPUT }}/R16_RESULT.json
           ${{ env.R16_REPAIR_OUTPUT }}/R18_RESULT.json
@@ -5436,35 +5465,33 @@ jobs:
           ${{ env.R16_REPAIR_OUTPUT }}/M41_RESULT.json
           ${{ env.R21_PACKAGE_OUTPUT }}/M41_PACKAGE_RESULT.json
           ${{ github.workspace }}/m41-donor-proof.json
+          ${{ env.M42_DIR }}/
+          ${{ env.R16_REPAIR_OUTPUT }}/M42_RESULT.json
+          ${{ env.R21_PACKAGE_OUTPUT }}/M42_PACKAGE_RESULT.json
+          ${{ github.workspace }}/m42-donor-proof.json
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
         compression-level: 6
-    - name: Report M41 compiled input contracts and static pair with runtime blockers
+    - name: Report compiled M42 charge ordering and static pair with runtime blockers
       if: ${{ always() }}
       shell: bash
       run: |
         set -euo pipefail
-        test "$(git -C project rev-parse HEAD)" = "$GITHUB_SHA"
-        test -z "$(git -C project status --porcelain --untracked-files=all)"
-        python3 -B - <<'PY_M28_SUMMARY'
+        python3 -B - <<'PY_M42_SUMMARY'
         import json,os,pathlib
-        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M41_RESULT.json'
-        pack=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M41_PACKAGE_RESULT.json'
+        build=pathlib.Path(os.environ['R16_REPAIR_OUTPUT'])/'M42_RESULT.json'
+        pair=pathlib.Path(os.environ['R21_PACKAGE_OUTPUT'])/'M42_PACKAGE_RESULT.json'
+        r=json.loads(build.read_text())if build.exists()else{}
+        p=json.loads(pair.read_text())if pair.exists()else{}
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a')as f:
-            f.write('### VEUX M41 BQ-Zahlenkanal-Abweisung sowie Providerbindung und IIO-Laengenguard, RPM, Stock-QGKI, Boot.img und AK3\n\n')
-            if build.exists():
-                r=json.loads(build.read_text());f.write('Build: **'+r['status']+'**\n\n')
-                f.write('OEM-CRCs: `'+str(r.get('qgki_counts','nicht erreicht'))+'`\n\n')
-                f.write('Passende Module: '+str(r.get('fully_matching_modules','nicht erreicht'))+'/37\n\n')
-                f.write('BQ-Eingangsstrom unter 100 mA vor Registerzugriff abgewiesen: '+str(r.get('bq_minimum_input_paths_compiled_and_linked',False))+'\n\n')
-                f.write('WT/BQ-Eingangsvertrag kompiliert und verlinkt: '+str(r.get('wt_current_error_paths_compiled_and_linked',False))+'\n\n')
-                f.write('Kernelkennung: `'+r.get('release',{}).get('verified_release','nicht erreicht')+'`\n\n')
-            else:f.write('Vollstaendiger M41-Neubau nicht erreicht.\n\n')
-            if pack.exists():
-                r=json.loads(pack.read_text());f.write('Boot-/AK3-Container: **'+r['status']+'**\n\n')
-            else:f.write('Boot-/AK3-Paketpruefung nicht erreicht.\n\n')
-            f.write('Kein Lade-/Suspendtest am Geraet. Device Pass: **NEIN**. Flashfreigabe: **NEIN**.\n')
-        print('M41_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
-        PY_M28_SUMMARY
-    name: M39 BQ late provider ownership IIO input preserved atomic registers ABI and static boot AK3
+            f.write('### VEUX M42 NOFLASH\n\n')
+            f.write('Vollstaendiger M42-Neubau: '+str(r.get('kernel_compiled',False))+'\n\n')
+            f.write('Ladeanforderungs-Pfade kompiliert/verlinkt: '+str(r.get('charge_order_paths_compiled_and_linked',False))+'\n\n')
+            f.write('Kernelkennung: '+str(r.get('release',{}).get('verified_release','UNPROVEN'))+'\n\n')
+            f.write('OEM-CRC-Abgleich: '+str(r.get('qgki_counts',{}))+'\n\n')
+            f.write('Static Boot / AK3: '+str(p.get('static_boot_path_pass',False))+'\n\n')
+            f.write('Device Pass: NEIN. Flash-Freigabe: NEIN. Lade-/OTG-/Temperaturtests auf Hardware fehlen.\n')
+        print('M42_REPO_UNCHANGED=YES DEVICE_PASS=NO FLASH=NO')
+        PY_M42_SUMMARY
+    name: M42 charger request ordering full stock QGKI config ABI and static boot AK3
