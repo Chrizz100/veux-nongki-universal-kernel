@@ -11,6 +11,7 @@
 #include <linux/atomic.h>
 #include <linux/file.h>
 #include <linux/magic.h>
+#include <linux/exportfs.h>
 #include <linux/key-type.h>
 #include <linux/highmem.h>
 #include <linux/version.h>
@@ -40,8 +41,9 @@
 #define nm_warn(fmt, ...) printk(KERN_WARNING "NoMount: [WARN] " fmt, ##__VA_ARGS__)
 #define nm_err(fmt, ...)  printk(KERN_ERR "NoMount: [ERROR] " fmt, ##__VA_ARGS__)
 
+#define NM_LEAF_HT_BITS 10
 static struct nm_uid_array __rcu *nm_uids = NULL;
-static DEFINE_HASHTABLE(nm_leaves_ht, 6);
+static DEFINE_HASHTABLE(nm_leaves_ht, NM_LEAF_HT_BITS);
 static DEFINE_MUTEX(nm_mutex);
 static LIST_HEAD(nm_sb_list);
 static struct nm_rule_array *nm_retired_arrays;
@@ -67,6 +69,8 @@ struct nm_sop {
     const struct super_operations *orig_sop;
     const struct xattr_handler **orig_xattr;
     const struct xattr_handler **fake_xattr;
+    struct export_operations fake_export_op;
+    const struct export_operations *orig_export_op;
     struct super_block *sb;
     struct rcu_head rcu;
     struct list_head list;
@@ -144,10 +148,12 @@ struct nm_rule_info {
     struct nm_leaf *leaf;
 };
 
+#define NM_UID_BLOOM_WORDS 16
+
 struct nm_uid_array {
     struct rcu_head rcu;
     int count;
-    u64 bloom_mask[4];
+    u64 bloom_mask[NM_UID_BLOOM_WORDS];
     uid_t uids[];
 };
 
@@ -186,12 +192,11 @@ static const struct dentry_operations nm_dops;
 extern int vfs_path_lookup(struct dentry *, struct vfsmount *, const char *, unsigned int, struct path *);
 static struct dentry *nm_hijacked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
 static int nm_hijacked_iterate_dir(struct file *file, struct dir_context *ctx);
-static void nm_hijacked_evict_inode(struct inode *inode);
+static void nm_hijacked_put_super(struct super_block *sb);
 static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool injected);
 static void nm_dir_put(struct nm_dir_node *dir_node);
 static void nm_leaf_put(struct nm_leaf *leaf);
 static void nm_shutdown_release(void);
-static int nm_shutdown_sync_fs(struct super_block *sb, int wait);
 static int nm_del_rule_locked(const char *path, u16 len, unsigned int uid, unsigned int uid_end, unsigned int deny_start, unsigned int deny_end);
 static void nm_clear_state(int clear_flags);
 
@@ -233,11 +238,11 @@ static inline u32 nm_unpack_pos(loff_t pos) {
 /* --- UIDs Array RCU Management --- */
 static __always_inline void nm_uid_bloom_set(struct nm_uid_array *arr, uid_t uid)
 {
-    arr->bloom_mask[(uid >> 6) & 3] |= 1ULL << (uid & 63);
+    arr->bloom_mask[(uid >> 6) & (NM_UID_BLOOM_WORDS - 1)] |= 1ULL << (uid & 63);
 }
 static __always_inline bool nm_uid_bloom_test(struct nm_uid_array *arr, uid_t uid)
 {
-    return !!(arr->bloom_mask[(uid >> 6) & 3] & (1ULL << (uid & 63)));
+    return !!(arr->bloom_mask[(uid >> 6) & (NM_UID_BLOOM_WORDS - 1)] & (1ULL << (uid & 63)));
 }
 
 static inline int nm_uid_add(uid_t target)
@@ -448,7 +453,7 @@ static inline struct nm_dir_ops *nm_get_nm_fop(const struct file_operations *fop
 }
 
 static inline struct nm_sop *nm_get_nm_sop(const struct super_operations *sop) {
-    if (likely(sop) && (sop->evict_inode == nm_hijacked_evict_inode || sop->sync_fs == nm_shutdown_sync_fs))
+    if (likely(sop) && sop->put_super == nm_hijacked_put_super)
         return container_of(sop, struct nm_sop, fake_sop);
     return NULL;
 }
