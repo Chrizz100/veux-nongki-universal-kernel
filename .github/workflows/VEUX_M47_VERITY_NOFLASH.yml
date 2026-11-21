@@ -1,0 +1,65 @@
+name: VEUX M47 Stock-Verity (NOFLASH)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verity:
+    name: Verity-Treiber gegen den M44-Build prüfen
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: M47-Eingabepaket laden
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M47_MAIN.zip
+
+      - name: MAIN prüfen und entpacken
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '40a966f745b0262dedfc38bf08679ab8d8ff05bf464b884f1867cfc5624dbeee  VEUX_M47_MAIN.zip' | sha256sum --check --strict
+          unzip -q VEUX_M47_MAIN.zip -d "$RUNNER_TEMP/veux-m47"
+
+      - name: Originalartefakte aus M44 und M46 laden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for entry in m44:14699092267 m46:14706022228; do
+            name=${entry%:*}
+            id=${entry#*:}
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip"
+          done
+
+      - name: Patch anwenden, ARM64-Treiber linken und Fehlerfälle im RAM prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$RUNNER_TEMP/veux-m47/check.py" \
+            --m44 "$RUNNER_TEMP/m44.zip" \
+            --m46 "$RUNNER_TEMP/m46.zip" \
+            --toolchain "$RUNNER_TEMP/m47-compiler" \
+            --out "$RUNNER_TEMP/veux-result"
+          {
+            echo '### M47 · ARM64-Treibertest · NOFLASH'
+            echo '```json'
+            cat "$RUNNER_TEMP/veux-result/M47_RESULT.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prüfergebnis und ARM64-Treiberobjekt sichern
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M47-VERITY-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-result/
+          if-no-files-found: error
+          retention-days: 30
