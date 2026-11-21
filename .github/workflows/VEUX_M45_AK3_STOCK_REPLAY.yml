@@ -1,0 +1,47 @@
+name: VEUX M45 AK3 Stock-Replay (NOFLASH)
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stock-replay:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Eingabepaket aus dem Repo lesen
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M45_MAIN.zip
+      - name: M45-Eingaben verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "6c31c1189deb4a5c0909f2737dc87e1c395dcd25c8abd96a70764e8efb5e5bcd  VEUX_M45_MAIN.zip" | sha256sum --check
+          unzip -q VEUX_M45_MAIN.zip -d "$RUNNER_TEMP/veux-m45"
+      - name: M44-Originalartefakt von GitHub laden
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14699092267/zip" > "$RUNNER_TEMP/m44.zip"
+      - name: ARM-Werkzeug und Stock-Repack an Dateien prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get -qq update
+          sudo apt-get -qq install --yes --no-install-recommends qemu-user
+          python3 -B "$RUNNER_TEMP/veux-m45/review.py" \
+            --artifact "$RUNNER_TEMP/m44.zip" --qemu "$(command -v qemu-arm)" \
+            --out "$RUNNER_TEMP/veux-result"
+          cat "$RUNNER_TEMP/veux-result/M45_RESULT.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Geprüftes Boot-Image, Prüf-AK3 und Ergebnis sichern
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M45-AK3-STOCK-REPLAY-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-result/
+          if-no-files-found: error
+          retention-days: 30
