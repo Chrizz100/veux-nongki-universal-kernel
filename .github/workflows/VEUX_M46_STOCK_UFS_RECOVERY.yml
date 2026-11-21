@@ -1,0 +1,46 @@
+name: VEUX M46 Stock-UFS und Recovery (NOFLASH)
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stockvergleich:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: M46-Eingabepaket auschecken
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M46_MAIN.zip
+      - name: Eingabepaket und Geraeteskript pruefen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '18b87f3e25854dc6516295539e9fbc62069ad43bb52acb558f0e130f330539a5  VEUX_M46_MAIN.zip' | sha256sum --check
+          unzip -q VEUX_M46_MAIN.zip -d "$RUNNER_TEMP/veux-m46"
+          sh -n "$RUNNER_TEMP/veux-m46/VEUX_M46_Geraetecheck.sh"
+      - name: Gruenes M45-Ergebnis laden
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14699992239/zip" > "$RUNNER_TEMP/m45.zip"
+      - name: Stock-Overlay anwenden und Boot- und Recoverydateien abgleichen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get -qq update
+          sudo apt-get -qq install --yes --no-install-recommends device-tree-compiler liblz4-1
+          python3 -B "$RUNNER_TEMP/veux-m46/check.py" --artifact "$RUNNER_TEMP/m45.zip" --out "$RUNNER_TEMP/veux-result"
+          cat "$RUNNER_TEMP/veux-result/M46_ERGEBNIS.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stock-Dateiarchiv und Ergebnis sichern
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M46-STOCK-UFS-RECOVERY-NOFLASH-${{ github.run_id }}
+          path: ${{ runner.temp }}/veux-result/
+          if-no-files-found: error
+          retention-days: 30
