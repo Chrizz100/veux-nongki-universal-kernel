@@ -1,0 +1,49 @@
+name: VEUX M49 – M48-Artefakte und Gerätebericht prüfen (NOFLASH)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  abgleich:
+    if: github.repository == 'Chrizz100/veux-nongki-universal-kernel' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M49_MAIN.zip
+            /M49-Geraetestand.txt
+      - name: Gerätecheck und Auswerter verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '0f45300b51b2f20912229fa1212439ae2e0d61995302edaeafa53ae207f5f14f  VEUX_M49_MAIN.zip' | sha256sum --check --strict
+          unzip -q VEUX_M49_MAIN.zip -d "$RUNNER_TEMP/m49"
+          dash -n "$RUNNER_TEMP/m49/VEUX_M49_Geraetecheck.sh"
+      - name: Drei vorhandene M48-Archive abrufen und auswerten
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for item in evidence:14715590188 pair:14715382148 checkpoint:14714787887; do
+            name=${item%:*}
+            id=${item#*:}
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/m49/$name.zip"
+          done
+          args=()
+          if [[ -f M49-Geraetestand.txt ]]; then
+            args+=(--geraet "$GITHUB_WORKSPACE/M49-Geraetestand.txt")
+          fi
+          python3 -B "$RUNNER_TEMP/m49/auswerten.py" --archive "$RUNNER_TEMP/m49" "${args[@]}" --ausgabe "$RUNNER_TEMP/M49-Ergebnis.json"
+      - name: Ergebnis sichern
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M49-ABGLEICH-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/M49-Ergebnis.json
+          if-no-files-found: error
+          retention-days: 30
