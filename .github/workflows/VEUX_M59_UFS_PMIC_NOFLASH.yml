@@ -1,0 +1,151 @@
+name: VEUX M59 – UFS-Stockvergleich und PMIC-Reparatur, QGKI 5.4.274
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  m59:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      SOURCE_DATE_EPOCH: '1794009600'
+      KBUILD_BUILD_TIMESTAMP: Sat Nov 7 00:00:00 UTC 2026
+      KBUILD_BUILD_USER: veux-ci
+      KBUILD_BUILD_HOST: github-actions
+      KBUILD_BUILD_VERSION: '1'
+    steps:
+      - name: M59-Paket aus dem gewählten Commit laden
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M59_MAIN.zip
+          persist-credentials: false
+      - name: M58-Quellstand und Xiaomi-Referenz prüfen, Reparatur anwenden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo '17f11af57cc1fc8dbaeb9264eb8ff32ed176094b840640beb39ed7df777c4b41  VEUX_M59_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M59_MAIN.zip -d "$RUNNER_TEMP/m59-tools"
+          cd "$RUNNER_TEMP"
+          mkdir -p m59/evidence
+          for item in 'm58:14763059350' 'm46:14706022228'; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${item#*:}/zip" > "m59/${item%:*}.zip"
+          done
+          python3 -B m59-tools/inputs.py m59
+          python3 -B m59-tools/test_pmic.py m59/src | tee m59/evidence/PMIC-Registertest.txt
+          python3 -B m59-tools/test_device.py | tee m59/evidence/UFS-Berichtstest.txt
+          python3 -B m59-tools/ufs_reference.py m59/boot.img m59-tools/Nachweise/UFS-Stock.json m59/evidence/UFS-Stock.json --verified-reference
+          python3 -B m59-tools/test_stock_zram.py m59/src | tee m59/evidence/zRAM-Seitentests.txt
+          python3 -B m59-tools/test_zram.py m59/src | tee m59/evidence/zRAM-Tests.txt
+          python3 -B m59-tools/test_thermal.py m59/src | tee m59/evidence/Thermik-Test.txt
+          python3 -B m59-tools/test.py m59/src | tee m59/evidence/M51-Bootinfo-Test.txt
+      - name: Geprüfte Android-Werkzeugkette bereitstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libncurses-dev libssl-dev rsync xz-utils zstd qemu-user
+          bash "$RUNNER_TEMP/m59-tools/toolchain.sh" "$RUNNER_TEMP/m59/clang"
+          python3 -B "$RUNNER_TEMP/m59-tools/ufs_paths.py" "$RUNNER_TEMP/m59/boot.img" "$RUNNER_TEMP/m59/clang/bin" "$RUNNER_TEMP/m59/evidence/UFS-Aufrufbedingungen.json"
+      - name: zRAM, Thermik, Speicherverwaltung, Atomics, F2FS und VEUX-DTB vor dem Vollbau prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m59"
+          tools="$RUNNER_TEMP/m59-tools"
+          python3 -B "$tools/test_f2fs.py" src | tee evidence/F2FS-Tests.txt
+          bash "$tools/kbuild.sh" src out clang olddefconfig > evidence/olddefconfig.log 2>&1 || { tail -80 evidence/olddefconfig.log; exit 1; }
+          python3 -B "$tools/check.py" config --out out --baseline baseline.config --stock boot.img --result evidence
+          python3 -B "$tools/zram_image.py" stock boot.img evidence/Xiaomi-zRAM.json --inventory evidence/Xiaomi-zRAM-Dateien.txt
+          python3 -B "$tools/zram_paths.py" stock clang/bin boot.img evidence/Xiaomi-zRAM-Pfade.json
+          python3 -B "$tools/zram_image.py" stock boot.img evidence/Xiaomi-zRAM-ABI.json --full
+          python3 -B "$tools/ratio_contract.py" stock clang/bin boot.img evidence/Xiaomi-Seitenmodell.json
+          bash "$tools/test_zram_variants.sh" > evidence/zRAM-Kbuild.log 2>&1 || { tail -100 evidence/zRAM-Kbuild.log; exit 1; }
+          bash "$tools/kbuild.sh" src out clang drivers/thermal/qcom/cpu_isolate.o kernel/sched/walt/qc_vas.o dtbs > evidence/Thermik-Kbuild.log 2>&1 || { tail -100 evidence/Thermik-Kbuild.log; exit 1; }
+          clang/bin/ld.lld -r out/drivers/thermal/qcom/cpu_isolate.o -o evidence/Thermik-arm64.o
+          python3 -B "$tools/thermal_object.py" clang/bin/llvm-readelf evidence/Thermik-arm64.o evidence/Thermik-Objekt.json
+          python3 -B "$tools/thermal_dtb.py" out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb evidence/VEUX-Kuehlgeraete.json
+          python3 -B "$tools/thermal_image.py" stock clang/bin boot.img evidence/Xiaomi-Thermik.json
+          bash "$tools/verify_memory.sh" > evidence/Speicher-Vorpruefung.log 2>&1 || { tail -110 evidence/Speicher-Vorpruefung.log; exit 1; }
+          bash "$tools/test_variants.sh" > evidence/Atomics-Vorpruefung.log 2>&1 || { tail -100 evidence/Atomics-Vorpruefung.log; exit 1; }
+          bash "$tools/kbuild.sh" src out clang lib/radix-tree.o fs/f2fs/ drivers/power/supply/qcom/bq2589x_charger.o dtbs > evidence/F2FS-Kbuild.log 2>&1 || { tail -100 evidence/F2FS-Kbuild.log; exit 1; }
+          clang/bin/ld.lld -r --whole-archive out/fs/f2fs/built-in.a --no-whole-archive -o evidence/F2FS-arm64.o
+          python3 -B "$tools/arm_proof.py" clang/bin/llvm-readelf evidence/F2FS-arm64.o evidence/F2FS-Aufrufe.json
+          echo '4b7fa9ac17c325234bc4ba75f65aefa42fdd32647b40e9bd3f616c9d9a6c2a96  out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb' | sha256sum -c -
+      - name: Vollständigen Kernel und Module aus M59-Quellen bauen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m59"
+          for goal in Image modules; do
+            bash "$RUNNER_TEMP/m59-tools/kbuild.sh" src out clang "$goal" > "evidence/$goal.log" 2>&1 || { tail -120 "evidence/$goal.log"; exit 1; }
+          done
+      - name: Kernel, Modulschnittstellen, Stock-Konfiguration und Boot-Layout nachprüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m59"
+          python3 -B "$RUNNER_TEMP/m59-tools/check.py" final --out out --baseline baseline.config --stock boot.img --result evidence
+          python3 -B "$RUNNER_TEMP/m59-tools/atomics.py" image clang/bin out/arch/arm64/boot/Image evidence/M59-Image-Atomics.json --system-map out/System.map
+          cmp evidence/Xiaomi-Atomics.json evidence/M59-Image-Atomics.json
+          python3 -B "$RUNNER_TEMP/m59-tools/memory_image.py" candidate clang/bin out/arch/arm64/boot/Image evidence/M59-Image-Speicher.json --map out/System.map
+          cmp evidence/Xiaomi-Speicher.json evidence/M59-Image-Speicher.json
+          python3 -B "$RUNNER_TEMP/m59-tools/reaper_image.py" candidate clang/bin out/arch/arm64/boot/Image evidence/M59-Image-Reaper.json --map out/System.map
+          cmp evidence/Xiaomi-Reaper.json evidence/M59-Image-Reaper.json
+          python3 -B "$RUNNER_TEMP/m59-tools/thermal_image.py" candidate clang/bin out/arch/arm64/boot/Image evidence/M59-Image-Thermik.json --map out/System.map
+          cmp evidence/Xiaomi-Thermik.json evidence/M59-Image-Thermik.json
+          python3 -B "$RUNNER_TEMP/m59-tools/zram_image.py" candidate out/arch/arm64/boot/Image evidence/M59-Image-zRAM.json --map out/System.map --inventory evidence/M59-zRAM-Dateien.txt
+          cmp evidence/Xiaomi-zRAM.json evidence/M59-Image-zRAM.json
+          python3 -B "$RUNNER_TEMP/m59-tools/zram_paths.py" candidate clang/bin out/arch/arm64/boot/Image evidence/M59-Image-zRAM-Pfade.json --map out/System.map
+          cmp evidence/Xiaomi-zRAM-Pfade.json evidence/M59-Image-zRAM-Pfade.json
+          python3 -B "$RUNNER_TEMP/m59-tools/zram_image.py" candidate out/arch/arm64/boot/Image evidence/M59-zRAM-ABI.json --map out/System.map --full
+          cmp evidence/Xiaomi-zRAM-ABI.json evidence/M59-zRAM-ABI.json
+          cmp evidence/Xiaomi-zRAM-Dateien.txt evidence/M59-zRAM-Dateien.txt
+          python3 -B "$RUNNER_TEMP/m59-tools/ratio_contract.py" candidate clang/bin out/arch/arm64/boot/Image evidence/M59-Seitenmodell.json --map out/System.map
+          cmp evidence/Xiaomi-Seitenmodell.json evidence/M59-Seitenmodell.json
+          python3 -B "$RUNNER_TEMP/m59-tools/restgruppen.py" evidence boot.img out/System.map clang/bin
+          python3 -B "$RUNNER_TEMP/m59-tools/pmic_image.py" boot.img out/arch/arm64/boot/Image out/System.map out/Module.symvers clang/bin evidence/PMIC-Image.json
+          cat evidence/M59_KERNEL.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Vorhandene Bauprodukte und Diagnosen sichern
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir -p m59/evidence
+          cd m59
+          for item in .config Module.symvers System.map arch/arm64/boot/Image vmlinux; do
+            if [[ -s "out/$item" ]]; then
+              target=${item##*/}
+              if [[ "$target" = .config ]]; then target=kernel.config; fi
+              cp "out/$item" "evidence/$target"
+            fi
+          done
+      - name: M59-Kernelnachweise
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M59-KERNEL-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m59/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Erfolgreichen Quellstand für die Folgereparatur sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m59"
+          mkdir quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M59-kernel-source.tar.gz
+          cp evidence/{M59_KERNEL.json,kernel.config} quelle/
+          cd quelle
+          sha256sum M59-kernel-source.tar.gz > SHA256SUMS
+      - name: M59-Quellstand
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M59-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m59/quelle/
+          if-no-files-found: error
+          retention-days: 30
