@@ -1,0 +1,113 @@
+name: VEUX M52 – F2FS-Checkpoint, QGKI 5.4.274
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  m52:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      SOURCE_DATE_EPOCH: '1794009600'
+      KBUILD_BUILD_TIMESTAMP: Sat Nov 7 00:00:00 UTC 2026
+      KBUILD_BUILD_USER: veux-ci
+      KBUILD_BUILD_HOST: github-actions
+      KBUILD_BUILD_VERSION: '1'
+    steps:
+      - name: M52-Paket aus dem gewählten Commit laden
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M52_MAIN.zip
+          persist-credentials: false
+      - name: M51-Quellstand und Xiaomi-Referenz prüfen, Reparatur anwenden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo '97930927bad15c75e3a7706cb6907e33e8062a74eb7d34866164d10ba170dcbc  VEUX_M52_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M52_MAIN.zip -d "$RUNNER_TEMP/m52-tools"
+          cd "$RUNNER_TEMP"
+          mkdir -p m52/evidence
+          for item in 'm51:14748687435' 'm46:14706022228'; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${item#*:}/zip" > "m52/${item%:*}.zip"
+          done
+          python3 -B m52-tools/inputs.py m52
+          python3 -B m52-tools/test.py m52/src | tee m52/evidence/M51-Bootinfo-Test.txt
+      - name: Geprüfte Android-Werkzeugkette bereitstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libncurses-dev libssl-dev rsync xz-utils zstd
+          bash "$RUNNER_TEMP/m52-tools/toolchain.sh" "$RUNNER_TEMP/m52/clang"
+      - name: F2FS-Fehlerpfade, ARM64-Code und VEUX-DTB vorab prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m52"
+          tools="$RUNNER_TEMP/m52-tools"
+          python3 -B "$tools/test_f2fs.py" src | tee evidence/F2FS-Tests.txt
+          bash "$tools/kbuild.sh" src out clang olddefconfig > evidence/olddefconfig.log 2>&1 || { tail -80 evidence/olddefconfig.log; exit 1; }
+          python3 -B "$tools/check.py" config --out out --baseline baseline.config --stock boot.img --result evidence
+          bash "$tools/kbuild.sh" src out clang fs/f2fs/ drivers/power/supply/qcom/bq2589x_charger.o dtbs > evidence/F2FS-Kbuild.log 2>&1 || { tail -100 evidence/F2FS-Kbuild.log; exit 1; }
+          clang/bin/ld.lld -r --whole-archive out/fs/f2fs/built-in.a --no-whole-archive -o evidence/F2FS-arm64.o
+          python3 -B "$tools/arm_proof.py" clang/bin/llvm-readelf evidence/F2FS-arm64.o evidence/F2FS-Aufrufe.json
+          echo '4b7fa9ac17c325234bc4ba75f65aefa42fdd32647b40e9bd3f616c9d9a6c2a96  out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb' | sha256sum -c -
+      - name: Vollständigen Kernel und Module aus M52-Quellen bauen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m52"
+          for goal in Image modules; do
+            bash "$RUNNER_TEMP/m52-tools/kbuild.sh" src out clang "$goal" > "evidence/$goal.log" 2>&1 || { tail -120 "evidence/$goal.log"; exit 1; }
+          done
+      - name: Kernel, Modulschnittstellen, Stock-Konfiguration und Boot-Layout nachprüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m52"
+          python3 -B "$RUNNER_TEMP/m52-tools/check.py" final --out out --baseline baseline.config --stock boot.img --result evidence
+          cat evidence/M52_KERNEL.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Vorhandene Bauprodukte und Diagnosen sichern
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir -p m52/evidence
+          cd m52
+          for item in .config Module.symvers System.map arch/arm64/boot/Image vmlinux; do
+            if [[ -s "out/$item" ]]; then
+              target=${item##*/}
+              if [[ "$target" = .config ]]; then target=kernel.config; fi
+              cp "out/$item" "evidence/$target"
+            fi
+          done
+      - name: M52-Kernelnachweise
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M52-KERNEL-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m52/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Erfolgreichen Quellstand für die Folgereparatur sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m52"
+          mkdir quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M52-kernel-source.tar.gz
+          cp evidence/{M52_KERNEL.json,kernel.config} quelle/
+          cd quelle
+          sha256sum M52-kernel-source.tar.gz > SHA256SUMS
+      - name: M52-Quellstand
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M52-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m52/quelle/
+          if-no-files-found: error
+          retention-days: 30
