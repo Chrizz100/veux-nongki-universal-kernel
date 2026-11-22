@@ -1,0 +1,116 @@
+name: VEUX M53 – Stock-Atomics, QGKI 5.4.274
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  m53:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      SOURCE_DATE_EPOCH: '1794009600'
+      KBUILD_BUILD_TIMESTAMP: Sat Nov 7 00:00:00 UTC 2026
+      KBUILD_BUILD_USER: veux-ci
+      KBUILD_BUILD_HOST: github-actions
+      KBUILD_BUILD_VERSION: '1'
+    steps:
+      - name: M53-Paket aus dem gewählten Commit laden
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M53_MAIN.zip
+          persist-credentials: false
+      - name: M52-Quellstand und Xiaomi-Referenz prüfen, Reparatur anwenden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo '7090546a0defd91417424eb079812bb5519b12b666ec8063ae837848968d6cc1  VEUX_M53_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M53_MAIN.zip -d "$RUNNER_TEMP/m53-tools"
+          cd "$RUNNER_TEMP"
+          mkdir -p m53/evidence
+          for item in 'm52:14750027225' 'm46:14706022228'; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${item#*:}/zip" > "m53/${item%:*}.zip"
+          done
+          python3 -B m53-tools/inputs.py m53
+          python3 -B m53-tools/test.py m53/src | tee m53/evidence/M51-Bootinfo-Test.txt
+      - name: Geprüfte Android-Werkzeugkette bereitstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libncurses-dev libssl-dev rsync xz-utils zstd qemu-user
+          bash "$RUNNER_TEMP/m53-tools/toolchain.sh" "$RUNNER_TEMP/m53/clang"
+      - name: Stock-Atomics, F2FS und VEUX-DTB vor dem Vollbau prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m53"
+          tools="$RUNNER_TEMP/m53-tools"
+          python3 -B "$tools/test_f2fs.py" src | tee evidence/F2FS-Tests.txt
+          bash "$tools/kbuild.sh" src out clang olddefconfig > evidence/olddefconfig.log 2>&1 || { tail -80 evidence/olddefconfig.log; exit 1; }
+          python3 -B "$tools/check.py" config --out out --baseline baseline.config --stock boot.img --result evidence
+          bash "$tools/test_variants.sh" > evidence/Atomics-Vorpruefung.log 2>&1 || { tail -100 evidence/Atomics-Vorpruefung.log; exit 1; }
+          bash "$tools/kbuild.sh" src out clang lib/radix-tree.o fs/f2fs/ drivers/power/supply/qcom/bq2589x_charger.o dtbs > evidence/F2FS-Kbuild.log 2>&1 || { tail -100 evidence/F2FS-Kbuild.log; exit 1; }
+          clang/bin/ld.lld -r --whole-archive out/fs/f2fs/built-in.a --no-whole-archive -o evidence/F2FS-arm64.o
+          python3 -B "$tools/arm_proof.py" clang/bin/llvm-readelf evidence/F2FS-arm64.o evidence/F2FS-Aufrufe.json
+          echo '4b7fa9ac17c325234bc4ba75f65aefa42fdd32647b40e9bd3f616c9d9a6c2a96  out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb' | sha256sum -c -
+      - name: Vollständigen Kernel und Module aus M53-Quellen bauen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m53"
+          for goal in Image modules; do
+            bash "$RUNNER_TEMP/m53-tools/kbuild.sh" src out clang "$goal" > "evidence/$goal.log" 2>&1 || { tail -120 "evidence/$goal.log"; exit 1; }
+          done
+      - name: Kernel, Modulschnittstellen, Stock-Konfiguration und Boot-Layout nachprüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m53"
+          python3 -B "$RUNNER_TEMP/m53-tools/check.py" final --out out --baseline baseline.config --stock boot.img --result evidence
+          python3 -B "$RUNNER_TEMP/m53-tools/atomics.py" image clang/bin out/arch/arm64/boot/Image evidence/M53-Image-Atomics.json --system-map out/System.map
+          cmp evidence/Xiaomi-Atomics.json evidence/M53-Image-Atomics.json
+          cat evidence/M53_KERNEL.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Vorhandene Bauprodukte und Diagnosen sichern
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir -p m53/evidence
+          cd m53
+          for item in .config Module.symvers System.map arch/arm64/boot/Image vmlinux; do
+            if [[ -s "out/$item" ]]; then
+              target=${item##*/}
+              if [[ "$target" = .config ]]; then target=kernel.config; fi
+              cp "out/$item" "evidence/$target"
+            fi
+          done
+      - name: M53-Kernelnachweise
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M53-KERNEL-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m53/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Erfolgreichen Quellstand für die Folgereparatur sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m53"
+          mkdir quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M53-kernel-source.tar.gz
+          cp evidence/{M53_KERNEL.json,kernel.config} quelle/
+          cd quelle
+          sha256sum M53-kernel-source.tar.gz > SHA256SUMS
+      - name: M53-Quellstand
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M53-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m53/quelle/
+          if-no-files-found: error
+          retention-days: 30
