@@ -1,0 +1,116 @@
+name: VEUX M51 – Bootgrund und PMIC, QGKI 5.4.274
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  m51:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    env:
+      SOURCE_DATE_EPOCH: '1794009600'
+      KBUILD_BUILD_TIMESTAMP: Sat Nov 7 00:00:00 UTC 2026
+      KBUILD_BUILD_USER: veux-ci
+      KBUILD_BUILD_HOST: github-actions
+      KBUILD_BUILD_VERSION: '1'
+    steps:
+      - name: M51-Paket aus dem gewählten Commit laden
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M51_MAIN.zip
+          persist-credentials: false
+      - name: M50-Quellstand und Xiaomi-Referenz prüfen, Reparatur anwenden
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo 'c01b377e6f859943fd460a513e90f74d1d4145fcf4edc8fe01ca9ce511e226ec  VEUX_M51_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M51_MAIN.zip -d "$RUNNER_TEMP/m51-tools"
+          cd "$RUNNER_TEMP"
+          mkdir -p m51/evidence
+          for item in 'm50:14744629733' 'm46:14706022228'; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${item#*:}/zip" > "m51/${item%:*}.zip"
+          done
+          python3 -B m51-tools/inputs.py m51
+          python3 -B m51-tools/test.py m51/src | tee m51/evidence/Funktionstest.txt
+      - name: Geprüfte Android-Werkzeugkette bereitstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev libncurses-dev libssl-dev rsync xz-utils zstd
+          bash "$RUNNER_TEMP/m51-tools/toolchain.sh" "$RUNNER_TEMP/m51/clang"
+      - name: Konfiguration, Bootinfo-Objekte, PMIC und VEUX-DTB vorab prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m51"
+          tools="$RUNNER_TEMP/m51-tools"
+          bash "$tools/kbuild.sh" src out clang olddefconfig > evidence/olddefconfig.log 2>&1 || { tail -80 evidence/olddefconfig.log; exit 1; }
+          python3 -B "$tools/check.py" config --out out --baseline baseline.config --stock boot.img --result evidence
+          objects=(arch/arm64/kernel/bootinfo.o drivers/of/fdt.o drivers/input/misc/qpnp-power-on.o)
+          bash "$tools/kbuild.sh" src out clang "${objects[@]}" dtbs > evidence/Objekte.log 2>&1 || { tail -100 evidence/Objekte.log; exit 1; }
+          clang/bin/ld.lld -r "${objects[@]/#/out/}" -o evidence/Bootinfo-Verbund.o
+          clang/bin/llvm-nm evidence/Bootinfo-Verbund.o > evidence/Bootinfo-Symbole.txt
+          for sym in qpnp_pon_is_lpk qpnp_pon_is_ps_hold_reset bootinfo_read_reason early_init_dt_scan_chosen; do
+            grep -Eq "[[:space:]]T ${sym}$" evidence/Bootinfo-Symbole.txt
+          done
+          echo '4b7fa9ac17c325234bc4ba75f65aefa42fdd32647b40e9bd3f616c9d9a6c2a96  out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb' | sha256sum -c -
+      - name: Vollständigen Kernel und Module aus M51-Quellen bauen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m51"
+          for goal in Image modules; do
+            bash "$RUNNER_TEMP/m51-tools/kbuild.sh" src out clang "$goal" > "evidence/$goal.log" 2>&1 || { tail -120 "evidence/$goal.log"; exit 1; }
+          done
+      - name: Kernel, Modulschnittstellen, Stock-Konfiguration und Boot-Layout nachprüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m51"
+          python3 -B "$RUNNER_TEMP/m51-tools/check.py" final --out out --baseline baseline.config --stock boot.img --result evidence
+          cat evidence/M51_KERNEL.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Vorhandene Bauprodukte und Diagnosen sichern
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir -p m51/evidence
+          cd m51
+          for item in .config Module.symvers System.map arch/arm64/boot/Image vmlinux; do
+            if [[ -s "out/$item" ]]; then
+              target=${item##*/}
+              if [[ "$target" = .config ]]; then target=kernel.config; fi
+              cp "out/$item" "evidence/$target"
+            fi
+          done
+      - name: M51-Kernelnachweise
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M51-KERNEL-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m51/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Erfolgreichen Quellstand für die Folgereparatur sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m51"
+          mkdir quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M51-kernel-source.tar.gz
+          cp evidence/{M51_KERNEL.json,kernel.config} quelle/
+          cd quelle
+          sha256sum M51-kernel-source.tar.gz > SHA256SUMS
+      - name: M51-Quellstand
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-M51-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m51/quelle/
+          if-no-files-found: error
+          retention-days: 30
