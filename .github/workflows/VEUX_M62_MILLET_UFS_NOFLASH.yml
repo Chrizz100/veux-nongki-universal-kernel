@@ -1,0 +1,136 @@
+name: VEUX M62 – Xiaomi UFS-Gesundheitsbericht und Millet
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M62_MAIN.zip
+          persist-credentials: false
+
+      - name: M62-Werkzeuge prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'd03aff34675b627da4d388448767338137b83fe64c83a3b6d9460a029423541b  VEUX_M62_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M62_MAIN.zip -d "$RUNNER_TEMP/m62-kit"
+      - name: Bauwerkzeuge installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libssl-dev rsync xz-utils zstd qemu-user
+
+      - name: Geprüfte Quell- und Xiaomi-Eingaben wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-inputs
+          key: veux-m62-stock-da9b3531-ac6522e4-d9680da1-v1
+          restore-keys: veux-m61-stock-3e0e740b-ac6522e4-d9680da1-v1
+
+      - name: M61-Quellstand und ausgelieferte HyperOS-Dateien prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/m62-kit"
+          tools="$RUNNER_TEMP/m62-kit/tools"
+          inputs="$RUNNER_TEMP/veux-inputs"
+          mkdir -p "$inputs"
+          cd "$inputs"
+          if ! echo 'da9b3531d400430c1c4bf7bf5bedb68adb23818c18961733081c164be81ef089  M61-source.zip' | sha256sum -c --status; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14772737226/zip" > M61-source.tmp
+            mv M61-source.tmp M61-source.zip
+          fi
+          python3 -B "$kit/factory_inputs.py" "$tools" "$inputs"
+          python3 -B "$kit/prepare.py" "$RUNNER_TEMP/m62" "$inputs/M61-source.zip" "$inputs/boot.img"
+          ln -s "$inputs/stock-vendor" "$RUNNER_TEMP/m62/stock-vendor"
+
+      - name: Android-Clang wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Pinned Android-Clang prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/m62-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          ln -s "$clang" "$RUNNER_TEMP/m62/clang"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 -B "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-invalid"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: Kernel, Module und DTB gemeinsam bauen und gegen Xiaomi testen
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/m62-kit/build.sh" "$RUNNER_TEMP/m62" "$RUNNER_TEMP/m62-kit/tools"
+          cat "$RUNNER_TEMP/m62/evidence/regression/Millet-und-hr.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nachweise und Bauprodukte sammeln
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/m62"
+          mkdir -p "$work/evidence"
+          cd "$work"
+          for file in .config vmlinux System.map Module.symvers arch/arm64/boot/Image; do
+            if [[ -s "out/$file" ]]; then
+              name=${file##*/}
+              if [[ "$name" = .config ]]; then name=kernel.config; fi
+              cp "out/$file" "evidence/$name"
+            fi
+          done
+
+      - name: Nachweise sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M62-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m62/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Statisch geprüftes NOFLASH-Paar sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M62-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m62/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand für den nächsten Lauf sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m62"
+          mkdir -p quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M62-kernel-source.tar.gz
+          cp evidence/M62_KERNEL.json quelle/
+          cp "$RUNNER_TEMP/m62-kit/tools/kbuild.sh" quelle/kbuild-veux.sh
+          cp out/.config quelle/kernel.config
+          cd quelle
+          sha256sum M62-kernel-source.tar.gz kernel.config M62_KERNEL.json kbuild-veux.sh > SHA256SUMS
+
+      - name: M62-Quellstand sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M62-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m62/quelle/
+          retention-days: 90
+          if-no-files-found: error
