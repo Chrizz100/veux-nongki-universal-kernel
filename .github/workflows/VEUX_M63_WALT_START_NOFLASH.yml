@@ -1,0 +1,147 @@
+name: VEUX M63 – WALT-Frühstart gegen Xiaomi und M62
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_M63_MAIN.zip
+          persist-credentials: false
+
+      - name: M63-Werkzeuge prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '9ef1e43760df0ae56cfc5bef90ab332a6efbca52a817be419483ad6cbdab6cad  VEUX_M63_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_M63_MAIN.zip -d "$RUNNER_TEMP/m63-kit"
+      - name: Bauwerkzeuge installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libssl-dev rsync xz-utils zstd qemu-user qemu-system-arm
+
+      - name: Geprüfte Quell- und Xiaomi-Eingaben wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-inputs
+          key: veux-m63-inputs-dd3a30ec-8e25ba83-ac6522e4-d9680da1-v1
+          restore-keys: |
+            veux-m62-stock-
+            veux-m61-stock-
+
+      - name: M62-Quellstand, negatives Kontroll-Image und HyperOS-Dateien prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/m63-kit"
+          tools="$RUNNER_TEMP/m63-kit/tools"
+          inputs="$RUNNER_TEMP/veux-inputs"
+          mkdir -p "$inputs"
+          cd "$inputs"
+          fetch_artifact() {
+            local file="$1" id="$2" sha="$3"
+            if ! echo "$sha  $file" | sha256sum --check --status; then
+              gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$file.tmp"
+              echo "$sha  $file.tmp" | sha256sum --check
+              mv "$file.tmp" "$file"
+            fi
+          }
+          fetch_artifact M62-source.zip 14792000747 dd3a30ec719cf324a23298e5fb56a58d0c621fe5469a74130ab08e0ab64dbdd1
+          fetch_artifact M62-pair.zip 14791518597 8e25ba839aef588fa73d5943bb27b286beda8ef4c1ab6d14211ff617d603b2ff
+          python3 -B "$kit/factory_inputs.py" "$tools" "$inputs"
+          work="$RUNNER_TEMP/m63"
+          python3 -B "$kit/prepare.py" "$work" "$inputs/M62-source.zip" "$inputs/boot.img"
+          unzip -p M62-pair.zip VEUX_M62_boot_NOFLASH.img > "$work/M62-Kontrolle.img"
+          echo "1d9dfbbbecce8f34aa9a409a1ca7f3c99fda702fd480557e3e3f0f7d0d320eea  $work/M62-Kontrolle.img" | sha256sum --check
+          ln -s "$inputs/stock-vendor" "$work/stock-vendor"
+
+      - name: Android-Clang wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Pinned Android-Clang prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/m63-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          ln -s "$clang" "$RUNNER_TEMP/m63/clang"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 -B "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-invalid"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: Kernel bauen, ARM64-Start bis PID 1 und Xiaomi-Vergleiche prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/m63-kit/build.sh" "$RUNNER_TEMP/m63" "$RUNNER_TEMP/m63-kit/tools"
+          cat "$RUNNER_TEMP/m63/evidence/fruehstart/ARM64-Fruehstart.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nachweise und Bauprodukte sammeln
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/m63"
+          mkdir -p "$work/evidence"
+          cd "$work"
+          for file in .config vmlinux System.map Module.symvers arch/arm64/boot/Image; do
+            if [[ -s "out/$file" ]]; then
+              name=${file##*/}
+              if [[ "$name" = .config ]]; then name=kernel.config; fi
+              cp "out/$file" "evidence/$name"
+            fi
+          done
+
+      - name: Nachweise sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: NOFLASH-Paar nach erfolgreichem ARM64-Frühstart sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand für den nächsten Lauf sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m63"
+          mkdir -p quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M63-kernel-source.tar.gz
+          cp evidence/M63_KERNEL.json quelle/
+          cp "$RUNNER_TEMP/m63-kit/tools/kbuild.sh" quelle/kbuild-veux.sh
+          cp out/.config quelle/kernel.config
+          cd quelle
+          sha256sum M63-kernel-source.tar.gz kernel.config M63_KERNEL.json kbuild-veux.sh > SHA256SUMS
+
+      - name: M63-Quellstand sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/quelle/
+          retention-days: 90
+          if-no-files-found: error
