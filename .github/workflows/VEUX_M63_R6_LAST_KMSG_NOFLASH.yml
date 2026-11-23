@@ -1,0 +1,171 @@
+name: VEUX M63-R6 – Vorherige Kernelkonsole gegen Xiaomi und R5
+on:
+  workflow_dispatch:
+  push:
+    branches: [repair/m63-r6-last-kmsg]
+    paths:
+      - VEUX_M63_R6_MAIN.zip
+      - .github/workflows/VEUX_M63_R6_LAST_KMSG_NOFLASH.yml
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M63_R6_MAIN.zip
+          persist-credentials: false
+
+      - name: R6-Paket prüfen und entpacken
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '24ccb4966c49b2dc62e63ae84d94ca70eaf9443483a34edd567aa9648f4a74c3  VEUX_M63_R6_MAIN.zip' | sha256sum --check
+          unzip -q VEUX_M63_R6_MAIN.zip -d "$RUNNER_TEMP/m63-kit"
+
+      - name: Bauwerkzeuge installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev liburcu-dev libssl-dev rsync xz-utils zstd qemu-user qemu-system-arm libfdt1
+
+      - name: Geprüfte Quell- und Xiaomi-Eingaben wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-inputs
+          key: veux-m63-r6-inputs-565a4ba4-be5cd494-v1
+          restore-keys: |
+            veux-m63-r5-inputs-6f82f388-d9769af1-v1
+            veux-m63-r3-inputs-dd3a30ec-1fd50c82-v1
+            veux-m63-inputs-
+            veux-m62-stock-
+            veux-m61-stock-
+
+      - name: Originalen R5-Quellstand, Kontroll-Images und Xiaomi-Firmware prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/m63-kit"
+          tools="$RUNNER_TEMP/m63-kit/tools"
+          inputs="$RUNNER_TEMP/veux-inputs"
+          mkdir -p "$inputs"
+          cd "$inputs"
+          fetch_artifact() {
+            local file="$1" id="$2" sha="$3"
+            if ! echo "$sha  $file" | sha256sum --check --status; then
+              gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$file.tmp"
+              echo "$sha  $file.tmp" | sha256sum --check
+              mv "$file.tmp" "$file"
+            fi
+          }
+          fetch_artifact M63-R5-source.zip 14836477303 565a4ba4be1abd695032be802308a5c7b3bb3fba918e17f33cf7888d54902330
+          fetch_artifact M63-R5-pair.zip 14836272061 be5cd494e2e27d256b71fc044d8cb1a9c27f9fd4501ee0c132159578d0e3643c
+          fetch_artifact M63-R4-pair.zip 14820685502 d9769af12248840be0134e742d31ab3ae533c3c9f791c9bb4918c1f1dca9415e
+          fetch_artifact M62-pair.zip 14791518597 8e25ba839aef588fa73d5943bb27b286beda8ef4c1ab6d14211ff617d603b2ff
+          fetch_artifact M63-R2-pair.zip 14801346602 1fd50c82677606a544ad4e39e7d840abeb55cce4d88c4d4ec9b3f6ef8a091d0e
+          python3 -B "$kit/factory_inputs.py" "$tools" "$inputs"
+          work="$RUNNER_TEMP/m63"
+          python3 -B "$kit/prepare.py" "$work" "$inputs/M63-R5-source.zip" "$inputs/boot.img"
+          unzip -p M62-pair.zip VEUX_M62_boot_NOFLASH.img > "$work/M62-Kontrolle.img"
+          echo "1d9dfbbbecce8f34aa9a409a1ca7f3c99fda702fd480557e3e3f0f7d0d320eea  $work/M62-Kontrolle.img" | sha256sum --check
+          unzip -p M63-R2-pair.zip VEUX_M63-R2_boot_NOFLASH.img > "$work/M63-R2-Kontrolle.img"
+          unzip -p M63-R4-pair.zip VEUX_M63-R4_boot_NOFLASH.img > "$work/M63-R4-Kontrolle.img"
+          echo "2324ea62288882716d48ee3d8f2590652e1912b214e4a675eb8624026223eed2  $work/M63-R4-Kontrolle.img" | sha256sum --check
+          unzip -p M63-R5-pair.zip VEUX_M63-R5_boot_NOFLASH.img > "$work/M63-R5-Kontrolle.img"
+          echo "6352e8a8bd5d0595b6a346cfaa6c3efae660724e8c2ce197b94707990e20c195  $work/M63-R5-Kontrolle.img" | sha256sum --check
+          ln -s "$inputs/stock-vendor" "$work/stock-vendor"
+
+      - name: Android-Clang wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Pinned Android-Clang prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/m63-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          ln -s "$clang" "$RUNNER_TEMP/m63/clang"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 -B "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-invalid"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: R6 bauen und Kernelkonsole sowie Scheduler mit LLDB prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/m63-kit/build.sh" "$RUNNER_TEMP/m63" "$RUNNER_TEMP/m63-kit/tools"
+          for report in Quellstand.json last-kmsg/Xiaomi.json last-kmsg/M63-R5.json last-kmsg/M63-R6.json walt/Runqueue.json walt/Sperren-LLDB.json walt/Migration.json ufs/Deskriptoren.json ufs/Gear3.json ufs/Medium.json ufs/Medium-VEUX-CPU.json epss/EPSS.json fruehstart/ARM64-Fruehstart.json pstore/pstore.json android/Android-init.json; do
+            {
+              echo '```json'
+              cat "$RUNNER_TEMP/m63/evidence/$report"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Nachweise und Bauprodukte sammeln
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/m63"
+          mkdir -p "$work/evidence"
+          cd "$work"
+          for file in .config vmlinux System.map Module.symvers arch/arm64/boot/Image arch/arm64/boot/dts/vendor/xiaomi/veux.dtb; do
+            if [[ -s "out/$file" ]]; then
+              name=${file##*/}
+              if [[ "$name" = .config ]]; then name=kernel.config; fi
+              cp "out/$file" "evidence/$name"
+            fi
+          done
+
+      - name: Nachweise sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R6-NACHWEISE-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: NOFLASH-Paar nach LLDB- und Stocktests sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R6-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand für den nächsten Lauf sichern
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/m63"
+          mkdir -p quelle
+          tar --exclude=.git -C src -cf - . | gzip -1 > quelle/M63-R6-kernel-source.tar.gz
+          cp evidence/M63-R6_KERNEL.json quelle/
+          cp "$RUNNER_TEMP/m63-kit/tools/kbuild.sh" quelle/kbuild-veux.sh
+          cp out/.config quelle/kernel.config
+          cd quelle
+          sha256sum M63-R6-kernel-source.tar.gz kernel.config M63-R6_KERNEL.json kbuild-veux.sh > SHA256SUMS
+
+      - name: M63-R6-Quellstand sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R6-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m63/quelle/
+          retention-days: 90
+          if-no-files-found: error
