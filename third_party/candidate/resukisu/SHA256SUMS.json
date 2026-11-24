@@ -1,6 +1,6 @@
 {
   "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
-  "_VEUX_CANDIDATE.json": "81ed208cc4d09275dd31bc3d3357485d002a41589e9cf6a4003b96e5310379fb",
+  "_VEUX_CANDIDATE.json": "2fc40970836cf21e815fac10dc8b4539796dbf0dd6938c4fdea952bf92cdf62f",
   "kernel/.clang-format": "da27cd161f85a6c6a7df301d19483905594274b0b3298f3df86fb311346a3731",
   "kernel/.clangd.example": "934086e9d09376116f14b7d328c1aa7a0f150a53d51efbff5a755dbe80a0b043",
   "kernel/.gitignore": "9e690c316dfdd25446709e2c7961ea04d2b2f4d9290fbb19ad9c92e940e3d079",
@@ -29,7 +29,7 @@
   "kernel/feature/module_blacklist.h": "746dabd2ee63c5cf924defc0d5d86196f5e9d727480e6abecdc046dc207fed0e",
   "kernel/feature/selinux_hide/selinux_hide.c": "24be3c0d6ddd3eff5168575ebf62b69d2ed3ea733f60e26aa3b42db52aa69d6c",
   "kernel/feature/selinux_hide/selinux_hide.h": "4bc123bda2f3cd1a67a5339b6825e0720170924e1b808a804f92b9fe12c154be",
-  "kernel/feature/selinux_hide/selinux_hide_auto.c": "398d1abc821cf01fbbff4dee53b9db8d7d3dbf49c98192e4370338d6af173c7c",
+  "kernel/feature/selinux_hide/selinux_hide_auto.c": "c27c23c0175e5fd161aef954bbc68c7aa53c596a7c1d976a549d162f66271d08",
   "kernel/feature/selinux_hide/selinux_hide_susfs.c": "fbafc3ddea0bdfce30fd45c49170f02588b3a74474d704bc75d52d45f2aa6979",
   "kernel/feature/shell_su_adb_only.c": "3bfe6ee40b17d1e84cc199b35e6363cb65430fd5f85331fda908e4a6d4afd5df",
   "kernel/feature/shell_su_adb_only.h": "5fef4f8cc23d6338991ab30e442136c3b8eb0ad07fc479faecfff8b28f4e4652",
