@@ -1,0 +1,138 @@
+name: VEUX M63-R7 – Xiaomi-Touch und Display gegen Stock
+on:
+  workflow_dispatch:
+  push:
+    branches: [repair/m63-r7-stock-touch]
+    paths:
+      - VEUX_M63_R7_MAIN.zip
+      - .github/workflows/VEUX_M63_R7_STOCK_TOUCH_NOFLASH.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLDB: lldb-19
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M63_R7_MAIN.zip
+
+      - name: Baupaket prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '78da682ccc898e85cb7916507b4bbcf217e55ba6bf5b5287ccbe2ed1b607d7b4  VEUX_M63_R7_MAIN.zip' | sha256sum --check
+          unzip -q VEUX_M63_R7_MAIN.zip -d "$RUNNER_TEMP/r7-kit"
+
+      - name: Bauwerkzeuge und LLDB installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential flex libelf-dev libssl-dev lldb-19 liblldb-19-dev llvm-19-dev qemu-user zstd
+
+      - name: R6-Quellen und originales Xiaomi-Bootabbild wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/r7-inputs
+          key: veux-r7-inputs-f10564a0-ac6522e4-v1
+
+      - name: R6-Quellen, Xiaomi-Referenz und R7-Patch prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r7-kit"
+          work="$RUNNER_TEMP/r7"
+          inputs="$RUNNER_TEMP/r7-inputs"
+          mkdir -p "$inputs" "$work"
+          cd "$inputs"
+          hash=f10564a049a9523de2dda32181822db89b952109571aa6b28e18ac962c936f63
+          if ! echo "$hash  R6-source.zip" | sha256sum --check --status; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14843626326/zip" > R6-source.part
+            echo "$hash  R6-source.part" | sha256sum --check
+            mv R6-source.part R6-source.zip
+          fi
+          python3 "$kit/prepare.py" "$inputs/R6-source.zip" "$work/src" "$inputs/boot.img"
+
+      - name: Android-Clang aus dem bisherigen VEUX-Cache verwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Android-Clang r416183b verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/r7-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-unverified"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: R7 bauen und das gelinkte Image mit LLDB gegen Stock prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs=$(nproc)
+          if (( jobs > 4 )); then jobs=4; fi
+          export KBUILD_JOBS="$jobs"
+          bash "$RUNNER_TEMP/r7-kit/build.sh" "$RUNNER_TEMP/r7" "$RUNNER_TEMP/m61/clang" "$RUNNER_TEMP/r7-inputs/boot.img"
+
+      - name: Sämtliche ausführbaren R7-Abschnitte mit LLDB lesen
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r7-kit/debug"
+          work="$RUNNER_TEMP/r7"
+          g++ -std=c++17 -O2 "$kit/arm64_lldb.cpp" -I/usr/lib/llvm-19/include -L/usr/lib/llvm-19/lib -Wl,-rpath,/usr/lib/llvm-19/lib -llldb -o "$work/arm64-lldb"
+          python3 "$kit/full.py" "$work/arm64-lldb" "$work/out" "$work/evidence"
+          cp "$work/out/.config" "$work/evidence/kernel.config"
+          cp "$work/out/System.map" "$work/out/vmlinux" "$work/evidence/"
+          cat "$work/evidence/R7-Abschnittsprotokoll.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prüfprotokolle und Debug-Symbole sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R7-LLDB-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Bootabbild und schreibgeschütztes AK3-Prüfpaket ausgeben
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R7-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand archivieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/r7"
+          mkdir -p "$work/source-artifact"
+          tar -C "$work/src" -cf - . | gzip -1 > "$work/source-artifact/M63-R7-kernel-source.tar.gz"
+          cp "$RUNNER_TEMP/r7-kit/source.json" "$work/out/.config" "$work/source-artifact/"
+          mv "$work/source-artifact/.config" "$work/source-artifact/kernel.config"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R7-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7/source-artifact/
+          retention-days: 90
+          if-no-files-found: error
