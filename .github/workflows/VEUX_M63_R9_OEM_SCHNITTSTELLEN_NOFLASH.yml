@@ -1,0 +1,145 @@
+name: VEUX M63-R9 – Xiaomi-Startaufrufe, Wakeup und Touch gegen Stock
+on:
+  workflow_dispatch:
+  push:
+    branches: [repair/m63-r9-oem-interfaces]
+    paths:
+      - VEUX_M63_R9_MAIN.zip
+      - .github/workflows/VEUX_M63_R9_OEM_SCHNITTSTELLEN_NOFLASH.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLDB: lldb-19
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M63_R9_MAIN.zip
+
+      - name: Baupaket prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '04d43d15c0d554abc95cc38a8cebb9015fd5818e459558f49838e0a827c9ee1c  VEUX_M63_R9_MAIN.zip' | sha256sum --check
+          unzip -q VEUX_M63_R9_MAIN.zip -d "$RUNNER_TEMP/r9-kit"
+
+      - name: Bereits geladene Werkzeugpakete verwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-debs/*.deb
+          key: veux-native-debs-noble-${{ runner.arch }}-lldb19-v1
+
+      - name: Bauwerkzeuge und LLDB installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-debs"
+          sudo apt-get update -qq
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/veux-debs" -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev libssl-dev lldb-19 liblldb-19-dev qemu-user zstd
+
+      - name: R8-Quellen und originales Xiaomi-Bootabbild wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/r9-inputs
+          key: veux-r9-inputs-4aa03252-ac6522e4-v1
+
+      - name: R8-Quellen, Xiaomi-Referenz und R9-Patch prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r9-kit"
+          work="$RUNNER_TEMP/r9"
+          inputs="$RUNNER_TEMP/r9-inputs"
+          mkdir -p "$inputs" "$work"
+          cd "$inputs"
+          hash=4aa03252481cf7ed8303ac758b9f842857ca7e10b5260bc9540312b47bd32e93
+          if ! echo "$hash  R8-source.zip" | sha256sum --check --status; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14917065831/zip" > R8-source.part
+            echo "$hash  R8-source.part" | sha256sum --check
+            mv R8-source.part R8-source.zip
+          fi
+          python3 "$kit/prepare.py" "$inputs/R8-source.zip" "$work/src" "$inputs/boot.img"
+
+      - name: Android-Clang aus dem bisherigen VEUX-Cache verwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Android-Clang r416183b verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/r9-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-unverified"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: R9 bauen und das gelinkte Image mit LLDB gegen Stock prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs=$(nproc)
+          if (( jobs > 4 )); then jobs=4; fi
+          export KBUILD_JOBS="$jobs"
+          bash "$RUNNER_TEMP/r9-kit/build.sh" "$RUNNER_TEMP/r9" "$RUNNER_TEMP/m61/clang" "$RUNNER_TEMP/r9-inputs/boot.img"
+
+      - name: Sämtliche ausführbaren R9-Abschnitte mit LLDB lesen
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r9-kit/debug"
+          work="$RUNNER_TEMP/r9"
+          g++ -std=c++17 -O2 "$kit/arm64_lldb.cpp" -I/usr/lib/llvm-19/include -L/usr/lib/llvm-19/lib -Wl,-rpath,/usr/lib/llvm-19/lib -llldb -o "$work/arm64-lldb"
+          python3 "$kit/full.py" "$work/arm64-lldb" "$work/out" "$work/evidence"
+          cp "$work/out/.config" "$work/evidence/kernel.config"
+          cp "$work/out/System.map" "$work/out/vmlinux" "$work/evidence/"
+          cat "$work/evidence/R9-Abschnittsprotokoll.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prüfprotokolle und Debug-Symbole sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R9-LLDB-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r9/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Bootabbild und schreibgeschütztes AK3-Prüfpaket ausgeben
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R9-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r9/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand archivieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/r9"
+          mkdir -p "$work/source-artifact"
+          tar -C "$work/src" -cf - . | gzip -1 > "$work/source-artifact/M63-R9-kernel-source.tar.gz"
+          cp "$RUNNER_TEMP/r9-kit/source.json" "$work/out/.config" "$work/source-artifact/"
+          mv "$work/source-artifact/.config" "$work/source-artifact/kernel.config"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R9-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r9/source-artifact/
+          retention-days: 90
+          if-no-files-found: error
