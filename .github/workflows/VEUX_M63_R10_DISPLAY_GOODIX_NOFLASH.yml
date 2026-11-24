@@ -1,0 +1,145 @@
+name: VEUX M63-R10 – Vollvergleich, 32-Bit-ABI, Goodix und Display
+on:
+  workflow_dispatch:
+  push:
+    branches: [repair/m63-r10-stock-abgleich]
+    paths:
+      - VEUX_M63_R10_MAIN.zip
+      - .github/workflows/VEUX_M63_R10_DISPLAY_GOODIX_NOFLASH.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLDB: lldb-19
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_M63_R10_MAIN.zip
+
+      - name: Baupaket prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'e3c170f0d5f4ac88f3397beafae4599a906043d85197e47a16c67f151ac64b5c  VEUX_M63_R10_MAIN.zip' | sha256sum --check
+          unzip -q VEUX_M63_R10_MAIN.zip -d "$RUNNER_TEMP/r10-kit"
+
+      - name: Bereits geladene Werkzeugpakete verwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-debs/*.deb
+          key: veux-native-debs-noble-${{ runner.arch }}-lldb19-v1
+
+      - name: Bauwerkzeuge und LLDB installieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/veux-debs"
+          sudo apt-get update -qq
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/veux-debs" -o APT::Keep-Downloaded-Packages=true install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev libssl-dev lldb-19 liblldb-19-dev qemu-user zstd
+
+      - name: R9-Quellen und originales Xiaomi-Bootabbild wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/r10-inputs
+          key: veux-r10-inputs-5bb21ea7-ac6522e4-v1
+
+      - name: R9-Quellen, Xiaomi-Referenz und R10-Patch prüfen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r10-kit"
+          work="$RUNNER_TEMP/r10"
+          inputs="$RUNNER_TEMP/r10-inputs"
+          mkdir -p "$inputs" "$work"
+          cd "$inputs"
+          hash=5bb21ea7b560fa84c6291261f511b57e08ef6543252ea56225e235870f177d4e
+          if ! echo "$hash  R9-source.zip" | sha256sum --check --status; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14927956896/zip" > R9-source.part
+            echo "$hash  R9-source.part" | sha256sum --check
+            mv R9-source.part R9-source.zip
+          fi
+          python3 "$kit/prepare.py" "$inputs/R9-source.zip" "$work/src" "$inputs/boot.img"
+
+      - name: Android-Clang aus dem bisherigen VEUX-Cache verwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Android-Clang r416183b verifizieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/r10-kit/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-unverified"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+
+      - name: R10 bauen und das gelinkte Image mit LLDB gegen Stock prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs=$(nproc)
+          if (( jobs > 4 )); then jobs=4; fi
+          export KBUILD_JOBS="$jobs"
+          bash "$RUNNER_TEMP/r10-kit/build.sh" "$RUNNER_TEMP/r10" "$RUNNER_TEMP/m61/clang" "$RUNNER_TEMP/r10-inputs/boot.img"
+
+      - name: Sämtliche ausführbaren R10-Abschnitte mit LLDB lesen
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/r10-kit/debug"
+          work="$RUNNER_TEMP/r10"
+          g++ -std=c++17 -O2 "$kit/arm64_lldb.cpp" -I/usr/lib/llvm-19/include -L/usr/lib/llvm-19/lib -Wl,-rpath,/usr/lib/llvm-19/lib -llldb -o "$work/arm64-lldb"
+          python3 "$kit/full.py" "$work/arm64-lldb" "$work/out" "$work/evidence"
+          cp "$work/out/.config" "$work/evidence/kernel.config"
+          cp "$work/out/System.map" "$work/out/vmlinux" "$work/evidence/"
+          cat "$work/evidence/R10-Abschnittsprotokoll.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prüfprotokolle und Debug-Symbole sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R10-LLDB-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r10/evidence/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Bootabbild und schreibgeschütztes AK3-Prüfpaket ausgeben
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R10-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r10/pair/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Vollständigen Quellstand archivieren
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/r10"
+          mkdir -p "$work/source-artifact"
+          tar -C "$work/src" -cf - . | gzip -1 > "$work/source-artifact/M63-R10-kernel-source.tar.gz"
+          cp "$RUNNER_TEMP/r10-kit/source.json" "$work/out/.config" "$work/source-artifact/"
+          mv "$work/source-artifact/.config" "$work/source-artifact/kernel.config"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-M63-R10-QUELLSTAND-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r10/source-artifact/
+          retention-days: 90
+          if-no-files-found: error
