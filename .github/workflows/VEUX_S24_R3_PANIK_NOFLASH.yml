@@ -2,7 +2,7 @@ name: VEUX S24 R3 – Panikpfade – SUSFS 2.4, BakaSU, NoMount auf Xiaomi Globa
 'on':
   workflow_dispatch:
   push:
-    branches: [repair/veux-s24-r3-panik]
+    branches: [main, repair/veux-s24-r3-panik]
     paths:
       - VEUX_S24_R3_PANIK_MAIN.zip
       - .github/workflows/VEUX_S24_R3_PANIK_NOFLASH.yml
@@ -25,11 +25,41 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /VEUX_S24_R3_PANIK_MAIN.zip
-      - name: Geprüftes Baupaket öffnen
+            /VEUX_S24_R2_PID1_MAIN.zip
+      - name: Geprüftes R3-Baupaket wiederherstellen
+        env:
+          R2_SHA256: a3220efea5594440c3449b0535a98e4dd8a870c5f0c72812e0d820a9c69c3744
+          R3_UPLOAD_SHA256: 54318686f754f94ebf591b9d4d1ea07183226e8da523d1c9075892215d96b822
+          R3_SHA256: 96581a4e8c391a8b3dc5162b9e807550e0b483ca50efc19e80f13df413a0ec56
         run: |
           set -euo pipefail
-          echo '96581a4e8c391a8b3dc5162b9e807550e0b483ca50efc19e80f13df413a0ec56  VEUX_S24_R3_PANIK_MAIN.zip' | sha256sum -c -
-          unzip -q VEUX_S24_R3_PANIK_MAIN.zip -d "$RUNNER_TEMP/veux-kit"
+          upload=VEUX_S24_R3_PANIK_MAIN.zip
+          actual=$(sha256sum "$upload" | cut -d ' ' -f 1)
+          case "$actual" in
+            "$R3_UPLOAD_SHA256")
+              stage=$(mktemp -d "$RUNNER_TEMP/veux-r3.XXXXXXXX")
+              base=VEUX_S24_R2_PID1_MAIN.zip
+              if ! printf '%s  %s\n' "$R2_SHA256" "$base" | sha256sum --check --status 2>/dev/null; then
+                base="$stage/r2.zip"
+                curl --fail --silent --show-error --location --retry 3 --output "$base" \
+                  https://raw.githubusercontent.com/Chrizz100/veux-nongki-universal-kernel/03534d35ef9750416f74fee017a3982d41369edf/VEUX_S24_R2_PID1_MAIN.zip
+              fi
+              printf '%s  %s\n' "$R2_SHA256" "$base" | sha256sum --check
+              cp "$base" "$stage/baupaket.zip"
+              unzip -p "$upload" r2-nach-r3.patch > "$stage/r2-nach-r3.patch"
+              git -C "$stage" apply --binary "$stage/r2-nach-r3.patch"
+              full="$stage/baupaket.zip"
+              ;;
+            "$R3_SHA256")
+              full="$upload"
+              ;;
+            *)
+              echo "Die SHA-256-Prüfsumme der R3-MAIN-ZIP ist unbekannt." >&2
+              exit 1
+              ;;
+          esac
+          printf '%s  %s\n' "$R3_SHA256" "$full" | sha256sum --check
+          unzip -q "$full" -d "$RUNNER_TEMP/veux-kit"
       - name: Bauwerkzeuge installieren
         run: |
           sudo apt-get update -qq
