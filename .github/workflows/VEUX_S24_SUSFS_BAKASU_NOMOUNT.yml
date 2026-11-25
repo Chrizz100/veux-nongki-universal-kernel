@@ -1,0 +1,87 @@
+name: VEUX S24 – SUSFS 2.4, BakaSU, NoMount auf Xiaomi Global
+'on':
+  workflow_dispatch:
+  push:
+    branches: [repair/veux-s24-sequenz]
+    paths:
+      - VEUX_S24_MAIN.zip
+      - .github/workflows/VEUX_S24_SUSFS_BAKASU_NOMOUNT.yml
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      LLDB: lldb-19
+      KBUILD_JOBS: 4
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_S24_MAIN.zip
+      - name: Geprüftes Baupaket öffnen
+        run: |
+          set -euo pipefail
+          echo 'd87950891c8cae7e88c9bef1af51fb72d8a03ebc41624e7982824132c409f548  VEUX_S24_MAIN.zip' | sha256sum -c -
+          unzip -q VEUX_S24_MAIN.zip -d "$RUNNER_TEMP/veux-kit"
+      - name: Bauwerkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev libssl-dev lldb-19 liblldb-19-dev qemu-user rsync zstd
+      - name: Android-Clang wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+      - name: Xiaomi-Quellen und originales Bootabbild wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-inputs
+          key: veux-s24-micode-61397e52-r11-bc664e31-stock-ac6522e4-v1
+      - name: Quellbaum und Stock-Referenz verifizieren
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/veux-kit"
+          tools="$kit/oem/tools"
+          clang="$RUNNER_TEMP/m61/clang"
+          mkdir -p "$RUNNER_TEMP/m61" "$RUNNER_TEMP/veux-inputs"
+          if ! [[ -x "$clang/bin/clang" ]] || ! python3 "$tools/treehash.py" "$clang"; then
+            if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-unverified"; fi
+            bash "$tools/toolchain.sh" "$clang"
+          fi
+          python3 "$kit/prepare.py" base "$RUNNER_TEMP/veux-build/src" --micode "$RUNNER_TEMP/veux-inputs/micode.git" --stock "$RUNNER_TEMP/veux-inputs/boot.img"
+      - name: SUSFS, BakaSU und danach NoMount bauen
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/veux-kit/build.sh" "$RUNNER_TEMP/veux-build" "$RUNNER_TEMP/m61/clang" "$RUNNER_TEMP/veux-inputs/boot.img"
+      - name: Ausführbare Abschnitte mit LLDB und dem lokalen Kontrolldatensatz abgleichen
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/veux-kit"
+          work="$RUNNER_TEMP/veux-build"
+          g++ -std=c++17 -O2 "$kit/section_check.cpp" -I/usr/lib/llvm-19/include -L/usr/lib/llvm-19/lib -Wl,-rpath,/usr/lib/llvm-19/lib -llldb -o "$work/section-check"
+          python3 "$kit/decode.py" "$work/section-check" "$work/out/vmlinux" "$work/out/arch/arm64/boot/Image" "$work/evidence" S24
+          python3 "$kit/local_reference.py" "$work/out/arch/arm64/boot/Image" "$work/evidence"
+          cp "$work/out/System.map" "$work/out/vmlinux" "$work/evidence/"
+          cat "$work/evidence/Vergleich-lokaler-Bau.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prüfungen und Debugdateien sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-S24-LLDB-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-build/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Bootabbild und AK3-Pakete ausgeben
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-S24-BOOT-AK3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-build/pair/
+          if-no-files-found: error
+          retention-days: 30
