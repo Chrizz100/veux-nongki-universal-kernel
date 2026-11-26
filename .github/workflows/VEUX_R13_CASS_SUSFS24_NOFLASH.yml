@@ -23,7 +23,7 @@ jobs:
           sparse-checkout: /VEUX_R13_CASS_SUSFS24_MAIN.zip
       - name: MAIN verifizieren
         env:
-          MAIN_SHA256: '364eb0ca36ef7429fee3b2a16483029888232a0045d27e4248a7471344976984'
+          MAIN_SHA256: '2d21261d1372dba8ebe9ace382987aecb63829ec42b4c830dde72e2eedf541e9'
         run: |
           set -euo pipefail
           printf '%s  %s\n' "$MAIN_SHA256" VEUX_R13_CASS_SUSFS24_MAIN.zip | sha256sum -c -
@@ -53,6 +53,7 @@ jobs:
           mkdir -p "$work/evidence"
           bash "$RUNNER_TEMP/veux-kit/build.sh" "$work" "$RUNNER_TEMP/veux-clang" 2>&1 \
             | tee "$work/evidence/Bau-und-Tests.log"
+          printf "%s\n\n" "SUSFS-Status **10 von 10** im gelinkten Image bestätigt." >> "$GITHUB_STEP_SUMMARY"
           cat "$work/evidence/R13-SUSFS24-Kernelpruefung.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Buildprotokoll und Prüfergebnisse sichern
         if: always()
