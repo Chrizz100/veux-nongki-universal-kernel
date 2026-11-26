@@ -1,0 +1,74 @@
+name: VEUX R13 CASS · SUSFS 2.4 · NOFLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-r13:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      KBUILD_JOBS: '4'
+      LLDB: lldb-19
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_R13_CASS_SUSFS24_MAIN.zip
+      - name: MAIN verifizieren
+        env:
+          MAIN_SHA256: '364eb0ca36ef7429fee3b2a16483029888232a0045d27e4248a7471344976984'
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$MAIN_SHA256" VEUX_R13_CASS_SUSFS24_MAIN.zip | sha256sum -c -
+          unzip -q VEUX_R13_CASS_SUSFS24_MAIN.zip -d "$RUNNER_TEMP/veux-kit"
+      - name: Bau- und Debugwerkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc binutils-aarch64-linux-gnu bison build-essential cpio flex libelf-dev libssl-dev lldb-19 m4
+      - name: Gepinnte Android-Toolchain wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-clang
+          key: veux-r13-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+      - name: Android-Clang laden und prüfen
+        run: |
+          set -euo pipefail
+          clang="$RUNNER_TEMP/veux-clang"
+          kit="$RUNNER_TEMP/veux-kit"
+          if ! test -x "$clang/bin/clang"; then
+            bash "$kit/tools/toolchain.sh" "$clang"
+          fi
+          python3 "$kit/tools/treehash.py" "$clang"
+      - name: R13-Basis rekonstruieren, SUSFS-2.4-Kernel bauen und prüfen
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/veux-r13-24"
+          mkdir -p "$work/evidence"
+          bash "$RUNNER_TEMP/veux-kit/build.sh" "$work" "$RUNNER_TEMP/veux-clang" 2>&1 \
+            | tee "$work/evidence/Bau-und-Tests.log"
+          cat "$work/evidence/R13-SUSFS24-Kernelpruefung.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Buildprotokoll und Prüfergebnisse sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-R13-CASS-SUSFS24-Pruefung-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-r13-24/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: ARM64-Kernel und Debug-ELF sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-R13-CASS-SUSFS24-Kernel-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/veux-r13-24/out/arch/arm64/boot/Image
+            ${{ runner.temp }}/veux-r13-24/out/vmlinux
+            ${{ runner.temp }}/veux-r13-24/out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb
+          if-no-files-found: error
+          retention-days: 30
