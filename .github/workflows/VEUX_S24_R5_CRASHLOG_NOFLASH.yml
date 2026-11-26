@@ -1,0 +1,90 @@
+name: VEUX S24-R5 · Display und Crashlog · NOFLASH
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      LLDB: lldb-19
+      KBUILD_JOBS: '4'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_S24_R5_CRASHLOG_MAIN.zip
+      - name: MAIN-Prüfsumme kontrollieren
+        env:
+          MAIN_SHA256: 'caa0b7d3f5d0e03076cf1b2db305170a6e2f8d764b283f727e6f157a76990066'
+        run: |
+          printf '%s  %s\n' "$MAIN_SHA256" VEUX_S24_R5_CRASHLOG_MAIN.zip | sha256sum -c -
+          unzip -q VEUX_S24_R5_CRASHLOG_MAIN.zip -d "$RUNNER_TEMP/veux-kit"
+      - name: Bau- und Debugwerkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison build-essential cpio flex libelf-dev libssl-dev lldb-19 liblldb-19-dev python3-lldb-19 qemu-user rsync zstd
+      - name: Android-Clang wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/m61/clang
+          key: veux-linux-x64-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+      - name: Xiaomi-Quellen und Bootabbild wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-inputs
+          key: veux-s24-micode-61397e52-r11-bc664e31-stock-ac6522e4-v1
+      - name: Xiaomi-Basis und Toolchain verifizieren
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/veux-kit"
+          clang="$RUNNER_TEMP/m61/clang"
+          evidence="$RUNNER_TEMP/veux-build/evidence"
+          mkdir -p "$RUNNER_TEMP/m61" "$RUNNER_TEMP/veux-inputs" "$evidence"
+          {
+            if ! [[ -x "$clang/bin/clang" ]] || ! python3 "$kit/oem/tools/treehash.py" "$clang"; then
+              if [[ -e "$clang" ]]; then mv "$clang" "$RUNNER_TEMP/clang-unverified"; fi
+              bash "$kit/oem/tools/toolchain.sh" "$clang"
+            fi
+            python3 "$kit/prepare.py" base "$RUNNER_TEMP/veux-build/src" \
+              --micode "$RUNNER_TEMP/veux-inputs/micode.git" --stock "$RUNNER_TEMP/veux-inputs/boot.img"
+          } 2>&1 | tee "$evidence/Quellen-und-Toolchain.log"
+      - name: Kernel bauen und Reparaturen prüfen
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/veux-build"
+          mkdir -p "$work/evidence"
+          bash "$RUNNER_TEMP/veux-kit/build.sh" "$work" "$RUNNER_TEMP/m61/clang" \
+            "$RUNNER_TEMP/veux-inputs/boot.img" 2>&1 | tee "$work/evidence/Bau-und-Tests.log"
+      - name: Gelinkte Abschnitte mit LLDB kontrollieren
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/veux-kit"
+          work="$RUNNER_TEMP/veux-build"
+          g++ -std=c++17 -O2 "$kit/section_check.cpp" -I/usr/lib/llvm-19/include \
+            -L/usr/lib/llvm-19/lib -Wl,-rpath,/usr/lib/llvm-19/lib -llldb -o "$work/section-check"
+          python3 "$kit/decode.py" "$work/section-check" "$work/out/vmlinux" \
+            "$work/out/arch/arm64/boot/Image" "$work/evidence" S24-R5
+          cp "$work/out/System.map" "$work/out/vmlinux" "$work/evidence/"
+          cat "$work/pair/Boot-AK3-Pruefung.json" >>"$GITHUB_STEP_SUMMARY"
+      - name: Bauprotokoll und Debugnachweise sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-S24-R5-LLDB-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-build/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Bootabbild und lesende AK3-Vorprüfung sichern
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-S24-R5-BOOT-AK3-NOFLASH-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-build/pair/
+          if-no-files-found: error
+          retention-days: 30
