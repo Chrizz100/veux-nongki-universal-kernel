@@ -62,7 +62,7 @@ def worker(args):
     targets = json.loads((bundle / 'targets.json').read_text())
     if rmnet.requested(targets, label):
         e.run([sys.executable, e.REPO / 'common/scripts/test_veux_rmnet.py'])
-    if False: e.require(targets['repository_sha'] == e.git(e.REPO, 'rev-parse', 'HEAD'),
+    e.require(targets['repository_sha'] == e.git(e.REPO, 'rev-parse', 'HEAD'),
               'resolver/worker commit mismatch')
     e.require(e.digest(e.REPO / cfg['golden_contract']) == targets['golden_sha256'],
               'Golden contract changed')
@@ -89,30 +89,6 @@ def worker(args):
         rpm24.verify_source(src, label, rpm24_proof)
         wakeup_proof = wakeup.apply(src, label, work)
         wakeup.verify_source(src, label, wakeup_proof)
-        # Inject SUSFS 2.4 R3 + BakaSU SUS_PATH UID call path right before compile
-        cand_kp = e.REPO / 'third_party/candidate/susfs/kernel_patches'
-        if (cand_kp / 'fs').is_dir():
-            shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
-        if (cand_kp / 'include').is_dir():
-            shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
-        for h in src.rglob('susfs_def.h'):
-            htxt = h.read_text()
-            if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in htxt and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in htxt:
-                h.write_text(htxt.replace('#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553', '#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554'))
-        for disp in src.rglob('dispatch.c'):
-            ptxt = disp.read_text()
-            if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in ptxt and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ptxt:
-                for n, a in [
-                    ('\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}', '\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}\n\t\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\t\treturn 0;\n\t\t}'),
-                    ('\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}', '\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}\n\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\tbreak;\n\t}')
-                ]:
-                    if n in ptxt:
-                        disp.write_text(ptxt.replace(n, a, 1))
-                        break
-        for tt in src.rglob('throne_tracker.c'):
-            ttxt = tt.read_text()
-            if 'susfs_try_umount' in ttxt and 'susfs_parse_sus_path_app_strings' not in ttxt:
-                tt.write_text(ttxt.replace('#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tsusfs_parse_sus_path_app_strings();\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', 1))
         image, result = compat.compile_kernel(label, state, targets, work, args.jobs)
         fixes.verify_source(src, label, proof)
         rpm24.verify_composed_source(src, label, rpm_proof, rpm24_proof)
