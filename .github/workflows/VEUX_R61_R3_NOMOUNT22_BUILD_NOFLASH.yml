@@ -1084,6 +1084,45 @@ jobs:
         assert r['source_stage_accepted'] is True and r['kernel_compiled'] is False and r['flash_allowed'] is False
         print('R58_GENUINE_BAKASU_35259_AND_PRELIMINARY_NATIVE54_PORT=PASS')
         PY_R56_STATUS
+    - name: Inject SUS_PATH UID filter call path into BakaSU dispatch
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        python3 - << 'PY_SUSPATH_UID'
+        from pathlib import Path
+        import os
+
+        root = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
+        patched = 0
+
+        for h in root.rglob("susfs_def.h"):
+            htxt = h.read_text()
+            if "CMD_SUSFS_ADD_SUS_PATH_LOOP" in htxt and "CMD_SUSFS_SET_SUS_PATH_UID_FILTER" not in htxt:
+                htxt = htxt.replace(
+                    "#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553",
+                    "#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554"
+                )
+                h.write_text(htxt)
+
+        for d in root.rglob("dispatch.c"):
+            dtxt = d.read_text()
+            if "CMD_SUSFS_ADD_SUS_PATH_LOOP" in dtxt and "CMD_SUSFS_SET_SUS_PATH_UID_FILTER" not in dtxt:
+                needle = """\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {
+        \t\t\tsusfs_add_sus_path_loop(arg);
+        \t\t\treturn 0;
+        \t\t}"""
+                addition = needle + """\n\t\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {
+        \t\t\tsusfs_set_sus_path_uid_filter(arg);
+        \t\t\treturn 0;
+        \t\t}"""
+                if needle in dtxt:
+                    d.write_text(dtxt.replace(needle, addition, 1))
+                    patched += 1
+                    print(f"Patched BakaSU dispatch: {d}")
+
+        assert patched > 0, "Keine BakaSU dispatch.c mit CMD_SUSFS_ADD_SUS_PATH_LOOP gefunden!"
+        PY_SUSPATH_UID
+
     - name: Isolate and compile R60 all four native54 SELinux hosts CASS BakaSU SUSFS NoMount - never flash
       id: r58_fresh_build
       shell: bash
