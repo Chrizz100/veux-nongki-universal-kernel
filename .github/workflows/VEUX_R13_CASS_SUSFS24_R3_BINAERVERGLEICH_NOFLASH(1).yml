@@ -1,0 +1,357 @@
+name: VEUX R13 CASS ·  2.4 R3 Binärabgleich · NOFLASH
+
+'on':
+  workflow_dispatch:
+    inputs:
+      patch_repo:
+        description: Git-URL des externen Patch-Repositories
+        required: true
+        type: string
+      patch_ref:
+        description: Branch, Tag oder Commit des Patch-Repositories
+        required: false
+        default: main
+        type: string
+      patch_file:
+        description: Relativer Pfad zur .patch-Datei; leer = genau eine Datei unter patches/
+        required: false
+        type: string
+      defconfig_path:
+        description: Relativer Pfad der zu erweiternden Kernel-defconfig
+        required: false
+        default: arch/arm64/configs/stock_defconfig
+        type: string
+      config_entries:
+        description: Mehrzeilige Liste im Format CONFIG_NAME=y
+        required: true
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/VEUX_R13_CASS_SUSFS24_R3_BINAERVERGLEICH_NOFLASH.yml
+
+permissions:
+  contents: read
+
+jobs:
+  befehlsdiagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      KBUILD_JOBS: '4'
+      LLDB: lldb-19
+      PYTHONDONTWRITEBYTECODE: '1'
+      GIT_TERMINAL_PROMPT: '0'
+      EXTERNAL_PATCH_REPO: ${{ inputs.patch_repo || vars.EXTERNAL_PATCH_REPO }}
+      EXTERNAL_PATCH_REF: ${{ inputs.patch_ref || vars.EXTERNAL_PATCH_REF || 'main' }}
+      EXTERNAL_PATCH_FILE_INPUT: ${{ inputs.patch_file || vars.EXTERNAL_PATCH_FILE }}
+      EXTERNAL_DEFCONFIG_PATH: ${{ inputs.defconfig_path || vars.EXTERNAL_DEFCONFIG_PATH || 'arch/arm64/configs/stock_defconfig' }}
+      EXTERNAL_CONFIG_ENTRIES: ${{ inputs.config_entries || vars.EXTERNAL_CONFIG_ENTRIES }}
+    steps:
+      - name: R3 MAIN auschecken
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: d1443e718169756c6b5a265a2648cb66399bbec1
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_R13_CASS_SUSFS24_R3_MAIN.zip
+      - name: Basis des bestätigten GitHub-Baus auschecken
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 55908d3ae455e97fb3da22edaed82ecebdcd9e3b
+          path: r13-basis
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /VEUX_R13_CASS_SUSFS24_MAIN.zip
+      - name: Archive verifizieren und Diagnosekorrektur vorbereiten
+        env:
+          R3_MAIN_SHA256: '7b5f2bf93e56c06e94396830044daee89419d0530341fdacb7b06e58771e357c'
+          BASE_MAIN_SHA256: '2d21261d1372dba8ebe9ace382987aecb63829ec42b4c830dde72e2eedf541e9'
+        run: |
+          set -euo pipefail
+          baseline=r13-basis/VEUX_R13_CASS_SUSFS24_MAIN.zip
+          delta=VEUX_R13_CASS_SUSFS24_R3_MAIN.zip
+          printf '%s  %s\n' "$BASE_MAIN_SHA256" "$baseline" "$R3_MAIN_SHA256" "$delta" | sha256sum -c -
+          kit="$RUNNER_TEMP/veux-kit"
+          fix="$RUNNER_TEMP/veux-statuskorrektur"
+          unzip -q "$baseline" -d "$kit"
+          unzip -q "$delta" -d "$fix"
+          git -C "$kit" apply "$fix/patches/Buildpruefung.patch"
+          install -m 644 "$fix/patches/R13-SUSFS-Statusantwort.patch" "$kit/patches/"
+          install -m 644 "$fix/referenz/Statuskorrektur.git-tree" "$kit/referenz/"
+          install -m 644 "$fix/tools/status_response.py" "$kit/tools/"
+          install -m 644 "$fix/patches/R13-SUSFS-Befehlsdiagnose.patch" "$kit/patches/"
+          install -m 644 "$fix/referenz/Befehlsdiagnose.git-tree" "$kit/referenz/"
+          install -m 644 "$fix/tools/dispatch_status.py" "$kit/tools/"
+      - name: Bau- und Debugwerkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc binutils-aarch64-linux-gnu bison build-essential cpio flex libelf-dev libssl-dev lldb-19 m4 patch zstd
+      - name: Gepinnte Android-Toolchain wiederverwenden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-clang
+          key: veux-r13-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+      - name: Android-Clang laden und prüfen
+        run: |
+          set -euo pipefail
+          clang="$RUNNER_TEMP/veux-clang"
+          kit="$RUNNER_TEMP/veux-kit"
+          if ! test -x "$clang/bin/clang"; then
+            bash "$kit/tools/toolchain.sh" "$clang"
+          fi
+          python3 "$kit/tools/treehash.py" "$clang"
+      - name: Externes Patch-Verzeichnis vor dem Kompilieren einbinden
+        run: |
+          set -euo pipefail
+
+          : "${EXTERNAL_PATCH_REPO:?patch_repo-Eingabe oder Repository-Variable EXTERNAL_PATCH_REPO fehlt}"
+          : "${EXTERNAL_PATCH_REF:?patch_ref darf nicht leer sein}"
+          : "${EXTERNAL_DEFCONFIG_PATH:?defconfig_path darf nicht leer sein}"
+          : "${EXTERNAL_CONFIG_ENTRIES:?config_entries-Eingabe oder Repository-Variable EXTERNAL_CONFIG_ENTRIES fehlt}"
+
+          case "$EXTERNAL_DEFCONFIG_PATH" in
+            /*|*'..'*)
+              printf 'Ungültiger defconfig-Pfad: %s\n' "$EXTERNAL_DEFCONFIG_PATH" >&2
+              exit 1
+              ;;
+          esac
+
+          patch_dir="$RUNNER_TEMP/external-kernel-patches"
+          config_file="$RUNNER_TEMP/external-kernel-configs.txt"
+          config_raw="$RUNNER_TEMP/external-kernel-configs.raw"
+          kit="$RUNNER_TEMP/veux-kit"
+          rm -rf "$patch_dir"
+          git init -q "$patch_dir"
+          git -C "$patch_dir" remote add origin "$EXTERNAL_PATCH_REPO"
+          git -C "$patch_dir" fetch -q --depth=1 --no-tags -- origin "$EXTERNAL_PATCH_REF"
+          git -C "$patch_dir" checkout -q --detach FETCH_HEAD
+
+          test -d "$patch_dir/patches/fs"
+          test -d "$patch_dir/patches/include/linux"
+
+          if test -n "$EXTERNAL_PATCH_FILE_INPUT"; then
+            case "$EXTERNAL_PATCH_FILE_INPUT" in
+              /*|*'..'*)
+                printf 'Ungültiger Patch-Pfad: %s\n' "$EXTERNAL_PATCH_FILE_INPUT" >&2
+                exit 1
+                ;;
+            esac
+            patch_file=$(realpath "$patch_dir/$EXTERNAL_PATCH_FILE_INPUT")
+            case "$patch_file" in
+              "$patch_dir"/*) ;;
+              *)
+                printf 'Patch-Datei liegt außerhalb des geklonten Repositories.\n' >&2
+                exit 1
+                ;;
+            esac
+          else
+            mapfile -d '' patch_candidates < <(find "$patch_dir/patches" -type f -name '*.patch' -print0)
+            if test "${#patch_candidates[@]}" -ne 1; then
+              printf 'Ohne patch_file muss unter patches/ genau eine .patch-Datei liegen; gefunden: %s\n' \
+                "${#patch_candidates[@]}" >&2
+              exit 1
+            fi
+            patch_file=${patch_candidates[0]}
+          fi
+          test -f "$patch_file"
+
+          : > "$config_raw"
+          while IFS= read -r entry; do
+            entry=${entry%$'\r'}
+            test -z "${entry//[[:space:]]/}" && continue
+            if [[ ! "$entry" =~ ^CONFIG_[A-Z0-9_]+=y$ ]]; then
+              printf 'Ungültiger Konfigurationseintrag: %s\n' "$entry" >&2
+              exit 1
+            fi
+            printf '%s\n' "$entry" >> "$config_raw"
+          done <<< "$EXTERNAL_CONFIG_ENTRIES"
+          awk '!seen[$0]++' "$config_raw" > "$config_file"
+          test -s "$config_file"
+
+          cat > "$kit/tools/append_external_configs.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          config=$(realpath "$1")
+          entries=$(realpath "$2")
+          test -f "$config"
+          test -s "$entries"
+          while IFS= read -r entry; do
+            name=${entry%%=*}
+            sed -i -e "/^${name}=.*/d" -e "/^# ${name} is not set$/d" "$config"
+          done < "$entries"
+          printf '\n# External kernel patch configuration\n' >> "$config"
+          cat "$entries" >> "$config"
+          SCRIPT
+          chmod 0755 "$kit/tools/append_external_configs.sh"
+
+          cat > "$kit/tools/apply_external_kernel_patch.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          src=$(realpath "$1")
+          patch_dir=$(realpath "$2")
+          patch_file=$(realpath "$3")
+          defconfig_relative=$4
+          config_file=$(realpath "$5")
+          kit=$(cd "$(dirname "$0")/.." && pwd)
+
+          test -f "$src/Makefile"
+          test -d "$src/fs"
+          test -d "$src/include/linux"
+          test -d "$patch_dir/patches/fs"
+          test -d "$patch_dir/patches/include/linux"
+          test -f "$patch_file"
+
+          defconfig=$(realpath -m "$src/$defconfig_relative")
+          case "$defconfig" in
+            "$src"/*) ;;
+            *)
+              printf 'defconfig liegt außerhalb des Kernel-Quellbaums.\n' >&2
+              exit 1
+              ;;
+          esac
+          test -f "$defconfig"
+
+          cp -a "$patch_dir/patches/fs/." "$src/fs/"
+          cp -a "$patch_dir/patches/include/linux/." "$src/include/linux/"
+          (
+            cd "$src"
+            patch --dry-run --batch --forward -p1 < "$patch_file"
+            patch --batch --forward -p1 < "$patch_file"
+          )
+          bash "$kit/tools/append_external_configs.sh" "$defconfig" "$config_file"
+          SCRIPT
+          chmod 0755 "$kit/tools/apply_external_kernel_patch.sh"
+
+          python3 - "$kit/build.sh" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+
+          source_anchor = '\nksu="$src/KernelSU"\n'
+          source_hook = '''
+          bash "$kit/tools/apply_external_kernel_patch.sh" \\
+              "$src" "$EXTERNAL_PATCH_DIR" "$EXTERNAL_PATCH_FILE" \\
+              "$EXTERNAL_DEFCONFIG_PATH" "$EXTERNAL_CONFIG_FILE"
+
+          ksu="$src/KernelSU"
+          '''
+          if text.count(source_anchor) != 1:
+              raise SystemExit("build.sh: eindeutiger Quellbaum-Anker nicht gefunden")
+          text = text.replace(source_anchor, "\n" + source_hook, 1)
+
+          config_anchor = 'cp "$kit/referenz/R13.config" "$out/.config"\n'
+          config_hook = config_anchor + \
+              'bash "$kit/tools/append_external_configs.sh" "$out/.config" "$EXTERNAL_CONFIG_FILE"\n'
+          if text.count(config_anchor) != 1:
+              raise SystemExit("build.sh: eindeutiger Konfigurationsanker nicht gefunden")
+          text = text.replace(config_anchor, config_hook, 1)
+          path.write_text(text)
+          PY
+
+          python3 - "$kit/verify.py" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          if "def requested_config_flags():" not in text:
+              text = text.replace("import json\n", "import json\nimport os\n", 1)
+              marker = 'PRIORITY_FLAG = "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER"\n'
+              helper = marker + '''
+
+          def requested_config_flags():
+              config_file = os.environ.get("EXTERNAL_CONFIG_FILE")
+              if not config_file:
+                  return set()
+              result = set()
+              for line in Path(config_file).read_text().splitlines():
+                  name, value = line.split("=", 1)
+                  if value == "y":
+                      result.add(name)
+              return result
+          '''
+              if text.count(marker) != 1:
+                  raise SystemExit("verify.py: Konfigurationsanker nicht gefunden")
+              text = text.replace(marker, helper, 1)
+
+              old = '''    expect(delta == {PRIORITY_FLAG: [None, "y"]}, f"Unexpected R13 configuration delta: {delta}")
+              enabled = {name for name, value in actual.items()
+                         if name.startswith("CONFIG_KSU_SUSFS_") and value == "y"}
+              expect(enabled == SUSFS_FEATURES, f"Unexpected SUSFS feature set: {sorted(enabled)}")
+          '''
+              new = '''    requested = requested_config_flags()
+              expected_delta = {PRIORITY_FLAG: [None, "y"]}
+              for name in requested:
+                  before = old_flags.get(name)
+                  if before != "y":
+                      expected_delta[name] = [before, "y"]
+              expect(delta == expected_delta, f"Unexpected R13 configuration delta: {delta}")
+              enabled = {name for name, value in actual.items()
+                         if name.startswith("CONFIG_KSU_SUSFS_") and value == "y"}
+              expected_susfs = SUSFS_FEATURES | {
+                  name for name in requested if name.startswith("CONFIG_KSU_SUSFS_")}
+              expect(enabled == expected_susfs, f"Unexpected SUSFS feature set: {sorted(enabled)}")
+          '''
+              if text.count(old) != 1:
+                  raise SystemExit("verify.py: Prüfblock nicht eindeutig gefunden")
+              text = text.replace(old, new, 1)
+              path.write_text(text)
+          PY
+
+          {
+            printf 'EXTERNAL_PATCH_DIR=%s\n' "$patch_dir"
+            printf 'EXTERNAL_PATCH_FILE=%s\n' "$patch_file"
+            printf 'EXTERNAL_CONFIG_FILE=%s\n' "$config_file"
+          } >> "$GITHUB_ENV"
+
+          {
+            printf '### Externer Kernel-Patch vorbereitet\n'
+            printf -- '- Repository: `%s`\n' "$EXTERNAL_PATCH_REPO"
+            printf -- '- Ref: `%s`\n' "$(git -C "$patch_dir" rev-parse HEAD)"
+            printf -- '- Patch: `%s`\n' "${patch_file#"$patch_dir"/}"
+            printf -- '- Defconfig: `%s`\n' "$EXTERNAL_DEFCONFIG_PATH"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Befehlsdiagnose bauen und den gelinkten Kernel prüfen
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/veux-r13-statuskorrektur"
+          mkdir -p "$work/evidence"
+          bash "$RUNNER_TEMP/veux-kit/build.sh" "$work" "$RUNNER_TEMP/veux-clang" 2>&1 \
+            | tee "$work/evidence/Bau-und-Tests.log"
+          printf '%s\n' "SUSFS-Befehlsdiagnose und 10 Statuseinträge im gelinkten Kernel geprüft." >> "$GITHUB_STEP_SUMMARY"
+      - name: Bauprotokoll und Prüfnachweise sichern
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-R13-CASS-SUSFS24-R3-Pruefung-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-r13-statuskorrektur/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: ARM64-Image und Debug-ELF sichern
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/veux-r13-statuskorrektur/out"
+          packed="$RUNNER_TEMP/veux-r3-binaerabgleich"
+          mkdir -p "$packed"
+          for file in "$out/arch/arm64/boot/Image" "$out/vmlinux" "$out/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"; do
+            name=${file##*/}
+            hash=$(sha256sum "$file")
+            printf '%s  %s\n' "${hash%% *}" "$name" >> "$packed/SHA256SUMS"
+            zstd -q -T2 -8 "$file" -o "$packed/$name.zst"
+          done
+          cp "$RUNNER_TEMP/veux-r13-statuskorrektur/evidence/R13-SUSFS24-Kernelpruefung.json" "$packed/"
+          printf '%s\n' 'Source commit d1443e718169756c6b5a265a2648cb66399bbec1' \
+            'Original GitHub run 45865492011' "Replay GitHub run $GITHUB_RUN_ID" > "$packed/Herkunft.txt"
+      - name: Binärdateien als Prüfartefakt hochladen
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: VEUX-R13-CASS-SUSFS24-R3-Binaerabgleich-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-r3-binaerabgleich/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
