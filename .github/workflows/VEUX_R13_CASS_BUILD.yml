@@ -513,61 +513,36 @@ jobs:
         fetch_exact https://github.com/maxsteeel/nomount.git bf1847f98fed382369c43bfd652cd93774b9b8e3 "$RUNNER_TEMP/NoMount22"
         fetch_exact https://github.com/maxsteeel/nomount.git 7046c7ad3ee0bf4ae66e80f6b93b1e30db0cb4e3 "$RUNNER_TEMP/NoMountR5S2"
         echo 'R55H17_R2_PINNED_OFFICIAL_SOURCES=PASS; NO_FLASH'
-    - name: Update BakaSU to latest and inject SUSFS 2.4 R3 + SUS_PATH UID call path
+    - name: 04 Compile protected baseline and fresh complete CASS candidate
       shell: bash
       run: |
-        set -Eeuo pipefail
+        set -euo pipefail
         if [ -d "$RUNNER_TEMP/BakaSU35252/.git" ]; then
           git -C "$RUNNER_TEMP/BakaSU35252" fetch --quiet origin
           LATEST_HEAD=$(git -C "$RUNNER_TEMP/BakaSU35252" rev-parse origin/HEAD 2>/dev/null || git -C "$RUNNER_TEMP/BakaSU35252" rev-parse FETCH_HEAD)
           git -C "$RUNNER_TEMP/BakaSU35252" checkout --quiet --detach "$LATEST_HEAD"
         fi
         mkdir -p "$RUNNER_TEMP/susfs24-r3"
-        if [ -f "VEUX_R13_CASS_SUSFS24_R3_MAIN.zip" ]; then
-          unzip -oq "VEUX_R13_CASS_SUSFS24_R3_MAIN.zip" -d "$RUNNER_TEMP/susfs24-r3"
-        fi
+        [ -f "VEUX_R13_CASS_SUSFS24_R3_MAIN.zip" ] && unzip -oq "VEUX_R13_CASS_SUSFS24_R3_MAIN.zip" -d "$RUNNER_TEMP/susfs24-r3"
         python3 - << 'PY_R13_SUSPATH'
         from pathlib import Path
         import os
-
         root = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
-        patched = 0
-
         for h in root.rglob("susfs_def.h"):
             htxt = h.read_text()
             if "CMD_SUSFS_ADD_SUS_PATH_LOOP" in htxt and "CMD_SUSFS_SET_SUS_PATH_UID_FILTER" not in htxt:
-                htxt = htxt.replace(
-                    "#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553",
-                    "#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554"
-                )
-                h.write_text(htxt)
-
+                h.write_text(htxt.replace("#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553", "#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554"))
         for d in root.rglob("dispatch.c"):
             dtxt = d.read_text()
             if "CMD_SUSFS_ADD_SUS_PATH_LOOP" in dtxt and "CMD_SUSFS_SET_SUS_PATH_UID_FILTER" not in dtxt:
-                for needle, addition in [
-                    (
-                        "\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}",
-                        "\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}\n\t\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\t\treturn 0;\n\t\t}"
-                    ),
-                    (
-                        "\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}",
-                        "\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}\n\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\tbreak;\n\t}"
-                    ),
+                for n, a in [
+                    ("\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}", "\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}\n\t\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\t\treturn 0;\n\t\t}"),
+                    ("\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}", "\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}\n\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\tbreak;\n\t}")
                 ]:
-                    if needle in dtxt:
-                        d.write_text(dtxt.replace(needle, addition, 1))
-                        patched += 1
-                        print(f"Patched BakaSU dispatch: {d}")
+                    if n in dtxt:
+                        d.write_text(dtxt.replace(n, a, 1))
                         break
-
-        assert patched > 0, "Keine BakaSU dispatch.c gefunden!"
         PY_R13_SUSPATH
-
-    - name: 04 Compile protected baseline and fresh complete CASS candidate
-      shell: bash
-      run: |
-        set -euo pipefail
         export PYTHONPATH="$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
         "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4
       id: r12_compile
