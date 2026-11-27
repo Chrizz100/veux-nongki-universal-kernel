@@ -27,16 +27,16 @@
       "version_kind": "base-version-dynamic-commit-count"
     },
     "resukisu": {
-      "ahead": 115,
+      "ahead": 116,
       "base": "9be0f347f38e790c846915bd5f9c24b337f85c4e",
       "changed": true,
-      "commit": "57b2db6076f439cfd489f14576444e8f0f2f0a25",
+      "commit": "cac1e79355ef451539f5c5ba9dc2bda1c64069de",
       "compatibility_errors": [],
       "component_gate": false,
       "current_commit": "8770c7e324a22895703c4916b8a16520e0b81c79",
       "fast_forward_from_current": true,
       "historical_base_is_ancestor": true,
-      "local_version": 4585,
+      "local_version": 4586,
       "ref": "refs/heads/main",
       "review_reasons": [
         "ReSukiSU UAPI changed: 5 -> 6"
@@ -48,7 +48,7 @@
       "tag": "v4.2.0-rc3",
       "uapi": 6,
       "url": "https://github.com/ReSukiSU/ReSukiSU.git",
-      "version": "35285"
+      "version": "35286"
     },
     "susfs": {
       "ahead": 36,
@@ -150,7 +150,7 @@
   },
   "note": "PASS means source/integration gates accept the candidate. REVIEW_REQUIRED means a declared interface/version generation changed and must be explicitly reviewed before a manual build is allowed. No status proves that the kernel compiles; only a manually started compile can prove that.",
   "package_performed": false,
-  "repository_sha": "f51f4ac17081a2af082b6d06d014e38a4c1cfe25",
+  "repository_sha": "3f9e163be57059c34a0e7cff6c68a3e73e1c24c9",
   "review_reasons": [
     "resukisu: ReSukiSU UAPI changed: 5 -> 6",
     "susfs: SUSFS declared version changed: 2.3.0 -> 2.4.0",
