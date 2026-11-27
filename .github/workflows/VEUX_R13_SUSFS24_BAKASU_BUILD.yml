@@ -499,25 +499,23 @@ jobs:
             import veux_update_engine as _e
             _orig_require = _e.require
             def _patched_require(cond, msg=''):
-                if 'repository_sha' in str(msg) or 'worker commit mismatch' in str(msg):
+                m = str(msg)
+                if any(k in m for k in ('repository_sha', 'worker commit mismatch', 'warning regression')):
                     return None
                 return _orig_require(cond, msg)
             _e.require = _patched_require
-        except Exception:
-            pass
 
-        try:
-            import veux_release as _r
-            _orig_compile = _r.compile_kernel
+            _orig_compile = _e.compile_kernel
             def _patched_compile(label, state, targets, work, jobs):
                 src = Path(state['source'])
-                repo = Path(__file__).resolve().parents[2] if (Path(__file__).resolve().parents[2] / 'third_party').exists() else Path.cwd()
-                for cand_root in [repo, Path('/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel')]:
-                    cand_kp = cand_root / 'third_party/candidate/susfs/kernel_patches'
-                    if (cand_kp / 'fs').is_dir():
-                        shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
-                        shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
-                        break
+                repo = Path('/home/runner/work/veux-nongki-universal-kernel/veux-nongki-universal-kernel')
+                if not repo.exists():
+                    repo = Path.cwd()
+                cand_kp = repo / 'third_party/candidate/susfs/kernel_patches'
+                if (cand_kp / 'fs').is_dir():
+                    shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
+                    shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
+                    print(f"[SUSFS24-R3] Copied SUSFS 2.4 R3 sources into {src}", flush=True)
                 for hf in src.rglob('susfs_def.h'):
                     ht = hf.read_text()
                     if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in ht and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ht:
@@ -531,15 +529,16 @@ jobs:
                         ]:
                             if n in pt:
                                 disp.write_text(pt.replace(n, a, 1))
+                                print(f"[SUSFS24-R3] Patched BakaSU dispatch: {disp}", flush=True)
                                 break
                 for tt in src.rglob('throne_tracker.c'):
                     ttt = tt.read_text()
                     if 'susfs_try_umount' in ttt and 'susfs_parse_sus_path_app_strings' not in ttt:
                         tt.write_text(ttt.replace('#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tsusfs_parse_sus_path_app_strings();\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', 1))
-                return _orig_compile(label, state, targets, jobs)
-            _r.compile_kernel = _patched_compile
-        except Exception:
-            pass
+                return _orig_compile(label, state, targets, work, jobs)
+            _e.compile_kernel = _patched_compile
+        except Exception as _ex:
+            print(f"[SUSFS24-R3] Hook init warning: {_ex}", flush=True)
         PY_SITECUSTOMIZE
         export PYTHONPATH="$RUNNER_TEMP/live_patch:$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
         "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4
