@@ -1,0 +1,110 @@
+name: VEUX Quellen durchsuchen (nur lesen, ca. 2 Minuten)
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  suche:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Eigenes Repo (third_party) laden
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            third_party
+
+      - name: Beide Backport-Projekte klonen
+        run: |
+          set -euo pipefail
+          ext="$RUNNER_TEMP/ext"
+          mkdir -p "$ext"
+          echo "EXT=$ext" >> "$GITHUB_ENV"
+          git clone -q --depth=1 --branch mainline \
+            https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd.git "$ext/jackaltman"
+          git clone -q --depth=1 --branch rebase \
+            https://github.com/cyberc3dr/nGKI_Kernel_Build.git "$ext/cyberc3dr"
+
+      - name: Suchen und Ergebnis ausgeben
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/ergebnis.md"
+          : > "$out"
+
+          {
+            echo "## 1. Stand der Quellen (Commit zum Festpinnen)"
+            echo '```'
+            echo "eigenes Repo : $(git rev-parse HEAD)"
+            echo "JackA1ltman  : $(git -C "$EXT/jackaltman" rev-parse HEAD)  (mainline)"
+            echo "cyberc3dr    : $(git -C "$EXT/cyberc3dr" rev-parse HEAD)  (rebase)"
+            echo '```'
+          } >> "$out"
+
+          suche() {
+            local muster=$1
+            echo "### $muster"
+            local gefunden=0
+            for ziel in "third_party/candidate" "$EXT/jackaltman" "$EXT/cyberc3dr"; do
+              treffer=$(grep -rIF -c --exclude-dir=.git -- "$muster" "$ziel" 2>/dev/null \
+                | grep -v ':0$' | sed "s#^$EXT/##" | sort | head -n 25 || true)
+              if [[ -n "$treffer" ]]; then
+                gefunden=1
+                echo '```'
+                echo "$treffer"
+                echo '```'
+              fi
+            done
+            if [[ $gefunden -eq 0 ]]; then echo "_kein Treffer_"; fi
+          }
+
+          {
+            echo
+            echo "## 2. Treffer (Datei:Anzahl)"
+            for muster in \
+              ksu_handle_vfs_fstat \
+              susfs_set_sus_path_uid_filter \
+              susfs_parse_sus_path_app_strings \
+              CMD_SUSFS_SET_SUS_PATH_UID_FILTER \
+              0x55554 \
+              susfs_sus_path_app_strings_worker; do
+              suche "$muster"
+            done
+          } >> "$out"
+
+          {
+            echo
+            echo "## 3. Dateien in third_party/candidate (eigenes Repo)"
+            echo '```'
+            find third_party/candidate -type f | sort | head -n 300
+            echo '```'
+            echo
+            echo "## 4. Dateien in Patches/ (JackA1ltman)"
+            echo '```'
+            (cd "$EXT/jackaltman" && find Patches Bin -type f 2>/dev/null | sort | head -n 300)
+            echo '```'
+            echo
+            echo "## 5. Dateien in Patches/ (cyberc3dr)"
+            echo '```'
+            (cd "$EXT/cyberc3dr" && find Patches Bin -type f 2>/dev/null | sort | head -n 300)
+            echo '```'
+          } >> "$out"
+
+          cat "$out" >> "$GITHUB_STEP_SUMMARY"
+          cp "$out" "$RUNNER_TEMP/ergebnis-kopie.md"
+
+      - name: Ergebnis als Datei sichern
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-Quellensuche-${{ github.run_id }}
+          path: ${{ runner.temp }}/ergebnis-kopie.md
+          if-no-files-found: error
+          retention-days: 7
