@@ -535,7 +535,7 @@ jobs:
                     sht = sh.read_text()
                     sct = sc.read_text()
                     if 'susfs_srcu_open_redirect' not in sht:
-                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\n#endif', 1)
+                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\nint susfs_open_redirect_spoof_show_map_vma_srcu();\n#endif', 1)
                         sh.write_text(sht)
                     if 'susfs_srcu_open_redirect' not in sct:
                         stubs = (
