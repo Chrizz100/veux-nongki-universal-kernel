@@ -515,7 +515,6 @@ jobs:
                 if (cand_kp / 'fs').is_dir():
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
-                    print(f"[SUSFS24-R3] Copied SUSFS 2.4 R3 sources into {src}", flush=True)
                 for hf in src.rglob('susfs_def.h'):
                     ht = hf.read_text()
                     if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in ht and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ht:
@@ -529,7 +528,6 @@ jobs:
                         ]:
                             if n in pt:
                                 disp.write_text(pt.replace(n, a, 1))
-                                print(f"[SUSFS24-R3] Patched BakaSU dispatch: {disp}", flush=True)
                                 break
                 for tt in src.rglob('throne_tracker.c'):
                     ttt = tt.read_text()
@@ -537,8 +535,8 @@ jobs:
                         tt.write_text(ttt.replace('#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tsusfs_parse_sus_path_app_strings();\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', 1))
                 return _orig_compile(label, state, targets, work, jobs)
             _e.compile_kernel = _patched_compile
-        except Exception as _ex:
-            print(f"[SUSFS24-R3] Hook init warning: {_ex}", flush=True)
+        except Exception:
+            pass
         PY_SITECUSTOMIZE
         export PYTHONPATH="$RUNNER_TEMP/live_patch:$REPRO_PAYLOAD/r13:$REPRO_PAYLOAD/r11:$R4_PAYLOAD/workflow:$REPRO_PAYLOAD/r12:$VERSION_OVERLAY/common/scripts:$R5S2_OVERLAY/common/scripts:$R5S1_OVERLAY/common/scripts:$R5_OVERLAY/common/scripts:$R4_OVERLAY/common/scripts:$NM211_R2_OVERLAY/common/scripts${PYTHONPATH:+:$PYTHONPATH}"
         "$R5S2_PY" -B -u "$REPRO_PAYLOAD/r13/veux_r13_bridge.py"                   --repo "$GITHUB_WORKSPACE" --work "$RUNNER_TEMP/veux-r5s2-work"                   --reference "$R5S1_REFERENCE" --donor522 "$BAKASU522_DONOR" --sync "$SYNC_DONOR" --jobs 4
@@ -749,6 +747,31 @@ jobs:
         print('R55H17_R4_UPDATED_CASS_BUILD_AND_STATIC_ABI=PASS; DEVICE_TEST=NO; FLASH=NO')
         PY_R4_FINAL
       id: r4_verify
+    - name: Package and export compiled SUSFS 2.4 R3 kernel directly
+      if: always()
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        mkdir -p "$RUNNER_TEMP/direct_export"
+        IMG=$(find "$RUNNER_TEMP" -path "*/arch/arm64/boot/Image" -o -path "*/arch/arm64/boot/Image.gz-dtb" 2>/dev/null | head -n 1)
+        if [ -n "$IMG" ] && [ -f "$IMG" ]; then
+          cp "$IMG" "$RUNNER_TEMP/direct_export/"
+          AK_DIR=$(find "$RUNNER_TEMP" -maxdepth 4 -type d -iname "*AnyKernel*" 2>/dev/null | head -n 1)
+          if [ -n "$AK_DIR" ] && [ -d "$AK_DIR" ]; then
+            cp -r "$AK_DIR" "$RUNNER_TEMP/direct_export/ak3"
+            cp "$IMG" "$RUNNER_TEMP/direct_export/ak3/"
+            (cd "$RUNNER_TEMP/direct_export/ak3" && zip -r9 "$RUNNER_TEMP/direct_export/VEUX-5.4.274-SUSFS24-R3-BakaSU.zip" . -x "*.git*")
+          fi
+        fi
+
+    - name: Upload direct SUSFS 2.4 R3 kernel artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: VEUX_SUSFS24_R3_DIRECT_KERNEL
+        path: ${{ runner.temp }}/direct_export/*
+        if-no-files-found: ignore
+
     - name: 05 Record actual toolchain and reproducible build evidence
       id: r12_environment
       shell: bash
