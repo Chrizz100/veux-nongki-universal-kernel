@@ -535,14 +535,14 @@ jobs:
                     sht = sh.read_text()
                     sct = sc.read_text()
                     if 'susfs_srcu_open_redirect' not in sht:
-                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\nint susfs_open_redirect_spoof_show_map_vma_srcu();\n#endif', 1)
+                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\nint susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);\n#endif', 1)
                         sh.write_text(sht)
                     if 'susfs_srcu_open_redirect' not in sct:
                         stubs = (
                             '#include <linux/srcu.h>\n'
                             'struct srcu_struct susfs_srcu_open_redirect;\n'
                             'EXPORT_SYMBOL(susfs_srcu_open_redirect);\n'
-                            'int susfs_open_redirect_spoof_show_map_vma_srcu(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name) { return 0; }\n'
                             'int susfs_open_redirect_spoof_do_proc_readlink(void) { return 0; }\n'
                             'int susfs_open_redirect_spoof_seq_show(void) { return 0; }\n'
                             'int susfs_open_redirect_spoof_do_sys_openat(void) { return 0; }\n'
