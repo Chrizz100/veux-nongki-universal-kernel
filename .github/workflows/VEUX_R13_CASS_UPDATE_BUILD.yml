@@ -173,6 +173,9 @@ jobs:
               sh_path = src / 'include/linux/susfs.h'
               sh_path.write_text(('\n' + '\n'.join(extra_decls) + '\n#endif').join(sh_path.read_text().rsplit('#endif', 1)))
 
+          fs_h = src / 'include/linux/fs.h'
+          if extra_decls:
+              fs_h.write_text(('\n#include <linux/srcu.h>\n' + '\n'.join(extra_decls) + '\n#endif').join(fs_h.read_text().rsplit('#endif', 1)))
           sd = src / 'include/linux/susfs_def.h'
           if extra_decls:
               sd.write_text('#include <linux/srcu.h>\n' + sd.read_text())
