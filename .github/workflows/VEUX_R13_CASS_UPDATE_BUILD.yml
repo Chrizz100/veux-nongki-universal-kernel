@@ -110,7 +110,7 @@ jobs:
           src = Path(os.environ['SRC'])
           repo = Path(os.environ['WORK']) / 'repo'
           if not repo.exists():
-              subprocess.run(['git', 'clone', '--depth=1', f"https://github.com{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
+              subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
 
           # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
           stat_c = src / 'fs/stat.c'
