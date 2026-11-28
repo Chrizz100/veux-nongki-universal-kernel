@@ -541,6 +541,14 @@ jobs:
                             '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) (0)\n'
                             '#define susfs_open_redirect_spoof_do_proc_readlink(...) (0)\n'
                             '#define susfs_open_redirect_spoof_seq_show(...) (0)\n'
+                            '#define susfs_open_redirect_spoof_do_sys_openat(...) (0)\n'
+                            '#define susfs_open_redirect_spoof_vfs_readlink(...) (0)\n'
+                            '#define susfs_open_redirect_spoof_vfs_statfs(...) (0)\n'
+                            '#define susfs_sus_kstat_spoof_vfs_statfs(...) (0)\n'
+                            '#define susfs_sus_kstat_spoof_generic_fillattr(...) (0)\n'
+                            '#define susfs_sus_kstat_spoof_inotify_fdinfo(...) (0)\n'
+                            '#define susfs_sus_kstat_spoof_proc_fd_seq_show(...) (0)\n'
+                            '#define susfs_sus_kstat_spoof_show_map_vma(...) (0)\n'
                             '#endif',
                             1
                         )
