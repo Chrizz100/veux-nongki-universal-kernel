@@ -122,65 +122,49 @@ jobs:
           if 'susfs_srcu_open_redirect' not in sct:
               sct = '#include <linux/srcu.h>\\nstruct srcu_struct susfs_srcu_open_redirect;\\nEXPORT_SYMBOL(susfs_srcu_open_redirect);\\nint susfs_open_redirect_spoof_show_map_vma_srcu(struct vm_area_struct *vma, struct path *fake_path) { return 0; }\\n' + sct
               sc_p.write_text(sct)
-          # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
+          python3 - << 'PY_HOOKS'
+          import os, shutil
+          from pathlib import Path
+
+          import subprocess
+          repo = Path(os.environ['WORK']) / 'repo'
+          if not repo.exists():
+              subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
+          src = Path(os.environ['SRC'])
+
+          # 1. Add ksu_handle_vfs_fstat hook in fs/stat.c required by BakaSU 35289
           stat_c = src / 'fs/stat.c'
           st = stat_c.read_text()
           if 'ksu_handle_vfs_fstat' not in st:
-              st = re.sub(
-                  r'(int\s+vfs_fstat\s*\(\s*int\s+fd\s*,\s*struct\s+kstat\s*\*\s*stat\s*\))',
-                  r'extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\n\1',
-                  st,
-                  count=1
+              st = st.replace(
+                  'int vfs_fstat(int fd, struct kstat *stat)',
+                  'extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nint vfs_fstat(int fd, struct kstat *stat)',
+                  1
               )
-              st = re.sub(
-                  r'(error\s*=\s*vfs_getattr\s*\(\s*&f\.file->f_path\s*,\s*stat[^;]*;)',
-                  r'\1\n\tif (!error)\n\t\tksu_handle_vfs_fstat(fd, &stat->size);',
-                  st,
-                  count=1
+              st = st.replace(
+                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);',
+                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);\n\tif (!error)\n\t\tksu_handle_vfs_fstat(fd, &stat->size);',
+                  1
               )
-              assert 'ksu_handle_vfs_fstat(fd, &stat->size);' in st
               stat_c.write_text(st)
 
-          # 2. Bestehende R13 fs/susfs.c behalten und NUR per-App SUS_PATH UID-Filter ergaenzen
-          cand_sc = (repo / 'third_party/candidate/susfs/kernel_patches/fs/susfs.c').read_text()
-          m_uid = re.search(
-              r'(/\*\s*susfs_set_sus_path_uid_filter.*?^\}|void\s+susfs_set_sus_path_uid_filter\s*\([^)]*\)\s*\{.*?^\})',
-              cand_sc,
-              re.S | re.M
-          )
-          m_parse = re.search(
-              r'(void\s+susfs_parse_sus_path_app_strings\s*\([^)]*\)\s*\{.*?^\})',
-              cand_sc,
-              re.S | re.M
-          )
-          # Zugehoerige UID-Filter-Datenstrukturen & Helper aus cand_sc extrahieren
-          uid_sec_start = cand_sc.find('sus_path_uid_filter')
-          if uid_sec_start != -1:
-              line_start = cand_sc.rfind('\n', 0, uid_sec_start) + 1
-              func_end = cand_sc.find('/* sus_mount */', line_start)
-              if func_end == -1:
-                  func_end = cand_sc.find('void susfs_add_sus_mount', line_start)
-              uid_addon = cand_sc[line_start:func_end]
-          else:
-              uid_addon = '\n'.join(x.group(0) for x in (m_uid, m_parse) if x)
+          # 2. Install SUSFS 2.4 R3 with per-app SUS_PATH UID filter + 5.4 Non-GKI UID helper
+          cand = repo / 'third_party/candidate/susfs/kernel_patches'
+          shutil.copy2(cand / 'fs/susfs.c', src / 'fs/susfs.c')
+          for hdr in (cand / 'include/linux').glob('susfs*.h'):
+              shutil.copy2(hdr, src / 'include/linux' / hdr.name)
 
-          r13_sc_path = src / 'fs/susfs.c'
-          r13_sc = r13_sc_path.read_text()
-          if 'susfs_set_sus_path_uid_filter' not in r13_sc and uid_addon.strip():
-              r13_sc_path.write_text(r13_sc + '\n\n/* Per-app SUS_PATH UID filter */\n' + uid_addon + '\n')
+          sd = src / 'include/linux/susfs_def.h'
+          sdt = sd.read_text()
+          if 'current_uid().val' in sdt:
+              sdt = sdt.replace(
+                  '#define KSU_SUSFS_DEF_H',
+                  '#define KSU_SUSFS_DEF_H\n#include <linux/cred.h>\n#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })',
+                  1
+              ).replace('current_uid().val', 'susfs_cur_uid()')
+              sd.write_text(sdt)
 
-          for hdr in [src / 'include/linux/susfs.h', src / 'include/linux/susfs_def.h']:
-              if hdr.exists():
-                  ht = hdr.read_text()
-                  add_hdr = ''
-                  if 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ht:
-                      add_hdr += '#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554\n'
-                  if 'susfs_set_sus_path_uid_filter' not in ht:
-                      add_hdr += 'void susfs_set_sus_path_uid_filter(void __user **user_info);\nvoid susfs_parse_sus_path_app_strings(void);\n'
-                  if add_hdr:
-                      hdr.write_text(('\n' + add_hdr + '#endif').join(ht.rsplit('#endif', 1)))
-
-          # 3. BakaSU 35289 Verdrahtung
+          # 3. Wire CMD_SUSFS_SET_SUS_PATH_UID_FILTER & susfs_parse_sus_path_app_strings in BakaSU 35289
           ksu_dir = src / 'KernelSU'
           for hf in ksu_dir.rglob('susfs_def.h'):
               ht = hf.read_text()
@@ -200,7 +184,10 @@ jobs:
               ttt = tt.read_text()
               if 'susfs_try_umount' in ttt and 'susfs_parse_sus_path_app_strings' not in ttt:
                   tt.write_text(ttt.replace('#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tsusfs_parse_sus_path_app_strings();\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', 1))
-          PY_ACTIVATE
+          PY_HOOKS
+          test -f "$SRC/fs/nomount/nomount.c"
+
+      - name: Android-Clang aus dem Cache laden
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/veux-clang-r416183b
