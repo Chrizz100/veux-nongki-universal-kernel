@@ -516,13 +516,12 @@ jobs:
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
 
-                # Fix 1: Non-GKI 5.4 defines kuid_t as plain uid_t (no .val member)
-                for rel in ['include/linux/susfs_def.h', 'include/linux/susfs.h', 'fs/susfs.c']:
-                    f = src / rel
-                    if f.exists():
-                        ft = f.read_text()
-                        if 'current_uid().val' in ft:
-                            f.write_text(ft.replace('current_uid().val', 'current_uid()'))
+                # Fix 1: Include <linux/uidgid.h> right after #define __SUSFS_DEF_H__ so current_uid().val always sees struct kuid_t
+                sd = src / 'include/linux/susfs_def.h'
+                if sd.exists():
+                    sdt = sd.read_text()
+                    if '#define __SUSFS_DEF_H__' in sdt and '<linux/uidgid.h>' not in sdt:
+                        sd.write_text(sdt.replace('#define __SUSFS_DEF_H__', '#define __SUSFS_DEF_H__\n#include <linux/uidgid.h>', 1))
 
                 # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
                 sh = src / 'include/linux/susfs.h'
