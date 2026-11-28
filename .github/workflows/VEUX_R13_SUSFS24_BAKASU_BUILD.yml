@@ -528,33 +528,39 @@ jobs:
                         ).replace('current_uid().val', 'susfs_cur_uid()')
                         sd.write_text(sdt)
 
-                # Fix 2: Real C stub functions in fs/susfs.c (never collides with forward declarations in task_mmu.c etc.)
+                # Fix 2: Copy exact 5.4.274 open_redirect_spoof_* prototypes from common/update/current/5.4.274/files/include/linux/susfs.h
                 sh = src / 'include/linux/susfs.h'
                 sc = src / 'fs/susfs.c'
-                if sh.exists() and sc.exists():
+                orig_sh = repo / 'common/update/current/5.4.274/files/include/linux/susfs.h'
+                if sh.exists() and sc.exists() and orig_sh.exists():
                     sht = sh.read_text()
                     sct = sc.read_text()
+                    # Extrahiere alle vollständigen Deklarationen susfs_open_redirect_spoof_* aus der originalen 5.4.274 susfs.h
+                    orig_txt = orig_sh.read_text()
+                    decls = []
+                    cur = []
+                    in_decl = False
+                    for line in orig_txt.splitlines():
+                        if 'susfs_open_redirect_spoof_' in line and '(' in line:
+                            in_decl = True
+                        if in_decl:
+                            cur.append(line.strip())
+                            if ';' in line:
+                                decls.append(' '.join(cur))
+                                cur = []
+                                in_decl = False
+                    decl_block = '\n'.join(decls)
                     if 'susfs_srcu_open_redirect' not in sht:
-                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\nint susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);\n#endif', 1)
+                        sht = sht.replace('#endif', f'extern struct srcu_struct susfs_srcu_open_redirect;\n{decl_block}\n#endif', 1)
                         sh.write_text(sht)
                     if 'susfs_srcu_open_redirect' not in sct:
-                        stubs = (
-                            '#include <linux/srcu.h>\n'
-                            'struct srcu_struct susfs_srcu_open_redirect;\n'
-                            'EXPORT_SYMBOL(susfs_srcu_open_redirect);\n'
-                            'int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name) { return 0; }\n'
-                            'int susfs_open_redirect_spoof_do_proc_readlink(void) { return 0; }\n'
-                            'int susfs_open_redirect_spoof_seq_show(void) { return 0; }\n'
-                            'int susfs_open_redirect_spoof_do_sys_openat(void) { return 0; }\n'
-                            'int susfs_open_redirect_spoof_vfs_readlink(void) { return 0; }\n'
-                            'int susfs_open_redirect_spoof_vfs_statfs(void) { return 0; }\n'
-                            'int susfs_sus_kstat_spoof_vfs_statfs(void) { return 0; }\n'
-                            'int susfs_sus_kstat_spoof_generic_fillattr(void) { return 0; }\n'
-                            'int susfs_sus_kstat_spoof_inotify_fdinfo(void) { return 0; }\n'
-                            'int susfs_sus_kstat_spoof_proc_fd_seq_show(void) { return 0; }\n'
-                            'int susfs_sus_kstat_spoof_show_map_vma(void) { return 0; }\n'
-                        )
-                        sc.write_text(stubs + sct)
+                        stub_defs = []
+                        for d in decls:
+                            sig = d.rstrip(';').strip()
+                            ret = 'return NULL;' if sig.startswith('struct ') else 'return 0;'
+                            stub_defs.append(f'{sig} {{ {ret} }}')
+                        sct = '#include <linux/srcu.h>\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);\n' + '\n'.join(stub_defs) + '\n' + sct
+                        sc.write_text(sct)
 
                 # Fix 3: SUSFS 2.4 R3 CMD_SUSFS_SET_SUS_PATH_UID_FILTER in BakaSU
                 for hf in src.rglob('susfs_def.h'):
