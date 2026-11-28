@@ -107,7 +107,10 @@ jobs:
           import os, re, shutil
           from pathlib import Path
 
-          repo = Path(os.environ['GITHUB_WORKSPACE'])
+          import subprocess
+          repo = Path(os.environ['WORK']) / 'repo'
+          if not repo.exists():
+              subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
           src = Path(os.environ['SRC'])
 
           # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
@@ -126,7 +129,7 @@ jobs:
               stat_c.write_text(st)
 
           # 2. SUSFS 2.4 R3 mit per-App SUS_PATH UID-Filter + 5.4-Anpassungen (unter Erhalt der R13-CASS-Hooks)
-          cand = next(repo.rglob('third_party/candidate/susfs/kernel_patches'))
+          cand = repo / 'third_party/candidate/susfs/kernel_patches'
           r13_sc = (src / 'fs/susfs.c').read_text()
           r13_sh = (src / 'include/linux/susfs.h').read_text()
 
