@@ -1,0 +1,203 @@
+name: VEUX R13 CASS – BakaSU 35289 und NoMount 2.3.1 bauen
+
+'on':
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/VEUX_R13_CASS_UPDATE_BUILD.yml
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    env:
+      VENDOR_REV: b2b7a3bbc36d120ee523ebc8d68e0f13a97df632
+      BAKASU_REV: 99ff0a27ca5477180da6d70e7387b91b0a9aa5b7
+      NOMOUNT_REV: 87b05967532a039f5d3bea660eadcabed43d3e71
+      GIT_TERMINAL_PROMPT: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: R13-Quellarchive aus dem Projekt laden
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: a04f76054e0e7dedfb5fac47c435bdc46e78fd5a
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /VEUX_R13_CASS_SUSFS24_MAIN.zip
+            /VEUX_R13_CASS_SUSFS24_R3_MAIN.zip
+
+      - name: Bauverzeichnisse und Werkzeuge vorbereiten
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/veux-r13"
+          mkdir -p "$work"/{kit,r3,out,nachweise,artefakt}
+          {
+            echo "WORK=$work"
+            echo "KIT=$work/kit"
+            echo "SRC=$work/linux"
+            echo "OUT=$work/out"
+            echo "LOGS=$work/nachweise"
+            echo "ART=$work/artefakt"
+            echo "CLANG=$RUNNER_TEMP/veux-clang-r416183b"
+          } >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc binutils-aarch64-linux-gnu bison \
+            build-essential ca-certificates cpio curl device-tree-compiler flex git libelf-dev \
+            libssl-dev m4 python-is-python3 python3 rsync unzip zstd
+
+      - name: Bestehenden R13-Kernelbaum mit SUSFS 2.4 wiederherstellen
+        run: |
+          set -euo pipefail
+          exec > >(tee "$LOGS/quellbaum.log") 2>&1
+          sha256sum --check <<'SUMS'
+          2d21261d1372dba8ebe9ace382987aecb63829ec42b4c830dde72e2eedf541e9  VEUX_R13_CASS_SUSFS24_MAIN.zip
+          7b5f2bf93e56c06e94396830044daee89419d0530341fdacb7b06e58771e357c  VEUX_R13_CASS_SUSFS24_R3_MAIN.zip
+          SUMS
+          unzip -q VEUX_R13_CASS_SUSFS24_MAIN.zip -d "$KIT"
+          unzip -q VEUX_R13_CASS_SUSFS24_R3_MAIN.zip -d "$WORK/r3"
+          git init -q "$SRC"
+          git -C "$SRC" remote add origin https://github.com/dereference23/kernel_xiaomi_sm6375.git
+          git -C "$SRC" fetch -q --no-tags --depth=1 origin "$VENDOR_REV"
+          git -C "$SRC" checkout -q --detach "$VENDOR_REV"
+          for patch in \
+            "$KIT/patches/P14/p5i/vendor-20240619-to-p5i-outer.patch" \
+            "$KIT/patches/P14/p5i-to-p6-source-compat.patch" \
+            "$KIT/patches/P14/p6v10-to-p6v11-full-susfs-outer.patch" \
+            "$KIT/patches/R13-Quellstand.patch" \
+            "$KIT/patches/SUSFS-2.4-R13.patch" \
+            "$WORK/r3/patches/R13-SUSFS-Statusantwort.patch"; do
+            git -C "$SRC" apply --index --binary --whitespace=nowarn "$patch"
+          done
+          actual_tree=$(git -C "$SRC" write-tree)
+          echo "R13-Quellbaum vor dem Versionswechsel: $actual_tree"
+          test "$actual_tree" = 979f0a76e7c0f110b07ffdd2a3a4e50dc463c549
+
+      - name: Beide Upstream-Commits für den Bau verwenden
+        run: |
+          set -euo pipefail
+          exec > >(tee "$LOGS/komponenten.log") 2>&1
+          fetch_source() {
+            local destination=$1 upstream=$2 commit=$3
+            shift 3
+            git init -q "$destination"
+            git -C "$destination" remote add origin "$upstream"
+            git -C "$destination" fetch -q --filter=blob:none --no-tags origin "$commit" "$@"
+            git -C "$destination" checkout -q --detach "$commit"
+            test "$(git -C "$destination" rev-parse HEAD)" = "$commit"
+            echo "$(git -C "$destination" rev-parse HEAD) $upstream"
+          }
+          fetch_source "$SRC/KernelSU" https://github.com/Baka-SU/BakaSU.git "$BAKASU_REV" \
+            refs/tags/v4.2.0-rc3:refs/tags/v4.2.0-rc3
+          fetch_source "$WORK/nomount" https://github.com/maxsteeel/nomount.git "$NOMOUNT_REV"
+          test "$(realpath "$SRC/drivers/kernelsu")" = "$SRC/KernelSU/kernel"
+          test "$(git -C "$SRC/KernelSU" rev-list --count HEAD)" = 4589
+          test "$(git -C "$WORK/nomount" rev-list --count HEAD)" = 796
+          grep -Fx 'version=v2.3.1' "$WORK/nomount/module/module.prop"
+          mv "$SRC/fs/nomount" "$WORK/nomount-r13"
+          ln -s "$WORK/nomount/kernel/src" "$SRC/fs/nomount"
+          test -f "$SRC/fs/nomount/nomount.c"
+
+      - name: Android-Clang aus dem Cache laden
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/veux-clang-r416183b
+          key: linux-x64-veux-clang-r416183b-0a90693130898d6f98a76538086247b374d4a57f
+
+      - name: Android-Clang r416183b prüfen
+        run: |
+          set -euo pipefail
+          if [[ ! -x "$CLANG/bin/clang" ]] || ! python3 "$KIT/tools/treehash.py" "$CLANG"; then
+            if [[ -e "$CLANG" ]]; then mv "$CLANG" "$WORK/clang-verworfen"; fi
+            bash "$KIT/tools/toolchain.sh" "$CLANG"
+          fi
+          python3 "$KIT/tools/treehash.py" "$CLANG"
+          "$CLANG/bin/clang" --version
+
+      - name: Kernel, Gerätebäume und Module kompilieren
+        run: |
+          set -euo pipefail
+          export PATH="$CLANG/bin:$PATH"
+          export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=pangu-build-component-vendor-345942-54r9t-tw0tk-tq90c
+          export KBUILD_BUILD_VERSION=4 KBUILD_FIXED_SCM_SUFFIX=-g82179e362f33
+          export KBUILD_BUILD_TIMESTAMP='Thu Dec 5 14:47:59 UTC 2024' SOURCE_DATE_EPOCH=1733410079
+          cp "$KIT/referenz/R13.config" "$OUT/.config"
+          "$SRC/scripts/config" --file "$OUT/.config" --disable KSU_SUSFS_SUS_PATH
+          kmake=(make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1
+                 "KCFLAGS=-D__ANDROID_COMMON_KERNEL__ -I$OUT/security/selinux -gline-tables-only")
+          jobs=$(nproc)
+          "${kmake[@]}" olddefconfig 2>&1 | tee "$LOGS/konfiguration.log"
+          cp "$OUT/.config" "$LOGS/kernel.config"
+          for option in SCHED_CASS KSU KSU_SUSFS NOMOUNT IKCONFIG; do
+            grep -Fxq "CONFIG_$option=y" "$OUT/.config" || { echo "Konfigurationsoption fehlt: $option"; exit 1; }
+          done
+          grep -Fxq '# CONFIG_KSU_SUSFS_SUS_PATH is not set' "$OUT/.config"
+          "${kmake[@]}" -j"$jobs" init/version.o security/selinux/ 2>&1 | tee "$LOGS/vorbereitung.log"
+          "${kmake[@]}" -j"$jobs" fs/nomount/ drivers/kernelsu/ 2>&1 | tee "$LOGS/treiber.log"
+          "${kmake[@]}" -j"$jobs" Image dtbs modules 2>&1 | tee "$LOGS/kernelbau.log"
+
+      - name: Versionen im gelinkten Image und R13-Modulschnittstelle prüfen
+        run: |
+          set -euo pipefail
+          image="$OUT/arch/arm64/boot/Image"
+          dtb="$OUT/arch/arm64/boot/dts/vendor/xiaomi/veux.dtb"
+          "$CLANG/bin/llvm-objcopy" -O binary -R .note -R .note.gnu.build-id -R .comment -S \
+            "$OUT/vmlinux" "$WORK/elf.Image"
+          cmp "$image" "$WORK/elf.Image"
+          bash "$SRC/scripts/extract-ikconfig" "$image" > "$WORK/embedded.config"
+          cmp "$OUT/.config" "$WORK/embedded.config"
+          test "$(cat "$OUT/include/config/kernel.release")" = 5.4.274-qgki-g82179e362f33
+          echo "42728a6f3d48ae35ac6be4b14ea51bc8a323e77baec2ee544827487378f99d37  $dtb" | sha256sum -c -
+          LC_ALL=C sort "$KIT/referenz/R13.Module.symvers" > "$WORK/abi.r13"
+          LC_ALL=C sort "$OUT/Module.symvers" > "$WORK/abi.bau"
+          diff -u "$WORK/abi.r13" "$WORK/abi.bau" > "$LOGS/modulschnittstelle.diff"
+          python3 - "$image" "$OUT/modules.builtin.modinfo" "$LOGS/treiber.log" <<'PY' | tee "$LOGS/versionen.txt"
+          from pathlib import Path
+          import sys
+
+          image, modinfo, build = map(Path, sys.argv[1:])
+          raw = image.read_bytes()
+          metadata = modinfo.read_bytes().replace(b"\n", b"\0").split(b"\0")
+          log = build.read_text().splitlines()
+          if raw[56:60] != b"ARMd":
+              raise SystemExit("ARM64-Image-Kennung fehlt")
+          for marker in (b"v4.2.0-rc3-99ff0a27@BakaSU", b"23 (796)", b"v2.4.0"):
+              if marker + b"\0" not in raw:
+                  raise SystemExit(f"Kennung fehlt im gelinkten Image: {marker.decode()}")
+              print(f"Kernel-Image enthält {marker.decode()}")
+          if "-- BakaSU version code: 35289" not in log:
+              raise SystemExit("BakaSU-Buildcode 35289 fehlt im Compilerprotokoll")
+          if b"nomount.version=23 (796)" not in metadata:
+              raise SystemExit("NoMount 23 (796) fehlt in den Modulmetadaten")
+          print("Kbuild meldet BakaSU 35289 und NoMount 23 (796).")
+          PY
+          cp "$image" "$dtb" "$OUT/System.map" "$OUT/Module.symvers" "$OUT/modules.builtin.modinfo" "$ART/"
+          cp "$OUT/.config" "$ART/kernel.config"
+          (cd "$OUT" && find . -name '*.ko' -type f -exec cp --parents -t "$ART" -- {} +)
+          zstd -q -T2 -5 "$OUT/vmlinux" -o "$ART/vmlinux.zst"
+          (cd "$ART" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS)
+          cat "$LOGS/versionen.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Gebauten Kernel hochladen
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R13-Kernel-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-r13/artefakt/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compilerprotokolle sichern
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: VEUX-R13-Bauprotokolle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/veux-r13/nachweise/
+          if-no-files-found: warn
+          retention-days: 14
