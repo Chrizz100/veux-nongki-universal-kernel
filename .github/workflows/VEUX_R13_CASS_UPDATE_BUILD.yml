@@ -146,19 +146,23 @@ jobs:
               '.handle_event = susfs_handle_sdcard_inode_event,'
           )
 
-          extra_defs = []
-          extra_decls = []
-          for fn in re.findall(r'\b(susfs_(?:open_redirect|sus_kstat)_spoof_[a-zA-Z0-9_]+)\b', r13_sh):
-              if fn not in cand_sc:
-                  m_decl = re.search(rf'([a-zA-Z0-9_\s\*]+\b{fn}\s*\([^;]*\))\s*;', r13_sh)
-                  if m_decl:
-                      sig = ' '.join(m_decl.group(1).split())
-                      ret = 'return NULL;' if sig.startswith('struct ') else 'return 0;'
-                      extra_decls.append(sig + ';')
-                      extra_defs.append(f'{sig} {{ {ret} }}')
-          if 'susfs_srcu_open_redirect' in r13_sc and 'susfs_srcu_open_redirect' not in cand_sc:
-              extra_decls.insert(0, 'extern struct srcu_struct susfs_srcu_open_redirect;')
-              extra_defs.insert(0, '#include <linux/srcu.h>\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);')
+          extra_decls, extra_defs, cur, in_d = [], [], [], False
+          for l in r13_sh.splitlines():
+              if ("susfs_open_redirect_spoof_" in l or "susfs_sus_kstat_spoof_" in l) and "(" in l: in_d = True
+              if in_d:
+                  cur.append(l.strip())
+                  if ";" in l:
+                      fd = " ".join(cur); cur, in_d = [], False
+                      fn = fd[:fd.index("(")].split()[-1].lstrip("*")
+                      if fn not in cand_sc:
+                          sig = fd.rstrip(";").strip(); ret = "return NULL;" if sig.startswith("struct ") else "return 0;"
+                          extra_decls.append(sig + ";"); extra_defs.append(f"{sig} {{ {ret} }}")
+          if "susfs_srcu_open_redirect" in r13_sh and "susfs_srcu_open_redirect" not in cand_sc:
+              extra_decls.insert(0, "extern struct srcu_struct susfs_srcu_open_redirect;")
+              extra_defs.insert(0, "#include <linux/srcu.h>
+struct srcu_struct susfs_srcu_open_redirect;
+EXPORT_SYMBOL(susfs_srcu_open_redirect);")
+          assert len(extra_decls) > 0
 
           if extra_defs:
               cand_sc = '\n'.join(extra_defs) + '\n' + cand_sc
