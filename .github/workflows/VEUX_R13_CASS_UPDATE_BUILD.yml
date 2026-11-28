@@ -171,7 +171,7 @@ jobs:
 
           if extra_decls:
               sh_path = src / 'include/linux/susfs.h'
-              sh_path.write_text(sh_path.read_text().replace('#endif', '\n'.join(extra_decls) + '\n#endif', 1))
+              sh_path.write_text(('\n' + '\n'.join(extra_decls) + '\n#endif').join(sh_path.read_text().rsplit('#endif', 1)))
 
           sd = src / 'include/linux/susfs_def.h'
           sdt = sd.read_text()
