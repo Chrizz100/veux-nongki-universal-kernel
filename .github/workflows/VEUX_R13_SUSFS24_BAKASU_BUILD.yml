@@ -516,12 +516,12 @@ jobs:
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
 
-                # Fix 1: Include <linux/uidgid.h> right after #define KSU_SUSFS_DEF_H so current_uid().val always sees struct kuid_t
+                # Fix 1: Only in susfs_def.h (included by drivers/kernelsu where current_uid() is int), strip .val
                 sd = src / 'include/linux/susfs_def.h'
                 if sd.exists():
                     sdt = sd.read_text()
-                    if '#define KSU_SUSFS_DEF_H' in sdt and '<linux/uidgid.h>' not in sdt:
-                        sd.write_text(sdt.replace('#define KSU_SUSFS_DEF_H', '#define KSU_SUSFS_DEF_H\n#include <linux/uidgid.h>', 1))
+                    if 'current_uid().val' in sdt:
+                        sd.write_text(sdt.replace('current_uid().val', 'current_uid()'))
 
                 # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
                 sh = src / 'include/linux/susfs.h'
@@ -535,6 +535,7 @@ jobs:
                             'extern struct srcu_struct susfs_srcu_open_redirect;\n'
                             '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) (0)\n'
                             '#define susfs_open_redirect_spoof_do_proc_readlink(...) (0)\n'
+                            '#define susfs_open_redirect_spoof_seq_show(...) (0)\n'
                             '#endif',
                             1
                         )
