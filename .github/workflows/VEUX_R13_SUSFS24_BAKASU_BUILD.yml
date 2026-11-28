@@ -534,7 +534,7 @@ jobs:
                         sht = sht.replace(
                             '#endif',
                             'extern struct srcu_struct susfs_srcu_open_redirect;\n'
-                            'static inline void susfs_open_redirect_spoof_show_map_vma_srcu(struct file *file, struct seq_file *m, unsigned long *ino, dev_t *dev, unsigned long long *pgoff, struct vm_area_struct *vma) {}\n'
+                            '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) do {} while (0)\n'
                             '#endif',
                             1
                         )
