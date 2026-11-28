@@ -113,19 +113,23 @@ jobs:
               subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
           src = Path(os.environ['SRC'])
 
-          # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
+          # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289 (inline_hook_check.mk:53)
           stat_c = src / 'fs/stat.c'
           st = stat_c.read_text()
           if 'ksu_handle_vfs_fstat' not in st:
-              st = st.replace(
-                  'int vfs_fstat(int fd, struct kstat *stat)',
-                  'extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nint vfs_fstat(int fd, struct kstat *stat)',
-                  1
-              ).replace(
-                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);',
-                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);\n\tif (!error)\n\t\tksu_handle_vfs_fstat(fd, &stat->size);',
-                  1
+              st = re.sub(
+                  r'(int\s+vfs_fstat\s*\(\s*int\s+fd\s*,\s*struct\s+kstat\s*\*\s*stat\s*\))',
+                  r'extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\n\1',
+                  st,
+                  count=1
               )
+              st = re.sub(
+                  r'(error\s*=\s*vfs_getattr\s*\(\s*&f\.file->f_path\s*,\s*stat[^;]*;)',
+                  r'\1\n\tif (!error)\n\t\tksu_handle_vfs_fstat(fd, &stat->size);',
+                  st,
+                  count=1
+              )
+              assert 'ksu_handle_vfs_fstat(fd, &stat->size);' in st, 'vfs_fstat hook konnte nicht in fs/stat.c eingefuegt werden'
               stat_c.write_text(st)
 
           # 2. SUSFS 2.4 R3 mit per-App SUS_PATH UID-Filter + 5.4-Anpassungen (unter Erhalt der R13-CASS-Hooks)
