@@ -522,7 +522,7 @@ jobs:
                     sdt = sd.read_text()
                     if 'current_uid().val' in sdt:
                         sdt = sdt.replace(
-                            '#define KSU_SUSFS_DEF_H',
+                            '#define KSU_SUSFS_DEF_H\n#include <linux/cred.h>',
                             '#define KSU_SUSFS_DEF_H\n#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })',
                             1
                         ).replace('current_uid().val', 'susfs_cur_uid()')
@@ -541,7 +541,7 @@ jobs:
                     cur = []
                     in_decl = False
                     for line in orig_txt.splitlines():
-                        if 'susfs_open_redirect_spoof_' in line and '(' in line:
+                        if ('susfs_open_redirect_spoof_' in line or 'susfs_sus_kstat_spoof_' in line) and '(' in line:
                             in_decl = True
                         if in_decl:
                             cur.append(line.strip())
