@@ -515,6 +515,34 @@ jobs:
                 if (cand_kp / 'fs').is_dir():
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
+
+                # Fix 1: Non-GKI 5.4 uid_t vs kuid_t (__kuid_val(current_uid())) in susfs_def.h / susfs.h / susfs.c
+                for rel in ['include/linux/susfs_def.h', 'include/linux/susfs.h', 'fs/susfs.c']:
+                    f = src / rel
+                    if f.exists():
+                        ft = f.read_text()
+                        if 'current_uid().val' in ft:
+                            f.write_text(ft.replace('current_uid().val', '__kuid_val(current_uid())'))
+
+                # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
+                sh = src / 'include/linux/susfs.h'
+                sc = src / 'fs/susfs.c'
+                if sh.exists() and sc.exists():
+                    sht = sh.read_text()
+                    sct = sc.read_text()
+                    if 'susfs_open_redirect_spoof_show_map_vma' in sht and 'susfs_srcu_open_redirect' not in sht:
+                        sht = sht.replace(
+                            'void susfs_open_redirect_spoof_show_map_vma',
+                            'extern struct srcu_struct susfs_srcu_open_redirect;\n'
+                            'void susfs_open_redirect_spoof_show_map_vma'
+                        )
+                        sht += '\nstatic inline void susfs_open_redirect_spoof_show_map_vma_srcu(struct file *file, struct seq_file *m, unsigned long *ino, dev_t *dev, unsigned long long *pgoff, struct vm_area_struct *vma) { susfs_open_redirect_spoof_show_map_vma(file, m, ino, dev, pgoff, vma); }\n'
+                        sh.write_text(sht)
+                    if 'susfs_srcu_open_redirect' not in sct:
+                        sct = '#include <linux/srcu.h>\nDEFINE_STATIC_SRCU(susfs_srcu_open_redirect_dummy);\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);\n' + sct
+                        sc.write_text(sct)
+
+                # Fix 3: SUSFS 2.4 R3 CMD_SUSFS_SET_SUS_PATH_UID_FILTER in BakaSU
                 for hf in src.rglob('susfs_def.h'):
                     ht = hf.read_text()
                     if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in ht and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ht:
