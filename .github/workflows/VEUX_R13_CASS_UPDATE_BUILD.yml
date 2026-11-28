@@ -159,9 +159,7 @@ jobs:
                           extra_decls.append(sig + ";"); extra_defs.append(f"{sig} {{ {ret} }}")
           if "susfs_srcu_open_redirect" in r13_sh and "susfs_srcu_open_redirect" not in cand_sc:
               extra_decls.insert(0, "extern struct srcu_struct susfs_srcu_open_redirect;")
-              extra_defs.insert(0, "#include <linux/srcu.h>
-struct srcu_struct susfs_srcu_open_redirect;
-EXPORT_SYMBOL(susfs_srcu_open_redirect);")
+              extra_defs.insert(0, "#include <linux/srcu.h>\\nstruct srcu_struct susfs_srcu_open_redirect;\\nEXPORT_SYMBOL(susfs_srcu_open_redirect);")
           assert len(extra_decls) > 0
 
           if extra_defs:
