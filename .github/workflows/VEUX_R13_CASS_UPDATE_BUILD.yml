@@ -103,6 +103,98 @@ jobs:
           grep -Fx 'version=v2.3.1' "$WORK/nomount/module/module.prop"
           mv "$SRC/fs/nomount" "$WORK/nomount-r13"
           ln -s "$WORK/nomount/kernel/src" "$SRC/fs/nomount"
+          python3 - << 'PY_ACTIVATE'
+          import os, re, shutil
+          from pathlib import Path
+
+          repo = Path(os.environ['GITHUB_WORKSPACE'])
+          src = Path(os.environ['SRC'])
+
+          # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
+          stat_c = src / 'fs/stat.c'
+          st = stat_c.read_text()
+          if 'ksu_handle_vfs_fstat' not in st:
+              st = st.replace(
+                  'int vfs_fstat(int fd, struct kstat *stat)',
+                  'extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);\nint vfs_fstat(int fd, struct kstat *stat)',
+                  1
+              ).replace(
+                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);',
+                  'error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);\n\tif (!error)\n\t\tksu_handle_vfs_fstat(fd, &stat->size);',
+                  1
+              )
+              stat_c.write_text(st)
+
+          # 2. SUSFS 2.4 R3 mit per-App SUS_PATH UID-Filter + 5.4-Anpassungen (unter Erhalt der R13-CASS-Hooks)
+          cand = repo / 'third_party/candidate/susfs/kernel_patches'
+          r13_sc = (src / 'fs/susfs.c').read_text()
+          r13_sh = (src / 'include/linux/susfs.h').read_text()
+
+          cand_sc = (cand / 'fs/susfs.c').read_text()
+          cand_sc = cand_sc.replace(
+              'static int susfs_handle_sdcard_inode_event(struct fsnotify_mark *mark, u32 mask,\n\t\t\t\t\t   struct inode *inode, struct inode *dir,\n\t\t\t\t\t   const struct qstr *file_name, u32 cookie)',
+              'static int susfs_handle_sdcard_inode_event(struct fsnotify_group *group, struct inode *inode, u32 mask, const void *data, int data_type, const struct qstr *file_name, u32 cookie, struct fsnotify_iter_info *iter_info)'
+          ).replace(
+              '.handle_inode_event = susfs_handle_sdcard_inode_event,',
+              '.handle_event = susfs_handle_sdcard_inode_event,'
+          )
+
+          extra_defs = []
+          extra_decls = []
+          for fn in re.findall(r'\b(susfs_(?:open_redirect|sus_kstat)_spoof_[a-zA-Z0-9_]+)\b', r13_sh):
+              if fn not in cand_sc:
+                  m_decl = re.search(rf'([a-zA-Z0-9_\s\*]+\b{fn}\s*\([^;]*\))\s*;', r13_sh)
+                  if m_decl:
+                      sig = ' '.join(m_decl.group(1).split())
+                      ret = 'return NULL;' if sig.startswith('struct ') else 'return 0;'
+                      extra_decls.append(sig + ';')
+                      extra_defs.append(f'{sig} {{ {ret} }}')
+          if 'susfs_srcu_open_redirect' in r13_sc and 'susfs_srcu_open_redirect' not in cand_sc:
+              extra_decls.insert(0, 'extern struct srcu_struct susfs_srcu_open_redirect;')
+              extra_defs.insert(0, '#include <linux/srcu.h>\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);')
+
+          if extra_defs:
+              cand_sc = '\n'.join(extra_defs) + '\n' + cand_sc
+          (src / 'fs/susfs.c').write_text(cand_sc)
+
+          for hdr in (cand / 'include/linux').glob('susfs*.h'):
+              shutil.copy2(hdr, src / 'include/linux' / hdr.name)
+
+          if extra_decls:
+              sh_path = src / 'include/linux/susfs.h'
+              sh_path.write_text(sh_path.read_text().replace('#endif', '\n'.join(extra_decls) + '\n#endif', 1))
+
+          sd = src / 'include/linux/susfs_def.h'
+          sdt = sd.read_text()
+          if 'current_uid().val' in sdt:
+              sdt = sdt.replace(
+                  '#define KSU_SUSFS_DEF_H',
+                  '#define KSU_SUSFS_DEF_H\n#include <linux/cred.h>\n#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })',
+                  1
+              ).replace('current_uid().val', 'susfs_cur_uid()')
+              sd.write_text(sdt)
+
+          # 3. BakaSU 35289: CMD_SUSFS_SET_SUS_PATH_UID_FILTER & susfs_parse_sus_path_app_strings verdrahten
+          ksu_dir = src / 'KernelSU'
+          for hf in ksu_dir.rglob('susfs_def.h'):
+              ht = hf.read_text()
+              if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in ht and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in ht:
+                  hf.write_text(ht.replace('#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553', '#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x55553\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554'))
+          for disp in ksu_dir.rglob('dispatch.c'):
+              pt = disp.read_text()
+              if 'CMD_SUSFS_ADD_SUS_PATH_LOOP' in pt and 'CMD_SUSFS_SET_SUS_PATH_UID_FILTER' not in pt:
+                  for n, a in [
+                      ('\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}', '\t\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\t\tsusfs_add_sus_path_loop(arg);\n\t\t\treturn 0;\n\t\t}\n\t\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\t\treturn 0;\n\t\t}'),
+                      ('\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}', '\tcase CMD_SUSFS_ADD_SUS_PATH_LOOP: {\n\t\tsusfs_add_sus_path_loop(arg);\n\t\tbreak;\n\t}\n\tcase CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {\n\t\tsusfs_set_sus_path_uid_filter(arg);\n\t\tbreak;\n\t}')
+                  ]:
+                      if n in pt:
+                          disp.write_text(pt.replace(n, a, 1))
+                          break
+          for tt in ksu_dir.rglob('throne_tracker.c'):
+              ttt = tt.read_text()
+              if 'susfs_try_umount' in ttt and 'susfs_parse_sus_path_app_strings' not in ttt:
+                  tt.write_text(ttt.replace('#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', '#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tsusfs_parse_sus_path_app_strings();\n#endif\n#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT', 1))
+          PY_ACTIVATE
           python3 - << 'PY_HOOKS'
           import os, shutil
           from pathlib import Path
@@ -189,7 +281,7 @@ jobs:
           export KBUILD_BUILD_VERSION=4 KBUILD_FIXED_SCM_SUFFIX=-g82179e362f33
           export KBUILD_BUILD_TIMESTAMP='Thu Dec 5 14:47:59 UTC 2024' SOURCE_DATE_EPOCH=1733410079
           cp "$KIT/referenz/R13.config" "$OUT/.config"
-          "$SRC/scripts/config" --file "$OUT/.config" --disable KSU_SUSFS_SUS_PATH
+          "$SRC/scripts/config" --file "$OUT/.config" --enable KSU_SUSFS_SUS_PATH
           kmake=(make -C "$SRC" O="$OUT" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1
                  "KCFLAGS=-D__ANDROID_COMMON_KERNEL__ -I$OUT/security/selinux -gline-tables-only")
           jobs=$(nproc)
