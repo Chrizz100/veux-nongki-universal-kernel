@@ -1,0 +1,267 @@
+name: VEUX R13 CASS Versionsprüfung
+
+on:
+  workflow_dispatch:
+    inputs:
+      nachweis:
+        description: "Optionaler Pfad zur Bericht-JSON oder zum Nachweis-ZIP. Leer verwendet das R13-R3-Archiv im Repo."
+        type: string
+        required: false
+      artefakt_id:
+        description: "Optionale GitHub-Artefakt-ID aus diesem Repo. Bei leerem Pfad wird der Bericht im Artefakt gesucht."
+        type: string
+        required: false
+
+permissions: {}
+
+env:
+  BAKASU_COMMIT: "99ff0a27ca5477180da6d70e7387b91b0a9aa5b7"
+  BAKASU_CODE: "35289"
+  SUSFS_COMMIT: "7a82d7073222f88b256b30e90e9db2db4c5df56d"
+  SUSFS_VERSION: "2.4.0"
+  NOMOUNT_COMMIT: "87b05967532a039f5d3bea660eadcabed43d3e71"
+  NOMOUNT_MODUL: "2.3.1"
+  NOMOUNT_BASIS: "23"
+  NOMOUNT_COMMITZAHL: "796"
+
+jobs:
+  quellen:
+    name: Originalquellen und 5.4-Backport
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Versionsdefinitionen und Backport-Prüfsummen lesen
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          hole_historie() {
+            local ziel="$1" repo="$2" commit="$3"
+            git init --quiet --bare "$ziel"
+            git -C "$ziel" fetch --quiet --filter=tree:0 --no-tags "$repo" "$commit"
+            test "$(git -C "$ziel" rev-parse FETCH_HEAD)" = "$commit"
+            test "$(git -C "$ziel" rev-parse --is-shallow-repository)" = false
+          }
+          baka="$RUNNER_TEMP/r13-bakasu.git"
+          nm="$RUNNER_TEMP/r13-nomount.git"
+          hole_historie "$baka" https://github.com/Baka-SU/BakaSU.git "$BAKASU_COMMIT"
+          hole_historie "$nm" https://github.com/maxsteeel/nomount.git "$NOMOUNT_COMMIT"
+          export R13_COMMITZAHL R13_NM_ZAHL
+          R13_COMMITZAHL=$(git -C "$baka" rev-list --count FETCH_HEAD)
+          R13_NM_ZAHL=$(git -C "$nm" rev-list --count FETCH_HEAD)
+
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+          from urllib.request import urlopen
+
+          env = os.environ
+
+          def quelle(repo, commit, pfad):
+              url = f"https://raw.githubusercontent.com/{repo}/{commit}/{pfad}"
+              with urlopen(url, timeout=60) as antwort:
+                  return antwort.read()
+
+          def wert(muster, inhalt):
+              treffer = re.findall(muster, inhalt, re.MULTILINE)
+              if len(treffer) != 1:
+                  raise ValueError(f"Versionsdefinition nicht eindeutig gefunden ({muster})")
+              return treffer[0]
+
+          kb = quelle("Baka-SU/BakaSU", env["BAKASU_COMMIT"], "kernel/Kbuild").decode()
+          zaehler = wert(r"^KSU_LOCAL_VERSION[ \t]*:=[ \t]*(.+)$", kb)
+          if zaehler.strip() != "$(shell cd $(KSU_SRC); $(GIT_BIN) rev-list --count HEAD)":
+              raise ValueError("Die Zählweise im BakaSU-Kbuild hat sich geändert")
+          basis, zusatz = wert(
+              r"^KSU_VERSION[ \t]*:=[ \t]*\$\(shell expr (\d+) \+ \$\(KSU_LOCAL_VERSION\) \+ (\d+)\)[ \t]*$", kb
+          )
+          code = int(basis) + int(env["R13_COMMITZAHL"]) + int(zusatz)
+
+          susfs = quelle("midori01/susfs4ksu", env["SUSFS_COMMIT"], "kernel_patches/include/linux/susfs.h").decode()
+          nomount = quelle("maxsteeel/nomount", env["NOMOUNT_COMMIT"], "kernel/src/nomount.h").decode()
+          modul = quelle("maxsteeel/nomount", env["NOMOUNT_COMMIT"], "module/module.prop").decode()
+          checks = [
+              ("BakaSU-Kbuild", str(code), env["BAKASU_CODE"]),
+              ("SUSFS für QGKI 5.4", wert(r'^#define\s+SUSFS_VERSION\s+"([^"]+)"', susfs), "v" + env["SUSFS_VERSION"]),
+              ("NoMount-Modul auf dev", wert(r"^version=(\S+)$", modul), "v" + env["NOMOUNT_MODUL"]),
+              ("NoMount-Kernelkennung", wert(r'^#define\s+NOMOUNT_BASE_VERSION\s+"([^"]+)"', nomount), env["NOMOUNT_BASIS"]),
+              ("NoMount-Commits auf dev", env["R13_NM_ZAHL"], env["NOMOUNT_COMMITZAHL"]),
+          ]
+
+          gemeinsam = "Patches/Patch/susfs_patch_to_5.4.patch"
+          sha54 = "0fc7c2df2b24e4c40f332f5e71f3227d538c2ef6a0726d8fe74c8df0d541aa6d"
+          cyber = "5893901f9efd8c79b807203345c57a1beaf55c73"
+          patches = [
+              ("JackA1ltman/NonGKI_Kernel_Build_2nd", "b3fdebf206609cb00abf57a1eb4c31878dfbcc57", gemeinsam, sha54),
+              ("cyberc3dr/nGKI_Kernel_Build", cyber, gemeinsam, sha54),
+              ("cyberc3dr/nGKI_Kernel_Build", cyber, "Patches/Patch/midori_susfs_fix.patch",
+               "03f3293903367726828931da94e20c94f05dc22a34c61b2a620573e4baf17d0f"),
+          ]
+          for repo, commit, pfad, erwartet in patches:
+              gefunden = hashlib.sha256(quelle(repo, commit, pfad)).hexdigest()
+              checks.append((f"{repo.split('/')[0]} / {pfad.rsplit('/', 1)[1]}", gefunden, erwartet))
+
+          with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              print("### Zielquellen\n\n| Prüfung | Ermittelt | Erwartet | Ergebnis |\n|---|---|---|---|", file=out)
+              for name, ist, soll in checks:
+                  status = "OK" if ist == soll else "Abweichung"
+                  print(f"| {name} | {ist} | {soll} | {status} |", file=out)
+                  print(f"{name}  {ist}  [{status}]")
+          if any(ist != soll for _, ist, soll in checks):
+              raise SystemExit("Die Zielquellen weichen von den festgelegten Ständen ab.")
+          PY
+
+  bericht:
+    name: Kernelwerte laut R13-Baunachweis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+    steps:
+      - name: Gewähltes Actions-Artefakt herunterladen
+        if: inputs.artefakt_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R13_ARTEFAKT: ${{ inputs.artefakt_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$R13_ARTEFAKT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Die Artefakt-ID muss eine positive ganze Zahl sein."
+            exit 1
+          fi
+          endpoint="repos/$GITHUB_REPOSITORY/actions/artifacts/$R13_ARTEFAKT"
+          gh api "$endpoint" > "$RUNNER_TEMP/r13-artefakt.json"
+          if ! jq -e '.expired == false' "$RUNNER_TEMP/r13-artefakt.json" > /dev/null; then
+            echo "Das gewählte Artefakt ist abgelaufen oder nicht verfügbar."
+            exit 1
+          fi
+          zip="$RUNNER_TEMP/r13-artefakt.zip"
+          gh api "$endpoint/zip" > "$zip"
+          digest=$(jq -r '.digest // empty' "$RUNNER_TEMP/r13-artefakt.json")
+          if [[ -n "$digest" ]]; then
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "GitHub meldet eine nicht lesbare Artefakt-Prüfsumme."
+              exit 1
+            fi
+            printf '%s  %s\n' "${digest#sha256:}" "$zip" | sha256sum --check
+          fi
+
+      - name: Baunachweis lesen und alle Abweichungen melden
+        shell: bash
+        env:
+          R13_BERICHT: ${{ inputs.nachweis }}
+          R13_ARTEFAKT: ${{ inputs.artefakt_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import shutil
+          import tempfile
+          from html import escape
+          from pathlib import Path, PurePosixPath
+          from urllib.parse import quote
+          from urllib.request import urlopen
+          from zipfile import ZipFile
+
+          env = os.environ
+          standard = "VEUX_R13_CASS_SUSFS24_R3_MAIN.zip"
+          berichtname = "R13-SUSFS24-Kernelpruefung.json"
+          pfad = env["R13_BERICHT"].strip()
+          if pfad and (pfad.startswith("/") or ".." in PurePosixPath(pfad).parts
+                       or any(ord(c) < 32 for c in pfad) or "\\" in pfad):
+              raise SystemExit("Bitte einen relativen Dateipfad angeben.")
+
+          def eindeutiger_eintrag(archiv, passt):
+              treffer = [i for i in archiv.infolist() if not i.is_dir() and passt(i.filename)]
+              if len(treffer) != 1:
+                  raise ValueError(f"Genau ein passender Berichteintrag erwartet, {len(treffer)} gefunden.")
+              return treffer[0]
+
+          def bericht_aus_zip(archiv):
+              info = eindeutiger_eintrag(archiv, lambda n: PurePosixPath(n).name == berichtname)
+              with archiv.open(info) as datei:
+                  return json.load(datei)
+
+          def lesen(name, stream):
+              if name.lower().endswith(".json"):
+                  return json.load(stream)
+              if name.lower().endswith(".zip"):
+                  with tempfile.TemporaryFile() as kopie:
+                      shutil.copyfileobj(stream, kopie)
+                      kopie.seek(0)
+                      with ZipFile(kopie) as archiv:
+                          return bericht_aus_zip(archiv)
+              raise ValueError("Als Nachweis wird eine JSON- oder ZIP-Datei erwartet.")
+
+          if env["R13_ARTEFAKT"]:
+              quelle = "Actions-Artefakt " + env["R13_ARTEFAKT"]
+              with ZipFile(Path(env["RUNNER_TEMP"]) / "r13-artefakt.zip") as archiv:
+                  if pfad:
+                      info = eindeutiger_eintrag(archiv, lambda n: n == pfad)
+                      with archiv.open(info) as innen:
+                          bericht = lesen(pfad, innen)
+                  else:
+                      bericht = bericht_aus_zip(archiv)
+          else:
+              pfad = pfad or standard
+              quelle = f'{env["GITHUB_REPOSITORY"]}@{env["GITHUB_SHA"]}'
+              url = f'https://raw.githubusercontent.com/{env["GITHUB_REPOSITORY"]}/{env["GITHUB_SHA"]}/{quote(pfad)}'
+              with urlopen(url, timeout=60) as datei:
+                  bericht = lesen(pfad, datei)
+
+          if not isinstance(bericht, dict):
+              raise SystemExit("Der R13-Baunachweis muss ein JSON-Objekt enthalten.")
+          kernelhash = str(bericht.get("kernel_SHA256", ""))
+          release = str(bericht.get("release", ""))
+          ungueltig = []
+          if not re.fullmatch(r"[0-9a-fA-F]{64}", kernelhash):
+              ungueltig.append("Gültige kernel_SHA256 fehlt im Bericht.")
+          if not re.fullmatch(r"5\.4\.274(?:[-+.~][^\s]*)?", release):
+              ungueltig.append("Der Bericht weist Linux 5.4.274 nicht aus.")
+
+          def feld(schluessel):
+              return str(bericht.get(schluessel, "")).strip()
+
+          def tabellenwert(text):
+              return escape(" ".join(text.split())[:150]).replace("|", "&#124;").replace("`", "&#96;") or "fehlt"
+
+          nm = feld("NoMount")
+          api = re.fullmatch(r"(?:Kernel-API\s+)?([0-9]+)(?:\s+\(([0-9]+)\))?", nm)
+          checks = [
+              ("BakaSU", feld("BakaSU"), env["BAKASU_CODE"], feld("BakaSU") == env["BAKASU_CODE"]),
+              ("SUSFS", feld("SUSFS"), env["SUSFS_VERSION"], feld("SUSFS").removeprefix("v") == env["SUSFS_VERSION"]),
+              ("NoMount-Kernelkennung", nm, env["NOMOUNT_BASIS"], bool(api and api[1] == env["NOMOUNT_BASIS"])),
+          ]
+          if api and api[2]:
+              soll = env["NOMOUNT_COMMITZAHL"]
+              checks.append(("NoMount-Commitzähler", api[2], soll, api[2] == soll))
+          if "NoMount_Modulversion" in bericht:
+              ist = feld("NoMount_Modulversion").removeprefix("v")
+              checks.append(("NoMount-Modulversion", ist, env["NOMOUNT_MODUL"], ist == env["NOMOUNT_MODUL"]))
+          if "NoMount_Commit" in bericht:
+              ist = feld("NoMount_Commit").lower()
+              checks.append(("NoMount-Commit", ist, env["NOMOUNT_COMMIT"], ist == env["NOMOUNT_COMMIT"]))
+          if api and api[1] == env["NOMOUNT_BASIS"] and not api[2] and not feld("NoMount_Commit"):
+              ungueltig.append(
+                  "NoMount-Stand offen. Die gemeldete Kennung 23 passt auch zu master. "
+                  "Zum Vergleich mit dev fehlt der im Bau ermittelte Commitzähler oder Quellcommit."
+              )
+          with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              print("### Versionsangaben im Baunachweis\n", file=out)
+              print(f"Geprüft wurde {tabellenwert(quelle)}. Der Bericht nennt den Kernel-SHA-256 {tabellenwert(kernelhash)}.\n", file=out)
+              print("| Komponente | Im Bericht | Soll | Ergebnis |\n|---|---|---|---|", file=out)
+              for komponente, ist, soll, passt in checks:
+                  ergebnis = "OK" if passt else "Abweichung"
+                  print(f"| {komponente} | {tabellenwert(ist)} | {soll} | {ergebnis} |", file=out)
+                  print(f"{komponente}  Ist {ist!r}  Soll {soll}  [{ergebnis}]")
+              for grund in ungueltig:
+                  print(f"\n{grund}", file=out)
+              if "NoMount_Commit" not in bericht:
+                  print("\nDer Bericht nennt keinen NoMount-Commit. Kernelkennung 23 kommt auf master und dev vor.", file=out)
+          if ungueltig or not all(passt for _, _, _, passt in checks):
+              raise SystemExit("R13-Versionsvergleich fehlgeschlagen. Einzelwerte stehen in der Laufübersicht.")
+          PY
