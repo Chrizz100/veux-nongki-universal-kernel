@@ -1,0 +1,76 @@
+name: VEUX Stock 5.4.274 Clean AK3 Build
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  ARCH: arm64
+  SUBARCH: arm64
+  LLVM: '1'
+  LLVM_IAS: '1'
+
+jobs:
+  build_clean_stock274_ak3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache cpio curl flex git kmod libelf-dev libssl-dev lld llvm clang python3 unzip zip
+
+      - name: 3. Fetch clean 5.4.274 source & AnyKernel3
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/base" "$RUNNER_TEMP/ak3"
+          git clone --depth=1 https://github.com "$RUNNER_TEMP/base/p2_src" || \
+          git clone https://github.com "$RUNNER_TEMP/base/p2_src"
+          (
+            cd "$RUNNER_TEMP/base/p2_src"
+            git fetch --depth=1 origin 61bb08ca2bffba1745bd4ee8a5118ed54a2f8f6e || true
+            git checkout 61bb08ca2bffba1745bd4ee8a5118ed54a2f8f6e || true
+          )
+          git clone --depth=1 https://github.com "$RUNNER_TEMP/ak3"
+
+      - name: 4. Prepare clean stock 5.4.274 tree (no BakaSU, no SUSFS)
+        run: |
+          set -Eeuo pipefail
+          if python3 common/stock274/source_only_r2/prepare_stock274_p3.py --p2-source "$RUNNER_TEMP/base/p2_src" --output "$RUNNER_TEMP/clean_kernel"; then
+            echo "Prepared clean P3 stock274 tree"
+          else
+            cp -a "$RUNNER_TEMP/base/p2_src" "$RUNNER_TEMP/clean_kernel"
+          fi
+          rm -rf "$RUNNER_TEMP/clean_kernel/.git"
+
+      - name: 5. Compile clean stock 5.4.274 kernel
+        run: |
+          set -Eeuo pipefail
+          cd "$RUNNER_TEMP/clean_kernel"
+          mkdir -p out
+          cp "$GITHUB_WORKSPACE/common/stock274/source_only_r2/P2_5_4_274_NO_ROOT_BUILD.config" out/.config
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image dtbo.img || make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
+
+      - name: 6. Package AnyKernel3 (AK3) flashable ZIP
+        run: |
+          set -Eeuo pipefail
+          IMG="$RUNNER_TEMP/clean_kernel/out/arch/arm64/boot/Image"
+          test -f "$IMG"
+          cp "$IMG" "$RUNNER_TEMP/ak3/"
+          DTBO="$RUNNER_TEMP/clean_kernel/out/arch/arm64/boot/dtbo.img"
+          [ -f "$DTBO" ] && cp "$DTBO" "$RUNNER_TEMP/ak3/" || true
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' "$RUNNER_TEMP/ak3/anykernel.sh"
+          sed -i 's|/dev/block/platform/omap/omap_hsmmc.0/by-name/boot|/dev/block/bootdevice/by-name/boot|g' "$RUNNER_TEMP/ak3/anykernel.sh"
+          mkdir -p "$RUNNER_TEMP/out_zip"
+          (cd "$RUNNER_TEMP/ak3" && zip -r9 "$RUNNER_TEMP/out_zip/VEUX-5.4.274-STOCK-CLEAN-AK3.zip" . -x "*.git*")
+
+      - name: 7. Upload AK3 flashable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEUX_STOCK274_CLEAN_AK3
+          path: ${{ runner.temp }}/out_zip/VEUX-5.4.274-STOCK-CLEAN-AK3.zip
