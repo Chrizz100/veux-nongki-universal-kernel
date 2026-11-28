@@ -516,12 +516,17 @@ jobs:
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
 
-                # Fix 1: Only in susfs_def.h (included by drivers/kernelsu where current_uid() is int), strip .val
+                # Fix 1: Type-agnostic UID extraction in susfs_def.h works for both struct kuid_t and int
                 sd = src / 'include/linux/susfs_def.h'
                 if sd.exists():
                     sdt = sd.read_text()
                     if 'current_uid().val' in sdt:
-                        sd.write_text(sdt.replace('current_uid().val', 'current_uid()'))
+                        sdt = sdt.replace(
+                            '#define KSU_SUSFS_DEF_H',
+                            '#define KSU_SUSFS_DEF_H\n#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })',
+                            1
+                        ).replace('current_uid().val', 'susfs_cur_uid()')
+                        sd.write_text(sdt)
 
                 # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
                 sh = src / 'include/linux/susfs.h'
