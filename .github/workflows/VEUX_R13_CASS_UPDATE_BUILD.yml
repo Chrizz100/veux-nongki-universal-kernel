@@ -202,7 +202,10 @@ jobs:
           import os, shutil
           from pathlib import Path
 
-          repo = Path(os.environ['GITHUB_WORKSPACE'])
+          import subprocess
+          repo = Path(os.environ['WORK']) / 'repo'
+          if not repo.exists():
+              subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
           src = Path(os.environ['SRC'])
 
           # 1. Add ksu_handle_vfs_fstat hook in fs/stat.c required by BakaSU 35289
