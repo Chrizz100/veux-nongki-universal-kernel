@@ -530,13 +530,14 @@ jobs:
                 if sh.exists() and sc.exists():
                     sht = sh.read_text()
                     sct = sc.read_text()
-                    if 'susfs_open_redirect_spoof_show_map_vma' in sht and 'susfs_srcu_open_redirect' not in sht:
+                    if 'susfs_srcu_open_redirect' not in sht:
                         sht = sht.replace(
-                            'void susfs_open_redirect_spoof_show_map_vma',
+                            '#endif',
                             'extern struct srcu_struct susfs_srcu_open_redirect;\n'
-                            'void susfs_open_redirect_spoof_show_map_vma'
+                            'static inline void susfs_open_redirect_spoof_show_map_vma_srcu(struct file *file, struct seq_file *m, unsigned long *ino, dev_t *dev, unsigned long long *pgoff, struct vm_area_struct *vma) {}\n'
+                            '#endif',
+                            1
                         )
-                        sht += '\nstatic inline void susfs_open_redirect_spoof_show_map_vma_srcu(struct file *file, struct seq_file *m, unsigned long *ino, dev_t *dev, unsigned long long *pgoff, struct vm_area_struct *vma) { susfs_open_redirect_spoof_show_map_vma(file, m, ino, dev, pgoff, vma); }\n'
                         sh.write_text(sht)
                     if 'susfs_srcu_open_redirect' not in sct:
                         sct = '#include <linux/srcu.h>\nDEFINE_STATIC_SRCU(susfs_srcu_open_redirect_dummy);\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);\n' + sct
