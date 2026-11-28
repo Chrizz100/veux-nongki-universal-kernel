@@ -112,6 +112,24 @@ jobs:
           if not repo.exists():
               subprocess.run(['git', 'clone', '--depth=1', f"https://github.com/{os.environ['GITHUB_REPOSITORY']}.git", str(repo)], check=True)
 
+          # 0. task_mmu.c direkt deklarieren
+          tm = src / "fs/proc/task_mmu.c"
+          tmt = tm.read_text()
+          if "susfs_srcu_open_redirect" in tmt and "extern struct srcu_struct susfs_srcu_open_redirect" not in tmt:
+              tm.write_text("#include <linux/srcu.h>
+struct vm_area_struct; struct path;
+extern struct srcu_struct susfs_srcu_open_redirect;
+extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct vm_area_struct *vma, struct path *fake_path);
+" + tmt)
+          sc_p = src / "fs/susfs.c"
+          sct = sc_p.read_text()
+          if "susfs_srcu_open_redirect" not in sct:
+              sct = "#include <linux/srcu.h>
+struct srcu_struct susfs_srcu_open_redirect;
+EXPORT_SYMBOL(susfs_srcu_open_redirect);
+int susfs_open_redirect_spoof_show_map_vma_srcu(struct vm_area_struct *vma, struct path *fake_path) { return 0; }
+" + sct
+              sc_p.write_text(sct)
           # 1. fs/stat.c: ksu_handle_vfs_fstat Hook fuer BakaSU 35289
           stat_c = src / 'fs/stat.c'
           st = stat_c.read_text()
