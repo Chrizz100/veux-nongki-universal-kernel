@@ -528,34 +528,33 @@ jobs:
                         ).replace('current_uid().val', 'susfs_cur_uid()')
                         sd.write_text(sdt)
 
-                # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
+                # Fix 2: Real C stub functions in fs/susfs.c (never collides with forward declarations in task_mmu.c etc.)
                 sh = src / 'include/linux/susfs.h'
                 sc = src / 'fs/susfs.c'
                 if sh.exists() and sc.exists():
                     sht = sh.read_text()
                     sct = sc.read_text()
                     if 'susfs_srcu_open_redirect' not in sht:
-                        sht = sht.replace(
-                            '#endif',
-                            'extern struct srcu_struct susfs_srcu_open_redirect;\n'
-                            '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) (0)\n'
-                            '#define susfs_open_redirect_spoof_do_proc_readlink(...) (0)\n'
-                            '#define susfs_open_redirect_spoof_seq_show(...) (0)\n'
-                            '#define susfs_open_redirect_spoof_do_sys_openat(...) (0)\n'
-                            '#define susfs_open_redirect_spoof_vfs_readlink(...) (0)\n'
-                            '#define susfs_open_redirect_spoof_vfs_statfs(...) (0)\n'
-                            '#define susfs_sus_kstat_spoof_vfs_statfs(...) (0)\n'
-                            '#define susfs_sus_kstat_spoof_generic_fillattr(...) (0)\n'
-                            '#define susfs_sus_kstat_spoof_inotify_fdinfo(...) (0)\n'
-                            '#define susfs_sus_kstat_spoof_proc_fd_seq_show(...) (0)\n'
-                            '#define susfs_sus_kstat_spoof_show_map_vma(...) (0)\n'
-                            '#endif',
-                            1
-                        )
+                        sht = sht.replace('#endif', 'extern struct srcu_struct susfs_srcu_open_redirect;\n#endif', 1)
                         sh.write_text(sht)
                     if 'susfs_srcu_open_redirect' not in sct:
-                        sct = '#include <linux/srcu.h>\nDEFINE_STATIC_SRCU(susfs_srcu_open_redirect_dummy);\nstruct srcu_struct susfs_srcu_open_redirect;\nEXPORT_SYMBOL(susfs_srcu_open_redirect);\n' + sct
-                        sc.write_text(sct)
+                        stubs = (
+                            '#include <linux/srcu.h>\n'
+                            'struct srcu_struct susfs_srcu_open_redirect;\n'
+                            'EXPORT_SYMBOL(susfs_srcu_open_redirect);\n'
+                            'int susfs_open_redirect_spoof_show_map_vma_srcu(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_do_proc_readlink(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_seq_show(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_do_sys_openat(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_vfs_readlink(void) { return 0; }\n'
+                            'int susfs_open_redirect_spoof_vfs_statfs(void) { return 0; }\n'
+                            'int susfs_sus_kstat_spoof_vfs_statfs(void) { return 0; }\n'
+                            'int susfs_sus_kstat_spoof_generic_fillattr(void) { return 0; }\n'
+                            'int susfs_sus_kstat_spoof_inotify_fdinfo(void) { return 0; }\n'
+                            'int susfs_sus_kstat_spoof_proc_fd_seq_show(void) { return 0; }\n'
+                            'int susfs_sus_kstat_spoof_show_map_vma(void) { return 0; }\n'
+                        )
+                        sc.write_text(stubs + sct)
 
                 # Fix 3: SUSFS 2.4 R3 CMD_SUSFS_SET_SUS_PATH_UID_FILTER in BakaSU
                 for hf in src.rglob('susfs_def.h'):
