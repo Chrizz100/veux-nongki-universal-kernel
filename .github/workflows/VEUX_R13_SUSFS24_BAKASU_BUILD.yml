@@ -516,13 +516,12 @@ jobs:
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
 
-                # Fix 1: Non-GKI 5.4 uid_t vs kuid_t (__kuid_val(current_uid())) in susfs_def.h / susfs.h / susfs.c
-                for rel in ['include/linux/susfs_def.h', 'include/linux/susfs.h', 'fs/susfs.c']:
-                    f = src / rel
-                    if f.exists():
-                        ft = f.read_text()
-                        if 'current_uid().val' in ft:
-                            f.write_text(ft.replace('current_uid().val', '__kuid_val(current_uid())'))
+                # Fix 1: Ensure <linux/uidgid.h> is included in susfs_def.h so kuid_t.val resolves cleanly
+                sd = src / 'include/linux/susfs_def.h'
+                if sd.exists():
+                    sdt = sd.read_text()
+                    if '<linux/uidgid.h>' not in sdt:
+                        sd.write_text('#include <linux/uidgid.h>\n' + sdt)
 
                 # Fix 2: SRCU compat wrapper in susfs.h & susfs.c for 2.3.0-patched fs/proc/task_mmu.c
                 sh = src / 'include/linux/susfs.h'
@@ -534,7 +533,7 @@ jobs:
                         sht = sht.replace(
                             '#endif',
                             'extern struct srcu_struct susfs_srcu_open_redirect;\n'
-                            '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) do {} while (0)\n'
+                            '#define susfs_open_redirect_spoof_show_map_vma_srcu(...) (0)\n'
                             '#endif',
                             1
                         )
