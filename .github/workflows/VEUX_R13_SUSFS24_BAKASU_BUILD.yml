@@ -516,16 +516,18 @@ jobs:
                     shutil.copytree(cand_kp / 'fs', src / 'fs', dirs_exist_ok=True)
                     shutil.copytree(cand_kp / 'include', src / 'include', dirs_exist_ok=True)
 
-                # Fix 1: Type-agnostic UID extraction in susfs_def.h works for both struct kuid_t and int
+                # Fix 1: Include <linux/cred.h> + type-agnostic susfs_cur_uid() helper in susfs_def.h
                 sd = src / 'include/linux/susfs_def.h'
                 if sd.exists():
                     sdt = sd.read_text()
                     if 'current_uid().val' in sdt:
-                        sdt = sdt.replace(
-                            '#define KSU_SUSFS_DEF_H\n#include <linux/cred.h>',
-                            '#define KSU_SUSFS_DEF_H\n#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })',
-                            1
-                        ).replace('current_uid().val', 'susfs_cur_uid()')
+                        header_patch = (
+                            '#define KSU_SUSFS_DEF_H\n'
+                            '#include <linux/cred.h>\n'
+                            '#define susfs_cur_uid() ({ typeof(current_uid()) _u = current_uid(); *(const uid_t *)&_u; })'
+                        )
+                        sdt = sdt.replace('#define KSU_SUSFS_DEF_H', header_patch, 1)
+                        sdt = sdt.replace('current_uid().val', 'susfs_cur_uid()')
                         sd.write_text(sdt)
 
                 # Fix 2: Copy exact 5.4.274 open_redirect_spoof_* prototypes from common/update/current/5.4.274/files/include/linux/susfs.h
