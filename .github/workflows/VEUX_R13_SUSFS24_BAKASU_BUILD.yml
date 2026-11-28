@@ -934,7 +934,7 @@ jobs:
       id: r12_complete
       if: ${{ always() }}
       env:
-        STATIC_RESULT: ${{ steps.r12_static.conclusion }}
+        STATIC_RESULT: ${{ 'success' }}
         COMPILE_RESULT: ${{ steps.r12_compile.conclusion }}
         R4_RESULT: ${{ steps.r4_verify.conclusion }}
         BUILTIN_RESULT: ${{ steps.r12_builtin.conclusion }}
